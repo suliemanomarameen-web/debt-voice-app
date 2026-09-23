@@ -61,6 +61,20 @@ jobs:
           </manifest>
           EOF
 
+      - name: Upgrade Kotlin version
+        run: |
+          # تحديث Kotlin في settings.gradle
+          sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.22"/' android/settings.gradle
+          
+          # تحديث kotlin_version في build.gradle
+          sed -i "s/ext.kotlin_version = '.*'/ext.kotlin_version = '1.9.22'/" android/build.gradle
+          
+          # عرض النتيجة للتأكد
+          echo "=== settings.gradle ==="
+          cat android/settings.gradle
+          echo "=== build.gradle ==="
+          cat android/build.gradle
+
       - name: Get dependencies
         run: flutter pub get
 
