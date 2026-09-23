@@ -24,8 +24,8 @@ jobs:
       - name: Regenerate Android files
         run: |
           rm -rf android
-          flutter create --platforms=android --org com.example .
-          # أعد كتابة AndroidManifest بالصلاحيات
+          flutter create --platforms=android --org com.example --project-name debt_voice_app .
+          
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
