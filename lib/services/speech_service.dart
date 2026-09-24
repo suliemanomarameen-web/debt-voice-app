@@ -1,45 +1,38 @@
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class SpeechService {
-  static final stt.SpeechToText _speech = stt.SpeechToText();
-  static bool _initialized = false;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _available = false;
+  String _locale = 'ar_YE';
 
-  /// تهيئة خدمة الصوت
-  static Future<bool> init() async {
-    if (_initialized) return true;
-    try {
-      _initialized = await _speech.initialize(
-        onError: (e) => print('STT Error: $e'),
-        onStatus: (s) => print('STT Status: $s'),
-      );
-      return _initialized;
-    } catch (e) {
-      print('STT Init Error: $e');
-      return false;
-    }
+  bool get isListening => _speech.isListening;
+  bool get isAvailable => _available;
+
+  void setLocale(String loc) => _locale = loc;
+
+  Future<bool> init() async {
+    if (_available) return true;
+    _available = await _speech.initialize(
+      onError: (e) => print('STT Error: $e'),
+      onStatus: (s) => print('STT Status: $s'),
+    );
+    return _available;
   }
 
-  /// بدء الاستماع
-  static Future<void> listen({
+  Future<void> listen({
     required void Function(String text, bool isFinal) onResult,
-    String localeId = 'ar_YE',
     Duration timeout = const Duration(seconds: 15),
   }) async {
-    if (!_initialized) await init();
+    if (!_available) await init();
     await _speech.listen(
-      localeId: localeId,
+      localeId: _locale,
       listenFor: timeout,
       pauseFor: const Duration(seconds: 3),
       partialResults: true,
-      onResult: (r) {
-        onResult(r.recognizedWords, r.finalResult);
-      },
+      onResult: (r) => onResult(r.recognizedWords, r.finalResult),
     );
   }
 
-  /// إيقاف الاستماع
-  static Future<void> stop() => _speech.stop();
-  static Future<void> cancel() => _speech.cancel();
-
-  static bool get isListening => _speech.isListening;
+  Future<void> stop() async => _speech.stop();
+  Future<void> cancel() async => _speech.cancel();
 }
