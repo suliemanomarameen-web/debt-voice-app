@@ -44,8 +44,6 @@ class DatabaseHelper {
     ''');
   }
 
-  // ============ الزبائن / الحسابات ============
-  
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
     return db.insert('customers', c.toMap());
@@ -70,7 +68,6 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  /// البحث عن زبون بالاسم (للاستخدام في الصوت)
   Future<Customer?> findCustomerByName(String name) async {
     final db = await database;
     final r = await db.query('customers',
@@ -79,8 +76,6 @@ class DatabaseHelper {
     return Customer.fromMap(r.first);
   }
 
-  // ============ المعاملات ============
-  
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
     return db.insert('transactions', t.toMap());
@@ -94,7 +89,6 @@ class DatabaseHelper {
     return r.map((e) => Transaction.fromMap(e)).toList();
   }
 
-  /// الرصيد المتبقي = مجموع الديون − مجموع السدادات
   Future<double> customerBalance(int customerId) async {
     final db = await database;
     final r = await db.rawQuery('''
@@ -107,7 +101,6 @@ class DatabaseHelper {
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
   }
 
-  /// إجمالي كل الديون المتبقية في التطبيق
   Future<double> totalDebts() async {
     final db = await database;
     final r = await db.rawQuery('''
@@ -115,11 +108,6 @@ class DatabaseHelper {
         COALESCE(SUM(CASE WHEN type='debt' THEN amount ELSE 0 END),0) AS d,
         COALESCE(SUM(CASE WHEN type='payment' THEN amount ELSE 0 END),0) AS p
       FROM transactions
-    ''');
-    final row = r.first;
-    return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
-  }
-}      FROM transactions
     ''');
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
