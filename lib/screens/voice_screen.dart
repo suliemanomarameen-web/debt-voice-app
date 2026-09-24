@@ -13,92 +13,189 @@ class VoiceScreen extends StatefulWidget {
 }
 
 class _VoiceScreenState extends State<VoiceScreen> {
+  final _speech = SpeechService();
   String _text = '';
   bool _listening = false;
   ParsedEntry? _parsed;
-  bool _processing = false;
+  Customer? _foundCustomer;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    SpeechService.init();
+    _speech.init();
   }
 
-  Future<void> _startListening() async {
+  Future<void> _toggle() async {
+    if (_listening) {
+      await _speech.stop();
+      setState(() => _listening = false);
+      if (_text.isNotEmpty) _process();
+      return;
+    }
+
     setState(() {
-      _listening = true;
       _text = '';
       _parsed = null;
+      _foundCustomer = null;
+      _errorMessage = null;
+      _listening = true;
     });
 
-    await SpeechService.listen(
-      onResult: (text, isFinal) {
-        setState(() => _text = text);
-        if (isFinal) {
-          setState(() => _listening = false);
-          _processText();
-        }
-      },
-    );
+    await _speech.listen(onResult: (text, isFinal) {
+      if (!mounted) return;
+      setState(() => _text = text);
+      if (isFinal) {
+        setState(() => _listening = false);
+        _process();
+      }
+    });
   }
 
-  Future<void> _stopListening() async {
-    await SpeechService.stop();
-    setState(() => _listening = false);
-    if (_text.isNotEmpty) _processText();
-  }
-
-  void _processText() {
+  Future<void> _process() async {
     final parsed = ParserService.parse(_text);
-    setState(() => _parsed = parsed);
-  }
+    if (parsed == null) {
+      setState(() {
+        _parsed = null;
+        _errorMessage = 'لم أفهم الجملة. جرّب: "سجل على محمد 1500 ريال"';
+      });
+      return;
+    }
 
-  Future<void> _confirmAndSave() async {
-    if (_parsed == null) return;
-    setState(() => _processing = true);
+    if (parsed.intent == 'add_account') {
+      setState(() {
+        _parsed = parsed;
+        _foundCustomer = null;
+        _errorMessage = null;
+      });
+      return;
+    }
 
     final db = DatabaseHelper.instance;
-    // 1) ابحث عن الحساب أو أنشئه
-    var customer = await db.findCustomerByName(_parsed!.customerName);
-    customer ??= Customer(
-      id: await db.insertCustomer(Customer(
-        name: _parsed!.customerName,
-        accountType: AccountType.customer,
-        createdAt: DateTime.now().toIso8601String(),
-      )),
-      name: _parsed!.customerName,
-      accountType: AccountType.customer,
-      createdAt: DateTime.now().toIso8601String(),
-    );
+    final customer = await db.findCustomerByName(parsed.customerName);
 
-    // 2) أضف المعاملة
-    await db.insertTransaction(Transaction(
-      customerId: customer.id!,
-      amount: _parsed!.amount,
-      currency: _parsed!.currency,
-      type: _parsed!.type,
-      items: _parsed!.items,
+    if (customer == null) {
+      setState(() {
+        _parsed = null;
+        _foundCustomer = null;
+        _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"\n\n'
+            'قل: "أضف حساب عميل ${parsed.customerName}" لإنشائه.';
+      });
+      return;
+    }
+
+    setState(() {
+      _parsed = parsed;
+      _foundCustomer = customer;
+      _errorMessage = null;
+    });
+  }
+
+  Future<void> _saveAccount() async {
+    if (_parsed == null || _parsed!.customerName.isEmpty) return;
+    final db = DatabaseHelper.instance;
+
+    final existing = await db.findCustomerByName(_parsed!.customerName);
+    if (existing != null) {
+      setState(() {
+        _errorMessage = 'الحساب "${_parsed!.customerName}" موجود مسبقاً';
+        _parsed = null;
+      });
+      return;
+    }
+
+    await db.insertCustomer(Customer(
+      name: _parsed!.customerName,
+      accountType: _parsed!.accountType,
       createdAt: DateTime.now().toIso8601String(),
     ));
-
-    // 3) احسب الرصيد الجديد
-    final balance = await db.customerBalance(customer.id!);
-
-    setState(() => _processing = false);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          _parsed!.type == 'debt'
-              ? 'تم تسجيل ${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency} على ${customer.name}'
-              : 'تم تسجيل دفعة من ${customer.name} — الباقي: ${balance.toStringAsFixed(0)}',
-        ),
+        content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName} '
+            '(${AccountType.labelsAr[_parsed!.accountType]})'),
         backgroundColor: Colors.green,
       ),
     );
+    setState(() {
+      _parsed = null;
+      _text = '';
+    });
+  }
 
-    Navigator.pop(context, true);
+  Future<void> _saveTransaction() async {
+    final p = _parsed;
+    final c = _foundCustomer;
+    if (p == null || c == null) return;
+    final db = DatabaseHelper.instance;
+
+    final storedType = (p.intent == 'return') ? 'payment' : p.intent;
+
+    await db.insertTransaction(Transaction(
+      customerId: c.id!,
+      amount: p.amount,
+      currency: p.currency,
+      type: storedType,
+      items: p.intent == 'return'
+          ? 'مرتجع${p.items.isEmpty ? "" : ": ${p.items}"}'
+          : p.items,
+      createdAt: DateTime.now().toIso8601String(),
+    ));
+
+    final newBalance = await db.customerBalance(c.id!);
+    if (!mounted) return;
+
+    final title = {
+      'debt': '✅ تم تسجيل الدين',
+      'payment': '✅ تم تسجيل السداد',
+      'return': '✅ تم تسجيل المرتجع',
+    }[p.intent] ?? '✅ تم التسجيل';
+
+    await showDialog(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (p.warning != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(p.warning!,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.deepOrange)),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Text('الاسم: ${c.name}'),
+              Text('المبلغ: ${p.amount.toStringAsFixed(0)} ${p.currency}'),
+              if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
+              const Divider(),
+              Text('الرصيد الجديد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context, true);
+              },
+              child: const Text('تم'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -111,15 +208,37 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // زر الميكروفون
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('النص المكتشف:',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Text(
+                      _text.isEmpty
+                          ? (_listening ? '🎙️ أستمع...' : 'اضغط الزر وتحدّث')
+                          : _text,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
               GestureDetector(
-                onTap: _listening ? _stopListening : _startListening,
+                onTap: _toggle,
                 child: Container(
-                  width: 140,
-                  height: 140,
+                  width: 120,
+                  height: 120,
                   decoration: BoxDecoration(
-                    color: _listening ? Colors.red : Colors.green,
                     shape: BoxShape.circle,
+                    color: _listening ? Colors.red : Colors.green,
                     boxShadow: [
                       BoxShadow(
                         color: (_listening ? Colors.red : Colors.green)
@@ -132,55 +251,95 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   child: Icon(
                     _listening ? Icons.stop : Icons.mic,
                     color: Colors.white,
-                    size: 70,
+                    size: 50,
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(
-                _listening
-                    ? '🎙️ أستمع...'
-                    : 'اضغط للتحدث',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              Text(_listening ? 'أستمع...' : 'اضغط للتحدث',
+                  style: const TextStyle(fontSize: 16)),
 
-              // النص المُستخرج
-              if (_text.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('📝 ما سمعته:',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 6),
-                      Text(_text, style: const TextStyle(fontSize: 16)),
-                    ],
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 20),
+                Card(
+                  color: Colors.red.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.red),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(_errorMessage!)),
+                      ],
+                    ),
                   ),
                 ),
-              const SizedBox(height: 16),
+              ],
 
-              // نتيجة التحليل
-              if (_parsed != null) _buildParsedCard(),
-              if (_text.isNotEmpty && _parsed == null && !_listening)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text(
-                    '⚠️ لم أفهم الجملة. جرّب مثلاً:\n"سجل على محمد 1500 ريال خميرة شاي"',
-                    textAlign: TextAlign.center,
+              if (_parsed != null) ...[
+                const SizedBox(height: 24),
+                Card(
+                  color: _parsed!.intent == 'add_account'
+                      ? Colors.blue.shade50
+                      : Colors.green.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _parsed!.intent == 'add_account'
+                              ? '➕ إنشاء حساب جديد'
+                              : '✅ النتيجة:',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        const SizedBox(height: 12),
+                        if (_parsed!.intent != 'add_account') ...[
+                          _row('النوع', _typeLabel(_parsed!.intent)),
+                          _row('الاسم', _parsed!.customerName),
+                          _row(
+                              'المبلغ',
+                              '${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency}'),
+                          if (_parsed!.items.isNotEmpty)
+                            _row('الأصناف', _parsed!.items),
+                        ] else ...[
+                          _row('الاسم', _parsed!.customerName),
+                          _row('النوع',
+                              AccountType.labelsAr[_parsed!.accountType] ?? ''),
+                        ],
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () => setState(() {
+                                  _parsed = null;
+                                  _text = '';
+                                  _foundCustomer = null;
+                                  _errorMessage = null;
+                                }),
+                                child: const Text('إلغاء'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: _parsed!.intent == 'add_account'
+                                    ? _saveAccount
+                                    : _saveTransaction,
+                                child: Text(_parsed!.intent == 'add_account'
+                                    ? 'إنشاء'
+                                    : 'حفظ'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+              ],
             ],
           ),
         ),
@@ -188,75 +347,28 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  Widget _buildParsedCard() {
-    final p = _parsed!;
-    final isDebt = p.type == 'debt';
+  String _typeLabel(String intent) {
+    return {
+      'debt': 'دين',
+      'payment': 'سداد',
+      'return': 'مرتجع',
+      'add_account': 'إنشاء حساب',
+    }[intent] ?? intent;
+  }
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDebt ? Colors.red.shade50 : Colors.green.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: isDebt ? Colors.red.shade200 : Colors.green.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _row(String key, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(isDebt ? Icons.arrow_upward : Icons.arrow_downward,
-                  color: isDebt ? Colors.red : Colors.green),
-              const SizedBox(width: 8),
-              Text(isDebt ? '🔴 دين جديد' : '🟢 سداد',
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-            ],
+          SizedBox(
+            width: 80,
+            child: Text('$key:',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
-          const Divider(),
-          _row('الاسم', p.customerName),
-          _row('المبلغ', '${p.amount.toStringAsFixed(0)} ${p.currency}'),
-          if (p.items.isNotEmpty) _row('الأصناف', p.items),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => setState(() {
-                    _parsed = null;
-                    _text = '';
-                  }),
-                  child: const Text('إلغاء'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: _processing ? null : _confirmAndSave,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: isDebt ? Colors.red : Colors.green,
-                  ),
-                  child: _processing
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('حفظ'),
-                ),
-              ),
-            ],
-          ),
+          Expanded(child: Text(value)),
         ],
       ),
     );
   }
-
-  Widget _row(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            SizedBox(width: 80, child: Text('$k:',
-                style: const TextStyle(fontWeight: FontWeight.bold))),
-            Expanded(child: Text(v, style: const TextStyle(fontSize: 16))),
-          ],
-        ),
-      );
 }
