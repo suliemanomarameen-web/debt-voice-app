@@ -1,3 +1,4 @@
+import 'voice_screen.dart';
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
@@ -35,14 +36,35 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Scaffold(
         appBar: AppBar(title: const Text('دفتر الديون')),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: () async {
-            await Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const AddAccountScreen()));
-            _refresh();
-          },
-          icon: const Icon(Icons.person_add),
-          label: const Text('حساب جديد'),
-        ),
+floatingActionButton: Column(
+  mainAxisSize: MainAxisSize.min,
+  crossAxisAlignment: CrossAxisAlignment.end,
+  children: [
+    FloatingActionButton(
+      heroTag: 'voice',
+      onPressed: () async {
+        final saved = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(builder: (_) => const VoiceScreen()),
+        );
+        if (saved == true) _refresh();
+      },
+      backgroundColor: Colors.orange,
+      child: const Icon(Icons.mic, color: Colors.white),
+    ),
+    const SizedBox(height: 12),
+    FloatingActionButton.extended(
+      heroTag: 'add',
+      onPressed: () async {
+        await Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const AddAccountScreen()));
+        _refresh();
+      },
+      icon: const Icon(Icons.person_add),
+      label: const Text('حساب جديد'),
+    ),
+  ],
+),
         body: Column(
           children: [
             Container(
