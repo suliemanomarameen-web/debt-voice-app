@@ -136,38 +136,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}                          return FutureBuilder<double>(
-                            future: db.customerBalance(c.id!),
-                            builder: (_, snap) {
-                              final bal = snap.data ?? 0;
-                              return ListTile(
-                                leading: CircleAvatar(
-                                    child: Text(c.name.characters.first)),
-                                title: Text(c.name),
-                                trailing: Text('${bal.toStringAsFixed(0)} ريال',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: bal > 0
-                                          ? Colors.red.shade700
-                                          : Colors.green.shade700,
-                                    )),
-                                onTap: () async {
-                                  await Navigator.push(context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              CustomerScreen(customer: c)));
-                                  _refresh();
-                                },
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
