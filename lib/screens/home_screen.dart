@@ -32,6 +32,81 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _editCustomer(Customer c) async {
+    await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => AddAccountScreen(existing: c)));
+    _refresh();
+  }
+
+  Future<void> _deleteCustomer(Customer c) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.red),
+              SizedBox(width: 8),
+              Text('تأكيد الحذف'),
+            ],
+          ),
+          content: Text(
+              'سيتم حذف "${c.name}" وكل معاملاته.\n\nلا يمكن التراجع.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok == true) {
+      await db.deleteCustomer(c.id!);
+      _refresh();
+    }
+  }
+
+  void _showCustomerMenu(Customer c) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('تعديل الحساب'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _editCustomer(c);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('حذف الحساب',
+                    style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteCustomer(c);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -46,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
               heroTag: 'voice',
               onPressed: () async {
                 await Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const VoiceScreen()));
+                    MaterialPageRoute(builder: (_) => VoiceScreen()));
                 _refresh();
               },
               backgroundColor: Colors.deepOrange,
@@ -56,8 +131,10 @@ class _HomeScreenState extends State<HomeScreen> {
             FloatingActionButton.extended(
               heroTag: 'add',
               onPressed: () async {
-                await Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const AddAccountScreen()));
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => AddAccountScreen()));
                 _refresh();
               },
               icon: const Icon(Icons.person_add),
@@ -124,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                               CustomerScreen(customer: c)));
                                   _refresh();
                                 },
+                                onLongPress: () => _showCustomerMenu(c),
                               );
                             },
                           );
