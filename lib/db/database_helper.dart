@@ -44,6 +44,7 @@ class DatabaseHelper {
     ''');
   }
 
+  // ============ الزبائن / الحسابات ============
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
     return db.insert('customers', c.toMap());
@@ -76,9 +77,29 @@ class DatabaseHelper {
     return Customer.fromMap(r.first);
   }
 
+  // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
     return db.insert('transactions', t.toMap());
+  }
+
+  Future<int> updateTransaction(Transaction t) async {
+    final db = await database;
+    return db.update('transactions', t.toMap(),
+        where: 'id = ?', whereArgs: [t.id]);
+  }
+
+  Future<int> deleteTransaction(int id) async {
+    final db = await database;
+    return db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<Transaction?> getTransaction(int id) async {
+    final db = await database;
+    final r = await db.query('transactions',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    if (r.isEmpty) return null;
+    return Transaction.fromMap(r.first);
   }
 
   Future<List<Transaction>> customerTransactions(int customerId) async {
