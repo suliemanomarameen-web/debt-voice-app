@@ -1,215 +1,46 @@
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
-import '../models/transaction.dart';
 import 'add_account_screen.dart';
+import 'customer_screen.dart';
+import 'voice_screen.dart';
 
-class CustomerScreen extends StatefulWidget {
-  final Customer customer;
-  const CustomerScreen({super.key, required this.customer});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
   @override
-  State<CustomerScreen> createState() => _CustomerScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _CustomerScreenState extends State<CustomerScreen> {
+class _HomeScreenState extends State<HomeScreen> {
   final db = DatabaseHelper.instance;
-  double _balance = 0;
-  List<Transaction> _tx = [];
+  double _total = 0;
+  List<Customer> _customers = [];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _refresh();
   }
 
-  Future<void> _load() async {
-    final bal = await db.customerBalance(widget.customer.id!);
-    final tx = await db.customerTransactions(widget.customer.id!);
+  Future<void> _refresh() async {
+    final t = await db.totalDebts();
+    final list = await db.allCustomers();
     if (!mounted) return;
     setState(() {
-      _balance = bal;
-      _tx = tx;
+      _total = t;
+      _customers = list;
     });
   }
 
-  // ============ إضافة معاملة ============
-  Future<void> _addTransaction(String type) async {
-    final amountCtrl = TextEditingController();
-    final itemsCtrl = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: Text(type == 'debt'
-              ? 'دين جديد'
-              : type == 'return'
-                  ? 'مرتجع جديد'
-                  : 'دفعة سداد'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'المبلغ'),
-              ),
-              if (type != 'payment')
-                TextField(
-                  controller: itemsCtrl,
-                  decoration: const InputDecoration(labelText: 'الأصناف'),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final amt = double.tryParse(amountCtrl.text);
-                if (amt == null || amt <= 0) return;
-                await db.insertTransaction(Transaction(
-                  customerId: widget.customer.id!,
-                  amount: amt,
-                  type: type == 'return' ? 'payment' : type,
-                  items: type == 'return'
-                      ? 'مرتجع${itemsCtrl.text.trim().isEmpty ? "" : ": ${itemsCtrl.text.trim()}"}'
-                      : itemsCtrl.text.trim(),
-                  createdAt: DateTime.now().toIso8601String(),
-                ));
-                if (mounted) Navigator.pop(context);
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-    _load();
+  Future<void> _editCustomer(Customer c) async {
+    await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => AddAccountScreen(existing: c)));
+    _refresh();
   }
 
-  // ============ تعديل معاملة ============
-  Future<void> _editTransaction(Transaction t) async {
-    final isDebt = t.type == 'debt';
-    final isReturn = t.items.startsWith('مرتجع');
-    final amountCtrl = TextEditingController(text: t.amount.toStringAsFixed(0));
-    final itemsCtrl = TextEditingController(
-        text: isReturn
-            ? t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '')
-            : t.items);
-
-    await showDialog(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: Text(isDebt
-              ? 'تعديل الدين'
-              : isReturn
-                  ? 'تعديل المرتجع'
-                  : 'تعديل السداد'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'المبلغ'),
-              ),
-              if (isDebt || isReturn)
-                TextField(
-                  controller: itemsCtrl,
-                  decoration: const InputDecoration(labelText: 'الأصناف'),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final amt = double.tryParse(amountCtrl.text);
-                if (amt == null || amt <= 0) return;
-                await db.updateTransaction(Transaction(
-                  id: t.id,
-                  customerId: t.customerId,
-                  amount: amt,
-                  currency: t.currency,
-                  type: t.type,
-                  items: isReturn
-                      ? 'مرتجع: ${itemsCtrl.text.trim()}'
-                      : itemsCtrl.text.trim(),
-                  createdAt: t.createdAt,
-                ));
-                if (mounted) Navigator.pop(context);
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-    _load();
-  }
-
-  // ============ حذف معاملة ============
-  Future<void> _deleteTransaction(Transaction t) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('تأكيد الحذف'),
-            ],
-          ),
-          content: Text(
-            'سيتم حذف هذه العملية نهائياً:\n\n'
-            'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
-            'المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}\n'
-            '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}\n'
-            'لا يمكن التراجع عن هذا الإجراء.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف نهائي'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed == true) {
-      await db.deleteTransaction(t.id!);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم حذف العملية'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      _load();
-    }
-  }
-
-  // ============ حذف الحساب ============
-  Future<void> _deleteCustomer() async {
-    final confirmed = await showDialog<bool>(
+  Future<void> _deleteCustomer(Customer c) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
@@ -218,13 +49,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
             children: [
               Icon(Icons.warning_amber, color: Colors.red),
               SizedBox(width: 8),
-              Text('تأكيد حذف الحساب'),
+              Text('تأكيد الحذف'),
             ],
           ),
           content: Text(
-            'سيتم حذف الحساب "${widget.customer.name}" وكل معاملاته (${_tx.length} عملية).\n\n'
-            'لا يمكن التراجع عن هذا الإجراء.',
-          ),
+              'سيتم حذف "${c.name}" وكل معاملاته.\n\nلا يمكن التراجع.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -233,29 +62,19 @@ class _CustomerScreenState extends State<CustomerScreen> {
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف الحساب'),
+              child: const Text('حذف'),
             ),
           ],
         ),
       ),
     );
-
-    if (confirmed == true) {
-      await db.deleteCustomer(widget.customer.id!);
-      if (mounted) {
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم حذف الحساب'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    if (ok == true) {
+      await db.deleteCustomer(c.id!);
+      _refresh();
     }
   }
 
-  // ============ قائمة الخيارات ============
-  void _showTransactionMenu(Transaction t) {
+  void _showCustomerMenu(Customer c) {
     showModalBottomSheet(
       context: context,
       builder: (_) => Directionality(
@@ -266,18 +85,19 @@ class _CustomerScreenState extends State<CustomerScreen> {
             children: [
               ListTile(
                 leading: const Icon(Icons.edit),
-                title: const Text('تعديل'),
+                title: const Text('تعديل الحساب'),
                 onTap: () {
                   Navigator.pop(context);
-                  _editTransaction(t);
+                  _editCustomer(c);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('حذف', style: TextStyle(color: Colors.red)),
+                title: const Text('حذف الحساب',
+                    style: TextStyle(color: Colors.red)),
                 onTap: () {
                   Navigator.pop(context);
-                  _deleteTransaction(t);
+                  _deleteCustomer(c);
                 },
               ),
             ],
@@ -292,139 +112,104 @@ class _CustomerScreenState extends State<CustomerScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.customer.name),
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                switch (v) {
-                  case 'edit':
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            AddAccountScreen(existing: widget.customer),
-                      ),
-                    ).then((_) => _load());
-                    break;
-                  case 'delete':
-                    _deleteCustomer();
-                    break;
-                }
+        appBar: AppBar(title: const Text('دفتر الديون')),
+        floatingActionButton: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            FloatingActionButton(
+              heroTag: 'voice',
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const VoiceScreen()));
+                _refresh();
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit),
-                    title: Text('تعديل بيانات الحساب'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete, color: Colors.red),
-                    title: Text('حذف الحساب',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
+              backgroundColor: Colors.deepOrange,
+              child: const Icon(Icons.mic, color: Colors.white),
+            ),
+            const SizedBox(height: 12),
+            FloatingActionButton.extended(
+              heroTag: 'add',
+              onPressed: () async {
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AddAccountScreen()));
+                _refresh();
+              },
+              icon: const Icon(Icons.person_add),
+              label: const Text('حساب جديد'),
             ),
           ],
         ),
         body: Column(
           children: [
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              color: _balance > 0 ? Colors.red.shade50 : Colors.green.shade50,
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1B6B3A), Color(0xFF2E8B57)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('الرصيد المتبقي'),
-                  Text(
-                    '${_balance.toStringAsFixed(0)} ريال',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: _balance > 0
-                          ? Colors.red.shade700
-                          : Colors.green.shade700,
-                    ),
-                  ),
+                  const Text('إجمالي المتبقي',
+                      style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 6),
+                  Text('${_total.toStringAsFixed(0)} ريال',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
             Expanded(
-              child: _tx.isEmpty
-                  ? const Center(child: Text('لا توجد عمليات بعد'))
-                  : ListView.builder(
-                      itemCount: _tx.length,
-                      itemBuilder: (_, i) {
-                        final t = _tx[i];
-                        final isDebt = t.type == 'debt';
-                        final isReturn = t.items.startsWith('مرتجع');
-
-                        return ListTile(
-                          leading: Icon(
-                            isReturn
-                                ? Icons.keyboard_return
-                                : (isDebt
-                                    ? Icons.arrow_upward
-                                    : Icons.arrow_downward),
-                            color: isReturn
-                                ? Colors.orange
-                                : (isDebt ? Colors.red : Colors.green),
-                          ),
-                          title: Text(
-                              '${t.amount.toStringAsFixed(0)} ${t.currency}'),
-                          subtitle: Text(
-                            isReturn
-                                ? t.items
-                                : (t.items.isEmpty
-                                    ? (isDebt ? 'دين' : 'سداد')
-                                    : t.items),
-                          ),
-                          trailing: Text(t.createdAt.substring(0, 10)),
-                          onLongPress: () => _showTransactionMenu(t),
-                          onTap: () => _showTransactionMenu(t),
-                        );
-                      },
+              child: _customers.isEmpty
+                  ? const Center(child: Text('لا توجد حسابات بعد'))
+                  : RefreshIndicator(
+                      onRefresh: _refresh,
+                      child: ListView.builder(
+                        itemCount: _customers.length,
+                        itemBuilder: (_, i) {
+                          final c = _customers[i];
+                          return FutureBuilder<double>(
+                            future: db.customerBalance(c.id!),
+                            builder: (_, snap) {
+                              final bal = snap.data ?? 0;
+                              return ListTile(
+                                leading: CircleAvatar(
+                                    child: Text(c.name.characters.first)),
+                                title: Text(c.name),
+                                trailing: Text(
+                                  '${bal.toStringAsFixed(0)} ريال',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: bal > 0
+                                        ? Colors.red.shade700
+                                        : Colors.green.shade700,
+                                  ),
+                                ),
+                                onTap: () async {
+                                  await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                          builder: (_) =>
+                                              CustomerScreen(customer: c)));
+                                  _refresh();
+                                },
+                                onLongPress: () => _showCustomerMenu(c),
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
             ),
           ],
-        ),
-        bottomNavigationBar: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('debt'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('دين'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('payment'),
-                  icon: const Icon(Icons.payments),
-                  label: const Text('سداد'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.green),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('return'),
-                  icon: const Icon(Icons.keyboard_return),
-                  label: const Text('مرتجع'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
