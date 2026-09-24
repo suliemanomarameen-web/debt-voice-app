@@ -1,9 +1,9 @@
 class ParsedEntry {
-  final String intent;   // 'debt' | 'payment' | 'return' | 'add_account'
+  final String intent;
   final String customerName;
   final double amount;
   final String currency;
-  final String accountType;  // 'customer' | 'supplier' | 'other'
+  final String accountType;
   final String items;
   final String rawText;
   final String? warning;
@@ -26,7 +26,7 @@ class ParserService {
     if (original.isEmpty) return null;
     final t = original.toLowerCase();
 
-    // ========== 0) نية إضافة حساب ==========
+    // ========== نية إضافة حساب ==========
     if (t.contains('أضف حساب') || t.contains('اضف حساب') ||
         t.contains('حساب جديد')) {
       String accountType = 'customer';
@@ -52,7 +52,7 @@ class ParserService {
       );
     }
 
-    // ========== 1) تحديد النوع ==========
+    // ========== تحديد النوع ==========
     String intent = 'debt';
     String? warning;
 
@@ -77,18 +77,13 @@ class ParserService {
       intent = 'payment';
     }
 
-    // ========== 2) المبلغ ==========
-    double? amount = _extractAmount(t);
+    final amount = _extractAmount(t);
     if (amount == null) return null;
 
-    // ========== 3) الاسم ==========
     final name = _extractName(original);
     if (name == null) return null;
 
-    // ========== 4) العملة ==========
     final currency = _extractCurrency(t);
-
-    // ========== 5) الأصناف ==========
     final items = _extractItems(original);
 
     return ParsedEntry(
@@ -103,7 +98,6 @@ class ParserService {
     );
   }
 
-  // ============ تنظيف الاسم ============
   static String _cleanName(String name) {
     var n = name.trim();
     if (n.startsWith('لـ')) n = n.substring(2);
@@ -117,7 +111,6 @@ class ParserService {
     return n.trim();
   }
 
-  // ============ أدوات مساعدة ============
   static String _normalizeDigits(String s) => s
       .replaceAll('٠', '0').replaceAll('١', '1').replaceAll('٢', '2')
       .replaceAll('٣', '3').replaceAll('٤', '4').replaceAll('٥', '5')
