@@ -26,33 +26,11 @@ class ParserService {
     if (original.isEmpty) return null;
     final t = original.toLowerCase();
 
-    // ========== نية إضافة حساب ==========
-    if (t.contains('أضف حساب') || t.contains('اضف حساب') ||
-        t.contains('حساب جديد')) {
-      String accountType = 'customer';
-      if (t.contains('مورد') || t.contains('supplier')) {
-        accountType = 'supplier';
-      } else if (t.contains('أخرى') || t.contains('اخرى')) {
-        accountType = 'other';
-      }
+    // ========== نية إضافة حساب (موسّعة) ==========
+    final addAccountMatch = _detectAddAccountIntent(t, original);
+    if (addAccountMatch != null) return addAccountMatch;
 
-      final nameMatch = RegExp(
-        r'(?:عميل|مورد|أخرى|اخرى|جديد|حساب)\s+([\u0600-\u06FFa-zA-Z]+)',
-      ).firstMatch(original);
-      final name = _cleanName(nameMatch?.group(1) ?? '');
-
-      return ParsedEntry(
-        intent: 'add_account',
-        customerName: name,
-        amount: 0,
-        currency: 'YER',
-        accountType: accountType,
-        items: '',
-        rawText: original,
-      );
-    }
-
-    // ========== تحديد النوع ==========
+    // ========== تحديد نوع المعاملة ==========
     String intent = 'debt';
     String? warning;
 
@@ -98,6 +76,104 @@ class ParserService {
     );
   }
 
+  // ============ كشف نية إضافة حساب ============
+  static ParsedEntry? _detectAddAccountIntent(String t, String original) {
+    // قائمة الأفعال التي تعني "إضافة/إنشاء"
+    const addVerbs = [
+      'أضف', 'اضف', 'أضيف', 'اضيف', 'أضيفي',
+      'أنشئ', 'انشئ', 'أنشيء', 'انشيء',
+      'سجل', 'افتح', 'افتحي', 'انشاء', 'إنشاء',
+      'create', 'add', 'new',
+    ];
+
+    // هل الجملة تحتوي على فعل إضافة؟
+    final hasAddVerb = addVerbs.any((v) => t.contains(v));
+    if (!hasAddVerb) return null;
+
+    // هل تحتوي على كلمة "حساب" أو نوع حساب (عميل/مورد)؟
+    final hasAccountWord = t.contains('حساب') ||
+        t.contains('عميل') ||
+        t.contains('مورد') ||
+        t.contains('أخرى') ||
+        t.contains('اخرى') ||
+        t.contains('account') ||
+        t.contains('customer') ||
+        t.contains('supplier');
+
+    if (!hasAccountWord) return null;
+
+    // تحديد نوع الحساب
+    String accountType = 'customer';
+    if (t.contains('مورد') || t.contains('supplier')) {
+      accountType = 'supplier';
+    } else if (t.contains('أخرى') || t.contains('اخرى') || t.contains('other')) {
+      accountType = 'other';
+    }
+
+    // استخراج الاسم
+    final name = _extractAccountName(original);
+    if (name == null || name.isEmpty) return null;
+
+    return ParsedEntry(
+      intent: 'add_account',
+      customerName: name,
+      amount: 0,
+      currency: 'YER',
+      accountType: accountType,
+      items: '',
+      rawText: original,
+    );
+  }
+
+  // ============ استخراج اسم الحساب الجديد ============
+  static String? _extractAccountName(String text) {
+    // صيغ متعددة:
+    // 1) "أضف حساب عميل باسم محمد"
+    // 2) "أضف حساب باسم محمد"
+    // 3) "أنشئ حساب عميل محمد"
+    // 4) "أضف عميل محمد"
+    // 5) "أضف مورد أحمد"
+
+    final patterns = [
+      // "باسم X" — الأوضح
+      RegExp(r'باسم\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+      // "اسمه X"
+      RegExp(r'اسمه\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+      // "حساب عميل X" / "حساب مورد X" / "حساب X"
+      RegExp(r'حساب\s+(?:عميل|مورد|أخرى|اخرى|جديد|جديدة)?\s*([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+      // "عميل X" / "مورد X"
+      RegExp(r'(?:عميل|مورد)\s+(?:باسم\s+|اسمه\s+)?([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+      // "أضف X" (آخر كلمة)
+      RegExp(r'(?:أضف|اضف|أضيف|اضيف|أنشئ|انشئ|سجل|افتح)\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+    ];
+
+    for (final pattern in patterns) {
+      final m = pattern.firstMatch(text);
+      if (m != null) {
+        var name = m.group(1)!.trim();
+        // إزالة كلمات مفتاحية عالقة
+        name = name.replaceAll(RegExp(
+            r'^(?:حساب|عميل|مورد|جديد|جديدة|أخرى|اخرى|باسم|اسمه)\s+'),
+            '');
+        name = name.trim();
+        if (name.isNotEmpty && !_isBadName(name)) {
+          return name;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  static bool _isBadName(String name) {
+    const bad = [
+      'حساب', 'عميل', 'مورد', 'جديد', 'جديدة', 'أخرى', 'اخرى',
+      'باسم', 'اسمه', 'جديد', 'account', 'customer', 'supplier',
+    ];
+    return bad.contains(name.toLowerCase());
+  }
+
+  // ============ تنظيف الاسم ============
   static String _cleanName(String name) {
     var n = name.trim();
     if (n.startsWith('لـ')) n = n.substring(2);
@@ -111,6 +187,7 @@ class ParserService {
     return n.trim();
   }
 
+  // ============ أدوات مساعدة ============
   static String _normalizeDigits(String s) => s
       .replaceAll('٠', '0').replaceAll('١', '1').replaceAll('٢', '2')
       .replaceAll('٣', '3').replaceAll('٤', '4').replaceAll('٥', '5')
