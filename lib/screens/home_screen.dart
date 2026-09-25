@@ -4,6 +4,7 @@ import '../models/customer.dart';
 import 'add_account_screen.dart';
 import 'customer_screen.dart';
 import 'voice_screen.dart';
+import '../services/overlay_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -112,7 +113,55 @@ class _HomeScreenState extends State<HomeScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(title: const Text('دفتر الديون')),
+        appBar: AppBar(
+  title: const Text('دفتر الديون'),
+  actions: [
+    PopupMenuButton<String>(
+      onSelected: (v) async {
+        if (v == 'start_overlay') {
+          final granted = await OverlayService.requestPermission();
+          if (granted == true) {
+            await OverlayService.show();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('✅ تم تشغيل الزر العائم'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          }
+        } else if (v == 'stop_overlay') {
+          await OverlayService.hide();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('تم إيقاف الزر العائم'),
+                backgroundColor: Colors.grey,
+              ),
+            );
+          }
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'start_overlay',
+          child: ListTile(
+            leading: Icon(Icons.picture_in_picture_alt),
+            title: Text('تشغيل الزر العائم'),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'stop_overlay',
+          child: ListTile(
+            leading: Icon(Icons.close),
+            title: Text('إيقاف الزر العائم'),
+          ),
+        ),
+      ],
+    ),
+  ],
+),
         floatingActionButton: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
