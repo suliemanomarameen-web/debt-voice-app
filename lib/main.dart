@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_overlay_window/flutter_overlay_window.dart';
-import 'screens/home_screen.dart';
+import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
@@ -11,17 +10,11 @@ import 'models/transaction.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // تهيئة الإشعارات
   await NotificationService.init();
-
-  // الاستماع لرسائل من النافذة العائمة
   _setupOverlayListener();
-
   runApp(const DebtApp());
 }
 
-/// استقبال نص من النافذة العائمة
 void _setupOverlayListener() {
   OverlayService.listen((data) async {
     if (data is Map && data['action'] == 'voice_text') {
@@ -37,12 +30,10 @@ void _setupOverlayListener() {
         return;
       }
 
-      // اعرض إشعاراً بالنتيجة
       final db = DatabaseHelper.instance;
 
       if (parsed.intent == 'add_account') {
-        // إنشاء حساب جديد
-        final existing = await db.findCustomerByName(parsed.customerName);
+        final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
           await NotificationService.show(
             'الحساب موجود مسبقاً',
@@ -62,42 +53,58 @@ void _setupOverlayListener() {
         return;
       }
 
-      // معاملة عادية
-      final customer = await db.findCustomerByName(parsed.customerName);
+      final customer = await db.findExactCustomer(parsed.customerName);
       if (customer == null) {
-        await NotificationService.show(
-          '❌ لا يوجد حساب',
-          '"${parsed.customerName}" — قل "أضف حساب عميل ${parsed.customerName}"',
-        );
+        final partial = await db.findCustomersContaining(parsed.customerName);
+        if (partial.isEmpty) {
+          await NotificationService.show(
+            '❌ لا يوجد حساب',
+            '"${parsed.customerName}"',
+          );
+          return;
+        }
+        if (partial.length > 1) {
+          await NotificationService.show(
+            '⚠️ يوجد أكثر من حساب',
+            'افتح التطبيق للاختيار',
+          );
+          return;
+        }
+        await _saveTransactionFor(partial.first, parsed, db);
         return;
       }
 
-      final storedType = (parsed.intent == 'return') ? 'payment' : parsed.intent;
-
-      await db.insertTransaction(Transaction(
-        customerId: customer.id!,
-        amount: parsed.amount,
-        currency: parsed.currency,
-        type: storedType,
-        items: parsed.intent == 'return'
-            ? 'مرتجع${parsed.items.isEmpty ? "" : ": ${parsed.items}"}'
-            : parsed.items,
-        createdAt: DateTime.now().toIso8601String(),
-      ));
-
-      final newBalance = await db.customerBalance(customer.id!);
-      final label = {
-        'debt': 'دين',
-        'payment': 'سداد',
-        'return': 'مرتجع',
-      }[parsed.intent] ?? 'عملية';
-
-      await NotificationService.show(
-        '✅ $label بمبلغ ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}',
-        '${parsed.customerName} — الرصيد الجديد: ${newBalance.toStringAsFixed(0)}',
-      );
+      await _saveTransactionFor(customer, parsed, db);
     }
   });
+}
+
+Future<void> _saveTransactionFor(
+    Customer customer, dynamic parsed, DatabaseHelper db) async {
+  final storedType = (parsed.intent == 'return') ? 'payment' : parsed.intent;
+
+  await db.insertTransaction(Transaction(
+    customerId: customer.id!,
+    amount: parsed.amount,
+    currency: parsed.currency,
+    type: storedType,
+    items: parsed.intent == 'return'
+        ? 'مرتجع${parsed.items.isEmpty ? "" : ": ${parsed.items}"}'
+        : parsed.items,
+    createdAt: DateTime.now().toIso8601String(),
+  ));
+
+  final newBalance = await db.customerBalance(customer.id!);
+  final label = {
+    'debt': 'دين',
+    'payment': 'سداد',
+    'return': 'مرتجع',
+  }[parsed.intent] ?? 'عملية';
+
+  await NotificationService.show(
+    '✅ $label بمبلغ ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}',
+    '${customer.name} — الرصيد: ${newBalance.toStringAsFixed(0)}',
+  );
 }
 
 class DebtApp extends StatelessWidget {
@@ -112,12 +119,11 @@ class DebtApp extends StatelessWidget {
         useMaterial3: true,
         colorSchemeSeed: const Color(0xFF1B6B3A),
       ),
-      home: const HomeScreen(),
+      home: const TabsScreen(),
     );
   }
 }
 
-/// نقطة دخول النافذة العائمة — مهم جداً
 @pragma("vm:entry-point")
 void overlayMain() {
   WidgetsFlutterBinding.ensureInitialized();
