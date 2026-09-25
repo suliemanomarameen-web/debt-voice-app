@@ -26,7 +26,7 @@ class ParserService {
     if (original.isEmpty) return null;
     final t = original.toLowerCase();
 
-    // ========== نية إضافة حساب (موسّعة) ==========
+    // ========== نية إضافة حساب ==========
     final addAccountMatch = _detectAddAccountIntent(t, original);
     if (addAccountMatch != null) return addAccountMatch;
 
@@ -55,19 +55,17 @@ class ParserService {
       intent = 'payment';
     }
 
-    final amount = _extractAmount(t);
-    if (amount == null) return null;
-
-    final name = _extractName(original);
-    if (name == null) return null;
+    // ========== استخراج الاسم والمبلغ معاً ==========
+    final extracted = _extractNameAndAmount(original);
+    if (extracted == null) return null;
 
     final currency = _extractCurrency(t);
-    final items = _extractItems(original);
+    final items = _extractItemsAfterAmount(original);
 
     return ParsedEntry(
       intent: intent,
-      customerName: name,
-      amount: amount,
+      customerName: extracted.name,
+      amount: extracted.amount,
       currency: currency,
       accountType: 'customer',
       items: items,
@@ -76,21 +74,128 @@ class ParserService {
     );
   }
 
+  // ============================================================
+  // استخراج الاسم + المبلغ (الاسم حتى الوصول لرقم)
+  // ============================================================
+  static _NameAmount? _extractNameAndAmount(String text) {
+    // قائمة الكلمات المفتاحية التي تسبق الاسم
+    const keywords = [
+      'سجل على', 'سجل ل', 'سجل',
+      'وصل من', 'وصل ل', 'وصل',
+      'دفع من', 'دفع ل', 'دفع',
+      'سدد', 'استلمت', 'استلم',
+      'مرتجع من', 'مرتجع ل', 'مرتجع',
+      'على', 'عليه', 'عليها',
+      'record for', 'record',
+    ];
+
+    // حاول مع كل كلمة مفتاحية، الأطول أولاً
+    final sortedKeywords = List<String>.from(keywords)
+      ..sort((a, b) => b.length.compareTo(a.length));
+
+    for (final kw in sortedKeywords) {
+      final idx = text.toLowerCase().indexOf(kw.toLowerCase());
+      if (idx == -1) continue;
+
+      // ما بعد الكلمة المفتاحية
+      final after = text.substring(idx + kw.length).trim();
+      if (after.isEmpty) continue;
+
+      // نقسم إلى كلمات
+      final words = after.split(RegExp(r'\s+'));
+
+      // اجمع كلمات الاسم حتى نجد رقماً
+      final nameParts = <String>[];
+      double? amount;
+      int amountIndex = -1;
+
+      for (int i = 0; i < words.length; i++) {
+        final w = words[i];
+
+        // إزالة علامات الترقيم من نهاية الكلمة
+        final cleaned = w.replaceAll(RegExp(r'[،,.!؟?:;]+$'), '');
+        if (cleaned.isEmpty) continue;
+
+        // هل هي رقم؟
+        final num = _tryParseNumber(cleaned);
+        if (num != null) {
+          amount = num;
+          amountIndex = i;
+          break;
+        }
+
+        // هل هي كلمة رقمية (ألف، خمس مية، إلخ)؟
+        final wordNum = _tryParseWordNumber(cleaned);
+        if (wordNum != null) {
+          amount = wordNum;
+          amountIndex = i;
+          break;
+        }
+
+        // هل هي كلمة توقف؟
+        if (_isStopWord(cleaned)) break;
+
+        // أضفها للاسم
+        nameParts.add(cleaned);
+      }
+
+      if (nameParts.isEmpty || amount == null) continue;
+
+      final name = _cleanName(nameParts.join(' '));
+      if (name.isEmpty) continue;
+
+      return _NameAmount(name, amount);
+    }
+
+    return null;
+  }
+
+  // ============ محاولة تحويل كلمة إلى رقم ============
+  static double? _tryParseNumber(String w) {
+    // أرقام عربية → إنجليزية
+    final normalized = w
+        .replaceAll('٠', '0').replaceAll('١', '1').replaceAll('٢', '2')
+        .replaceAll('٣', '3').replaceAll('٤', '4').replaceAll('٥', '5')
+        .replaceAll('٦', '6').replaceAll('٧', '7').replaceAll('٨', '8')
+        .replaceAll('٩', '9');
+
+    // رقم مباشر؟
+    final m = RegExp(r'^(\d+(?:[.,]\d+)?)$').firstMatch(normalized);
+    if (m != null) {
+      return double.tryParse(m.group(1)!.replaceAll(',', ''));
+    }
+    return null;
+  }
+
+  // ============ كلمات رقمية ============
+  static double? _tryParseWordNumber(String w) {
+    final lower = w.toLowerCase();
+    const map = {
+      'ألف': 1000, 'الف': 1000, 'ألفين': 2000, 'الفين': 2000,
+      'مليون': 1000000, 'مليونين': 2000000,
+      'مائة': 100, 'مئة': 100, 'مية': 100,
+      'خمسمية': 500, 'خمسماية': 500,
+      'thousand': 1000, 'million': 1000000, 'hundred': 100,
+    };
+    for (final e in map.entries) {
+      if (lower == e.key) return e.value.toDouble();
+    }
+    return null;
+  }
+
   // ============ كشف نية إضافة حساب ============
   static ParsedEntry? _detectAddAccountIntent(String t, String original) {
-    // قائمة الأفعال التي تعني "إضافة/إنشاء"
     const addVerbs = [
       'أضف', 'اضف', 'أضيف', 'اضيف', 'أضيفي',
       'أنشئ', 'انشئ', 'أنشيء', 'انشيء',
-      'سجل', 'افتح', 'افتحي', 'انشاء', 'إنشاء',
-      'create', 'add', 'new',
+      'سجل حساب', 'افتح حساب', 'افتحي حساب',
+      'انشاء حساب', 'إنشاء حساب',
+      'create account', 'add account',
     ];
 
-    // هل الجملة تحتوي على فعل إضافة؟
     final hasAddVerb = addVerbs.any((v) => t.contains(v));
     if (!hasAddVerb) return null;
 
-    // هل تحتوي على كلمة "حساب" أو نوع حساب (عميل/مورد)؟
     final hasAccountWord = t.contains('حساب') ||
         t.contains('عميل') ||
         t.contains('مورد') ||
@@ -102,7 +207,6 @@ class ParserService {
 
     if (!hasAccountWord) return null;
 
-    // تحديد نوع الحساب
     String accountType = 'customer';
     if (t.contains('مورد') || t.contains('supplier')) {
       accountType = 'supplier';
@@ -110,7 +214,6 @@ class ParserService {
       accountType = 'other';
     }
 
-    // استخراج الاسم
     final name = _extractAccountName(original);
     if (name == null || name.isEmpty) return null;
 
@@ -127,35 +230,37 @@ class ParserService {
 
   // ============ استخراج اسم الحساب الجديد ============
   static String? _extractAccountName(String text) {
-    // صيغ متعددة:
-    // 1) "أضف حساب عميل باسم محمد"
-    // 2) "أضف حساب باسم محمد"
-    // 3) "أنشئ حساب عميل محمد"
-    // 4) "أضف عميل محمد"
-    // 5) "أضف مورد أحمد"
-
     final patterns = [
-      // "باسم X" — الأوضح
-      RegExp(r'باسم\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
-      // "اسمه X"
-      RegExp(r'اسمه\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
-      // "حساب عميل X" / "حساب مورد X" / "حساب X"
-      RegExp(r'حساب\s+(?:عميل|مورد|أخرى|اخرى|جديد|جديدة)?\s*([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
-      // "عميل X" / "مورد X"
-      RegExp(r'(?:عميل|مورد)\s+(?:باسم\s+|اسمه\s+)?([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
-      // "أضف X" (آخر كلمة)
-      RegExp(r'(?:أضف|اضف|أضيف|اضيف|أنشئ|انشئ|سجل|افتح)\s+([\u0600-\u06FFa-zA-Z][\u0600-\u06FFa-zA-Z\s]{0,30})$'),
+      RegExp(r'باسم\s+(.+)$'),
+      RegExp(r'اسمه\s+(.+)$'),
+      RegExp(r'حساب\s+(?:عميل|مورد|أخرى|اخرى|جديد|جديدة)?\s*(.+)$'),
+      RegExp(r'(?:عميل|مورد)\s+(?:باسم\s+|اسمه\s+)?(.+)$'),
+      RegExp(r'(?:أضف|اضف|أضيف|اضيف|أنشئ|انشئ|سجل|افتح)\s+(.+)$'),
     ];
 
     for (final pattern in patterns) {
       final m = pattern.firstMatch(text);
       if (m != null) {
         var name = m.group(1)!.trim();
-        // إزالة كلمات مفتاحية عالقة
+
+        // اقتطع عند أول رقم
+        final digitMatch = RegExp(r'\d').firstMatch(name);
+        if (digitMatch != null) {
+          name = name.substring(0, digitMatch.start).trim();
+        }
+
+        // اقتطع عند أول عملة
+        for (final curr in ['ريال', 'دولار', 'درهم', 'سعودي']) {
+          final ci = name.indexOf(curr);
+          if (ci > 0) name = name.substring(0, ci).trim();
+        }
+
+        // إزالة الكلمات المفتاحية العالقة
         name = name.replaceAll(RegExp(
             r'^(?:حساب|عميل|مورد|جديد|جديدة|أخرى|اخرى|باسم|اسمه)\s+'),
             '');
         name = name.trim();
+
         if (name.isNotEmpty && !_isBadName(name)) {
           return name;
         }
@@ -168,7 +273,7 @@ class ParserService {
   static bool _isBadName(String name) {
     const bad = [
       'حساب', 'عميل', 'مورد', 'جديد', 'جديدة', 'أخرى', 'اخرى',
-      'باسم', 'اسمه', 'جديد', 'account', 'customer', 'supplier',
+      'باسم', 'اسمه', 'account', 'customer', 'supplier',
     ];
     return bad.contains(name.toLowerCase());
   }
@@ -176,8 +281,13 @@ class ParserService {
   // ============ تنظيف الاسم ============
   static String _cleanName(String name) {
     var n = name.trim();
+    // إزالة علامات الترقيم من البداية والنهاية
+    n = n.replaceAll(RegExp(r'^[،,.!؟?:;\s]+'), '');
+    n = n.replaceAll(RegExp(r'[،,.!؟?:;\s]+$'), '');
+
+    // إزالة "لـ" من البداية
     if (n.startsWith('لـ')) n = n.substring(2);
-    else if (n.startsWith('ل') && n.length > 1) {
+    else if (n.startsWith('ل') && n.length > 2) {
       final rest = n.substring(1);
       const badWords = ['وصل', 'دفع', 'سجل', 'من', 'على'];
       if (!badWords.any((w) => rest.startsWith(w))) {
@@ -187,57 +297,16 @@ class ParserService {
     return n.trim();
   }
 
-  // ============ أدوات مساعدة ============
-  static String _normalizeDigits(String s) => s
-      .replaceAll('٠', '0').replaceAll('١', '1').replaceAll('٢', '2')
-      .replaceAll('٣', '3').replaceAll('٤', '4').replaceAll('٥', '5')
-      .replaceAll('٦', '6').replaceAll('٧', '7').replaceAll('٨', '8')
-      .replaceAll('٩', '9');
-
-  static double? _extractAmount(String t) {
-    final normalized = _normalizeDigits(t);
-    final m = RegExp(r'(\d+(?:[.,]\d+)?)').firstMatch(normalized);
-    if (m != null) {
-      final val = double.tryParse(m.group(1)!.replaceAll(',', ''));
-      if (val != null) return val;
-    }
-
-    final wordMap = {
-      'ألف': 1000, 'الف': 1000, 'ألفين': 2000, 'الفين': 2000,
-      'مليون': 1000000, 'مليونين': 2000000,
-      'مائة': 100, 'مئة': 100, 'مية': 100,
-      'خمسمية': 500, 'خمس مية': 500,
-      'thousand': 1000, 'million': 1000000, 'hundred': 100,
-    };
-    for (final e in wordMap.entries) {
-      if (t.contains(e.key)) return e.value.toDouble();
-    }
-    return null;
-  }
-
-  static String? _extractName(String text) {
-    final patterns = [
-      RegExp(
-          r'(?:سجل على|سجل ل|سجل|وصل من|وصل ل|وصل|دفع من|دفع ل|دفع|سدد|استلم|استلمت|مرتجع من|مرتجع ل|مرتجع|record for|record)\s+([\u0600-\u06FFa-zA-Z]+)',
-          caseSensitive: false),
-      RegExp(
-          r'(?:على|عليه|عليها)\s+([\u0600-\u06FFa-zA-Z]+)',
-          caseSensitive: false),
+  static bool _isStopWord(String w) {
+    const stops = [
+      'دين', 'سداد', 'مرتجع',
+      'دفع', 'وصل', 'سجل', 'على', 'من', 'إلى',
+      'في', 'عن', 'مع', 'و', 'أو', 'ثم',
+      'أصناف', 'الأصناف', 'اصناف', 'items',
+      'ريال', 'دولار', 'درهم', 'سعودي',
+      'yer', 'usd', 'sar', 'aed',
     ];
-
-    for (final pattern in patterns) {
-      final m = pattern.firstMatch(text);
-      if (m != null) {
-        final candidate = m.group(1)!;
-        final cleaned = _cleanName(candidate);
-        if (cleaned.isNotEmpty && !_isKeywordOrCurrency(cleaned)) {
-          return cleaned;
-        }
-      }
-    }
-
-    final first = RegExp(r'^([\u0600-\u06FFa-zA-Z]+)').firstMatch(text);
-    return first != null ? _cleanName(first.group(1)!) : null;
+    return stops.contains(w.toLowerCase());
   }
 
   static bool _isKeywordOrCurrency(String w) {
@@ -249,6 +318,7 @@ class ParserService {
     return keywords.any((k) => w.toLowerCase() == k);
   }
 
+  // ============ العملة ============
   static String _extractCurrency(String t) {
     if (t.contains('دولار') || t.contains('dollar')) return 'USD';
     if (t.contains('سعودي') || t.contains('sar')) return 'SAR';
@@ -256,24 +326,34 @@ class ParserService {
     return 'YER';
   }
 
-  static String _extractItems(String text) {
-    final itemMatch = RegExp(
-      r'(?:أصناف|الأصناف|اصناف|items)[:\s]+(.+)',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (itemMatch != null) return itemMatch.group(1)!.trim();
+  // ============ الأصناف: كل ما بعد المبلغ والعملة ============
+  static String _extractItemsAfterAmount(String text) {
+    // ابحث عن أول رقم في النص
+    final digitMatch = RegExp(r'\d+').firstMatch(text);
+    if (digitMatch == null) return '';
 
-    final afterAmount = RegExp(
-      r'\d+(?:[.,]\d+)?\s*(?:ريال|دولار|سعودي|درهم|riyal|dollar|sar|aed|yer)?\s+(.+)',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (afterAmount != null) {
-      var items = afterAmount.group(1)!.trim();
-      items = items.replaceFirst(
-          RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]+',
-              caseSensitive: false), '');
-      return items;
-    }
-    return '';
+    // ما بعد الرقم
+    var after = text.substring(digitMatch.end).trim();
+
+    // احذف العملة من البداية إن وُجدت
+    after = after.replaceFirst(
+        RegExp(r'^(?:ريال|دولار|درهم|سعودي|riyal|dollar|sar|aed|yer)\s*'),
+        '');
+
+    // احذف "أصناف" أو "الأصناف" إن وُجدت
+    after = after.replaceFirst(
+        RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]*'),
+        '');
+
+    // احذف علامات الترقيم
+    after = after.replaceAll(RegExp(r'^[،,.!؟?:;\s]+'), '');
+
+    return after.trim();
   }
+}
+
+class _NameAmount {
+  final String name;
+  final double amount;
+  _NameAmount(this.name, this.amount);
 }
