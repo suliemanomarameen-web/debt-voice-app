@@ -18,9 +18,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   bool _listening = false;
   ParsedEntry? _parsed;
   Customer? _foundCustomer;
-  List<Customer> _matches = [];   // ← نتائج البحث المتعددة
+  List<Customer> _matches = [];
   String? _errorMessage;
-  bool _askingWhich = false;      // ← في وضع اختيار الحساب
+  bool _askingWhich = false;
 
   @override
   void initState() {
@@ -66,23 +66,24 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // حساب جديد
+    // إنشاء حساب جديد
     if (parsed.intent == 'add_account') {
       setState(() {
         _parsed = parsed;
         _foundCustomer = null;
         _matches = [];
         _errorMessage = null;
+        _askingWhich = false;
       });
       return;
     }
 
-    // معاملة عادية: ابحث عن الحساب
+    // معاملة عادية: البحث الذكي
     final db = DatabaseHelper.instance;
-    final exact = await db.findExactCustomer(parsed.customerName);
 
+    // 1) مطابقة كاملة أولاً
+    final exact = await db.findExactCustomer(parsed.customerName);
     if (exact != null) {
-      // مطابقة كاملة ✅
       setState(() {
         _parsed = parsed;
         _foundCustomer = exact;
@@ -93,7 +94,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // بحث جزئي
+    // 2) بحث جزئي
     final partial = await db.findCustomersContaining(parsed.customerName);
 
     if (partial.isEmpty) {
@@ -107,8 +108,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
+    // 3) نتيجة واحدة
     if (partial.length == 1) {
-      // يوجد واحد فقط
       setState(() {
         _parsed = parsed;
         _foundCustomer = partial.first;
@@ -119,7 +120,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // يوجد أكثر من واحد → اسأل
+    // 4) أكثر من نتيجة → اسأل
     setState(() {
       _parsed = parsed;
       _foundCustomer = null;
@@ -129,7 +130,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // اختيار الحساب من القائمة
   void _chooseCustomer(Customer c) {
     setState(() {
       _foundCustomer = c;
@@ -255,7 +255,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // النص المكتشف
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -279,8 +278,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // زر الميكروفون
               GestureDetector(
                 onTap: _toggle,
                 child: Container(
@@ -309,7 +306,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
               Text(_listening ? 'أستمع...' : 'اضغط للتحدث',
                   style: const TextStyle(fontSize: 16)),
 
-              // خطأ
               if (_errorMessage != null) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -327,7 +323,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // قائمة الاختيار عند وجود أكثر من مطابقة
               if (_askingWhich && _matches.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -364,7 +359,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // بطاقة النتيجة
               if (_parsed != null && _foundCustomer != null) ...[
                 const SizedBox(height: 24),
                 Card(
@@ -416,7 +410,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // بطاقة إنشاء حساب
               if (_parsed != null &&
                   _parsed!.intent == 'add_account' &&
                   _foundCustomer == null) ...[
