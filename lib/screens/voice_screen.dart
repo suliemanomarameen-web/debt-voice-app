@@ -18,7 +18,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   bool _listening = false;
   ParsedEntry? _parsed;
   Customer? _foundCustomer;
+  List<Customer> _matches = [];   // ← نتائج البحث المتعددة
   String? _errorMessage;
+  bool _askingWhich = false;      // ← في وضع اختيار الحساب
 
   @override
   void initState() {
@@ -38,7 +40,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _text = '';
       _parsed = null;
       _foundCustomer = null;
+      _matches = [];
       _errorMessage = null;
+      _askingWhich = false;
       _listening = true;
     });
 
@@ -62,32 +66,75 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
+    // حساب جديد
     if (parsed.intent == 'add_account') {
       setState(() {
         _parsed = parsed;
         _foundCustomer = null;
+        _matches = [];
         _errorMessage = null;
       });
       return;
     }
 
+    // معاملة عادية: ابحث عن الحساب
     final db = DatabaseHelper.instance;
-    final customer = await db.findCustomerByName(parsed.customerName);
+    final exact = await db.findExactCustomer(parsed.customerName);
 
-    if (customer == null) {
+    if (exact != null) {
+      // مطابقة كاملة ✅
+      setState(() {
+        _parsed = parsed;
+        _foundCustomer = exact;
+        _matches = [];
+        _errorMessage = null;
+        _askingWhich = false;
+      });
+      return;
+    }
+
+    // بحث جزئي
+    final partial = await db.findCustomersContaining(parsed.customerName);
+
+    if (partial.isEmpty) {
       setState(() {
         _parsed = null;
         _foundCustomer = null;
+        _matches = [];
         _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"\n\n'
             'قل: "أضف حساب عميل ${parsed.customerName}" لإنشائه.';
       });
       return;
     }
 
+    if (partial.length == 1) {
+      // يوجد واحد فقط
+      setState(() {
+        _parsed = parsed;
+        _foundCustomer = partial.first;
+        _matches = [];
+        _errorMessage = null;
+        _askingWhich = false;
+      });
+      return;
+    }
+
+    // يوجد أكثر من واحد → اسأل
     setState(() {
       _parsed = parsed;
-      _foundCustomer = customer;
+      _foundCustomer = null;
+      _matches = partial;
       _errorMessage = null;
+      _askingWhich = true;
+    });
+  }
+
+  // اختيار الحساب من القائمة
+  void _chooseCustomer(Customer c) {
+    setState(() {
+      _foundCustomer = c;
+      _askingWhich = false;
+      _matches = [];
     });
   }
 
@@ -95,7 +142,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
     final db = DatabaseHelper.instance;
 
-    final existing = await db.findCustomerByName(_parsed!.customerName);
+    final existing = await db.findExactCustomer(_parsed!.customerName);
     if (existing != null) {
       setState(() {
         _errorMessage = 'الحساب "${_parsed!.customerName}" موجود مسبقاً';
@@ -208,6 +255,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              // النص المكتشف
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -231,6 +279,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+
+              // زر الميكروفون
               GestureDetector(
                 onTap: _toggle,
                 child: Container(
@@ -259,6 +309,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
               Text(_listening ? 'أستمع...' : 'اضغط للتحدث',
                   style: const TextStyle(fontSize: 16)),
 
+              // خطأ
               if (_errorMessage != null) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -276,38 +327,64 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              if (_parsed != null) ...[
-                const SizedBox(height: 24),
+              // قائمة الاختيار عند وجود أكثر من مطابقة
+              if (_askingWhich && _matches.isNotEmpty) ...[
+                const SizedBox(height: 20),
                 Card(
-                  color: _parsed!.intent == 'add_account'
-                      ? Colors.blue.shade50
-                      : Colors.green.shade50,
+                  color: Colors.orange.shade50,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _parsed!.intent == 'add_account'
-                              ? '➕ إنشاء حساب جديد'
-                              : '✅ النتيجة:',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
+                        const Row(
+                          children: [
+                            Icon(Icons.help_outline, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Text('أي حساب تقصد؟',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                          ],
                         ),
                         const SizedBox(height: 12),
-                        if (_parsed!.intent != 'add_account') ...[
-                          _row('النوع', _typeLabel(_parsed!.intent)),
-                          _row('الاسم', _parsed!.customerName),
-                          _row(
-                              'المبلغ',
-                              '${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency}'),
-                          if (_parsed!.items.isNotEmpty)
-                            _row('الأصناف', _parsed!.items),
-                        ] else ...[
-                          _row('الاسم', _parsed!.customerName),
-                          _row('النوع',
-                              AccountType.labelsAr[_parsed!.accountType] ?? ''),
-                        ],
+                        ..._matches.map((c) => ListTile(
+                              leading: CircleAvatar(
+                                child: Text(c.name.characters.first),
+                              ),
+                              title: Text(c.name),
+                              subtitle: Text(
+                                  AccountType.labelsAr[c.accountType] ?? ''),
+                              trailing: const Icon(Icons.arrow_forward_ios,
+                                  size: 16),
+                              onTap: () => _chooseCustomer(c),
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              // بطاقة النتيجة
+              if (_parsed != null && _foundCustomer != null) ...[
+                const SizedBox(height: 24),
+                Card(
+                  color: Colors.green.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('✅ تأكيد:',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 12),
+                        _row('النوع', _typeLabel(_parsed!.intent)),
+                        _row('الحساب', _foundCustomer!.name),
+                        _row(
+                            'المبلغ',
+                            '${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency}'),
+                        if (_parsed!.items.isNotEmpty)
+                          _row('الأصناف', _parsed!.items),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -317,6 +394,55 @@ class _VoiceScreenState extends State<VoiceScreen> {
                                   _parsed = null;
                                   _text = '';
                                   _foundCustomer = null;
+                                  _matches = [];
+                                  _errorMessage = null;
+                                  _askingWhich = false;
+                                }),
+                                child: const Text('إلغاء'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: _saveTransaction,
+                                child: const Text('حفظ'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              // بطاقة إنشاء حساب
+              if (_parsed != null &&
+                  _parsed!.intent == 'add_account' &&
+                  _foundCustomer == null) ...[
+                const SizedBox(height: 24),
+                Card(
+                  color: Colors.blue.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('➕ إنشاء حساب جديد',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 12),
+                        _row('الاسم', _parsed!.customerName),
+                        _row('النوع',
+                            AccountType.labelsAr[_parsed!.accountType] ?? ''),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () => setState(() {
+                                  _parsed = null;
+                                  _text = '';
                                   _errorMessage = null;
                                 }),
                                 child: const Text('إلغاء'),
@@ -325,12 +451,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: FilledButton(
-                                onPressed: _parsed!.intent == 'add_account'
-                                    ? _saveAccount
-                                    : _saveTransaction,
-                                child: Text(_parsed!.intent == 'add_account'
-                                    ? 'إنشاء'
-                                    : 'حفظ'),
+                                onPressed: _saveAccount,
+                                child: const Text('إنشاء'),
                               ),
                             ),
                           ],
