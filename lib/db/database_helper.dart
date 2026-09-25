@@ -69,14 +69,41 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  Future<Customer?> findCustomerByName(String name) async {
-    final db = await database;
-    final r = await db.query('customers',
-        where: 'name LIKE ?', whereArgs: ['%$name%'], limit: 1);
-    if (r.isEmpty) return null;
-    return Customer.fromMap(r.first);
-  }
+  /// بحث دقيق: يُرجع الزبون الذي يطابق الاسم بالضبط أو null
+Future<Customer?> findExactCustomer(String name) async {
+  final db = await database;
+  final r = await db.query('customers',
+      where: 'name = ?', whereArgs: [name], limit: 1);
+  if (r.isEmpty) return null;
+  return Customer.fromMap(r.first);
+}
 
+/// بحث واسع: يُرجع كل الزبائن الذين يحتوي اسمهم على النص
+Future<List<Customer>> findCustomersContaining(String name) async {
+  final db = await database;
+  final r = await db.query('customers',
+      where: 'name LIKE ?', whereArgs: ['%$name%'],
+      orderBy: 'name ASC');
+  return r.map((e) => Customer.fromMap(e)).toList();
+}
+
+/// بحث ذكي (يُستخدم في voice_screen):
+/// - يطابق الاسم الكامل أولاً
+/// - إن لم يجد، يبحث عن أسماء تحتوي النص
+/// - يُرجع كل النتائج للاختيار
+Future<List<Customer>> smartSearch(String name) async {
+  final exact = await findExactCustomer(name);
+  if (exact != null) return [exact];
+  return await findCustomersContaining(name);
+}
+
+/// للتوافق مع الكود القديم
+Future<Customer?> findCustomerByName(String name) async {
+  final exact = await findExactCustomer(name);
+  if (exact != null) return exact;
+  final list = await findCustomersContaining(name);
+  return list.isEmpty ? null : list.first;
+}
   // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
