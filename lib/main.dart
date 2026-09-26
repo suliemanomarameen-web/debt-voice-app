@@ -3,6 +3,7 @@ import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
+import 'services/permission_service.dart';
 import 'services/parser_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
@@ -11,22 +12,30 @@ import 'models/transaction.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.init();
+  await PermissionService.requestAll();
   _setupOverlayListener();
   runApp(const DebtApp());
 }
 
 void _setupOverlayListener() {
   OverlayService.listen((data) async {
-    if (data is Map && data['action'] == 'voice_text') {
+    if (data is! Map) return;
+
+    if (data['action'] == 'need_setup') {
+      await NotificationService.show(
+        '⚠️ يحتاج إعداد',
+        'افتح التطبيق → الإعدادات',
+      );
+      return;
+    }
+
+    if (data['action'] == 'voice_text') {
       final text = data['text'] as String? ?? '';
       if (text.isEmpty) return;
 
       final parsed = ParserService.parse(text);
       if (parsed == null) {
-        await NotificationService.show(
-          'لم أفهم الجملة',
-          'النص: "$text"',
-        );
+        await NotificationService.show('لم أفهم', 'النص: "$text"');
         return;
       }
 
@@ -35,10 +44,7 @@ void _setupOverlayListener() {
       if (parsed.intent == 'add_account') {
         final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
-          await NotificationService.show(
-            'الحساب موجود مسبقاً',
-            '"${parsed.customerName}" مسجل بالفعل',
-          );
+          await NotificationService.show('موجود مسبقاً', parsed.customerName);
           return;
         }
         await db.insertCustomer(Customer(
@@ -46,10 +52,7 @@ void _setupOverlayListener() {
           accountType: parsed.accountType,
           createdAt: DateTime.now().toIso8601String(),
         ));
-        await NotificationService.show(
-          '✅ تم إنشاء حساب',
-          '${parsed.customerName} (${parsed.accountType})',
-        );
+        await NotificationService.show('✅ تم إنشاء حساب', parsed.customerName);
         return;
       }
 
@@ -57,23 +60,16 @@ void _setupOverlayListener() {
       if (customer == null) {
         final partial = await db.findCustomersContaining(parsed.customerName);
         if (partial.isEmpty) {
-          await NotificationService.show(
-            '❌ لا يوجد حساب',
-            '"${parsed.customerName}"',
-          );
+          await NotificationService.show('❌ لا يوجد حساب', parsed.customerName);
           return;
         }
         if (partial.length > 1) {
-          await NotificationService.show(
-            '⚠️ يوجد أكثر من حساب',
-            'افتح التطبيق للاختيار',
-          );
+          await NotificationService.show('⚠️ يوجد أكثر من حساب', 'افتح التطبيق');
           return;
         }
         await _saveTransactionFor(partial.first, parsed, db);
         return;
       }
-
       await _saveTransactionFor(customer, parsed, db);
     }
   });
@@ -102,14 +98,13 @@ Future<void> _saveTransactionFor(
   }[parsed.intent] ?? 'عملية';
 
   await NotificationService.show(
-    '✅ $label بمبلغ ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}',
+    '✅ $label ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}',
     '${customer.name} — الرصيد: ${newBalance.toStringAsFixed(0)}',
   );
 }
 
 class DebtApp extends StatelessWidget {
   const DebtApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
