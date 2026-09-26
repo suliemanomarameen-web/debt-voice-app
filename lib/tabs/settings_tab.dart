@@ -1,8 +1,84 @@
 import 'package:flutter/material.dart';
 import '../services/overlay_service.dart';
+import '../services/permission_service.dart';
+import '../services/speech_service.dart';
 
-class SettingsTab extends StatelessWidget {
+class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key});
+  @override
+  State<SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<SettingsTab> {
+  final _speech = SpeechService();
+  bool _micReady = false;
+  bool _speechReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    final mic = await PermissionService.allGranted();
+    if (!_speechReady) {
+      _speechReady = await _speech.init();
+    }
+    if (!mounted) return;
+    setState(() {
+      _micReady = mic;
+      _speechReady = _speechReady;
+    });
+  }
+
+  Future<void> _enableAll() async {
+    await PermissionService.requestAll();
+    _speechReady = await _speech.init();
+    await _checkStatus();
+
+    if (!mounted) return;
+    if (_micReady && _speechReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ كل شيء جاهز'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      String msg = '';
+      if (!_micReady) msg += 'الميكروفون غير مسموح. ';
+      if (!_speechReady) msg += 'محرك الصوت غير جاهز.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('⚠️ $msg'), backgroundColor: Colors.orange),
+      );
+    }
+  }
+
+  Future<void> _startOverlay() async {
+    if (!_micReady || !_speechReady) {
+      await _enableAll();
+      if (!_micReady || !_speechReady) return;
+    }
+
+    final ok = await OverlayService.show();
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ تم تشغيل الزر العائم'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ فشل التشغيل'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -10,32 +86,37 @@ class SettingsTab extends StatelessWidget {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          const _SectionHeader('الزر العائم فوق التطبيقات'),
+          const _SectionHeader('التهيئة'),
+          ListTile(
+            leading: Icon(
+              _micReady ? Icons.check_circle : Icons.error_outline,
+              color: _micReady ? Colors.green : Colors.red,
+            ),
+            title: const Text('إذن الميكروفون'),
+            subtitle: Text(_micReady ? 'ممنوح ✅' : 'غير ممنوح'),
+          ),
+          ListTile(
+            leading: Icon(
+              _speechReady ? Icons.check_circle : Icons.error_outline,
+              color: _speechReady ? Colors.green : Colors.red,
+            ),
+            title: const Text('محرك الصوت'),
+            subtitle: Text(_speechReady ? 'جاهز ✅' : 'غير جاهز'),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: FilledButton.icon(
+              onPressed: _enableAll,
+              icon: const Icon(Icons.security),
+              label: const Text('تفعيل كل الأذونات'),
+            ),
+          ),
+          const _SectionHeader('الزر العائم'),
           ListTile(
             leading: const Icon(Icons.picture_in_picture_alt),
             title: const Text('تشغيل الزر العائم'),
-            subtitle: const Text('يظهر على حافة الشاشة من أي تطبيق'),
             trailing: FilledButton(
-              onPressed: () async {
-                final ok = await OverlayService.show();
-                if (context.mounted) {
-                  if (ok) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('✅ تم تشغيل الزر العائم'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('⚠️ فشل التشغيل — امنح الأذونات'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                  }
-                }
-              },
+              onPressed: _startOverlay,
               child: const Text('تشغيل'),
             ),
           ),
@@ -46,10 +127,7 @@ class SettingsTab extends StatelessWidget {
               await OverlayService.hide();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم إيقاف الزر العائم'),
-                    backgroundColor: Colors.grey,
-                  ),
+                  const SnackBar(content: Text('تم الإيقاف')),
                 );
               }
             },
@@ -59,11 +137,6 @@ class SettingsTab extends StatelessWidget {
             leading: Icon(Icons.info_outline),
             title: Text('دفتر الديون'),
             subtitle: Text('الإصدار 1.0.0'),
-          ),
-          const ListTile(
-            leading: Icon(Icons.mic),
-            title: Text('محرك الصوت'),
-            subtitle: Text('Google STT (متصل)'),
           ),
         ],
       ),
