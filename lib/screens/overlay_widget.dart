@@ -14,30 +14,43 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   bool _recording = false;
   bool _ready = false;
   String _partialText = '';
+  bool _initializing = false;
 
   @override
   void initState() {
     super.initState();
-    // اقرأ الحالة من الـ singleton — لا تُهيّئ مرة أخرى
-    _checkReady();
+    _initSpeech();
+    // استقبل رسالة "ready" من التطبيق الرئيسي
+    FlutterOverlayWindow.overlayListener.listen((data) {
+      if (data is Map && data['action'] == 'speech_ready') {
+        if (mounted) setState(() => _ready = true);
+      }
+    });
   }
 
-  Future<void> _checkReady() async {
-    // اطلب إذن الميكروفون أولاً
-    final mic = await Permission.microphone.request();
+  Future<void> _initSpeech() async {
+    if (_initializing) return;
+    _initializing = true;
 
-    // استخدم الحالة الحالية من الـ singleton (مُهيّأة من التطبيق الرئيسي)
-    if (!_speech.isReady && mic.isGranted) {
-      await _speech.init();
+    // اطلب إذن الميكروفون
+    await Permission.microphone.request();
+
+    // هيّئ محرك الصوت هنا (داخل الـ isolate)
+    final ok = await _speech.init();
+
+    if (mounted) {
+      setState(() {
+        _ready = ok;
+        _initializing = false;
+      });
     }
-
-    if (!mounted) return;
-    setState(() => _ready = _speech.isReady);
+    _initializing = false;
   }
 
   Future<void> _startRecording() async {
     if (!_ready) {
-      await _checkReady();
+      // أعد المحاولة
+      await _initSpeech();
       if (!_ready) {
         await FlutterOverlayWindow.shareData({'action': 'need_setup'});
         return;
@@ -59,6 +72,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
         timeout: const Duration(seconds: 30),
       );
     } catch (e) {
+      print('Listen error: $e');
       if (mounted) setState(() => _recording = false);
     }
   }
@@ -68,7 +82,14 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     if (!mounted) return;
     setState(() => _recording = false);
 
-    if (_partialText.isEmpty) return;
+    if (_partialText.isEmpty) {
+      await FlutterOverlayWindow.shareData({
+        'action': 'voice_text',
+        'text': '__EMPTY__',
+      });
+      return;
+    }
+
     await FlutterOverlayWindow.shareData({
       'action': 'voice_text',
       'text': _partialText,
