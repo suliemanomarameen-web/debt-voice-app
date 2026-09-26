@@ -174,7 +174,7 @@ class _CustomersTabState extends State<CustomersTab> {
             heroTag: 'voice_customers',
             onPressed: () async {
               await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const VoiceScreen()));
+                  MaterialPageRoute(builder: (_) => VoiceScreen()));
               _refresh();
             },
             backgroundColor: Colors.deepOrange,
