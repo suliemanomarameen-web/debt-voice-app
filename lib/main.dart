@@ -11,17 +11,18 @@ import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
 
+// متغير عالمي لحمل النص القادم من الزر العائم
+String? pendingVoiceText;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await NotificationService.init();
   await PermissionService.requestAll();
 
-  // هيّئ محرك الصوت من التطبيق الرئيسي
   final speech = SpeechService();
   await speech.init();
 
-  // أبلِغ النافذة العائمة (إن كانت مفتوحة) أن الصوت جاهز
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
@@ -63,6 +64,7 @@ void _setupOverlayListener() {
 
       final db = DatabaseHelper.instance;
 
+      // إنشاء حساب
       if (parsed.intent == 'add_account') {
         final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
@@ -78,22 +80,28 @@ void _setupOverlayListener() {
         return;
       }
 
+      // معاملة عادية: ابحث
       final customer = await db.findExactCustomer(parsed.customerName);
-      if (customer == null) {
-        final partial = await db.findCustomersContaining(parsed.customerName);
-        if (partial.isEmpty) {
-          await NotificationService.show('❌ لا يوجد حساب', parsed.customerName);
-          return;
-        }
-        if (partial.length > 1) {
-          await NotificationService.show(
-              '⚠️ يوجد أكثر من حساب', 'افتح التطبيق للاختيار');
-          return;
-        }
-        await _saveTransactionFor(partial.first, parsed, db);
+      if (customer != null) {
+        await _saveTransactionFor(customer, parsed, db);
         return;
       }
-      await _saveTransactionFor(customer, parsed, db);
+
+      final partial = await db.findCustomersContaining(parsed.customerName);
+      if (partial.isEmpty) {
+        await NotificationService.show('❌ لا يوجد حساب', parsed.customerName);
+        return;
+      }
+      if (partial.length > 1) {
+        // احفظ النص لحين فتح التطبيق
+        pendingVoiceText = text;
+        await NotificationService.show(
+          '⚠️ يوجد أكثر من حساب',
+          'اضغط هنا لاختيار الحساب',
+        );
+        return;
+      }
+      await _saveTransactionFor(partial.first, parsed, db);
     }
   });
 }
@@ -120,10 +128,16 @@ Future<void> _saveTransactionFor(
     'return': 'مرتجع',
   }[parsed.intent] ?? 'عملية';
 
-  await NotificationService.show(
-    '✅ $label ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}',
-    '${customer.name} — الرصيد: ${newBalance.toStringAsFixed(0)}',
-  );
+  // الإشعار يعرض: النوع + المبلغ + الأصناف + الرصيد
+  final detail = StringBuffer();
+  detail.write('${customer.name}\n');
+  detail.write('المبلغ: ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}');
+  if (parsed.items.isNotEmpty) {
+    detail.write('\nالأصناف: ${parsed.items}');
+  }
+  detail.write('\nالرصيد: ${newBalance.toStringAsFixed(0)} ${parsed.currency}');
+
+  await NotificationService.show('✅ $label', detail.toString());
 }
 
 class DebtApp extends StatelessWidget {
