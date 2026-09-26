@@ -4,6 +4,7 @@ import 'screens/overlay_widget.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
+import 'services/speech_service.dart';
 import 'services/parser_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
@@ -11,8 +12,14 @@ import 'models/transaction.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await NotificationService.init();
   await PermissionService.requestAll();
+
+  // هيّئ محرك الصوت من التطبيق الرئيسي (سيُشارَك مع النافذة العائمة)
+  final speech = SpeechService();
+  await speech.init();
+
   _setupOverlayListener();
   runApp(const DebtApp());
 }
@@ -24,7 +31,7 @@ void _setupOverlayListener() {
     if (data['action'] == 'need_setup') {
       await NotificationService.show(
         '⚠️ يحتاج إعداد',
-        'افتح التطبيق → الإعدادات',
+        'افتح التطبيق → الإعدادات → فعّل الأذونات',
       );
       return;
     }
@@ -64,7 +71,8 @@ void _setupOverlayListener() {
           return;
         }
         if (partial.length > 1) {
-          await NotificationService.show('⚠️ يوجد أكثر من حساب', 'افتح التطبيق');
+          await NotificationService.show(
+              '⚠️ يوجد أكثر من حساب', 'افتح التطبيق للاختيار');
           return;
         }
         await _saveTransactionFor(partial.first, parsed, db);
