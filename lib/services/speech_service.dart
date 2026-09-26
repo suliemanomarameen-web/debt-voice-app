@@ -1,21 +1,44 @@
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class SpeechService {
+  // instance واحد يُشارَك بين التطبيق الرئيسي والنافذة العائمة
+  static final SpeechService _instance = SpeechService._internal();
+  factory SpeechService() => _instance;
+  SpeechService._internal();
+
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _available = false;
+  bool _initializing = false;
   String _locale = 'ar_YE';
 
   bool get isListening => _speech.isListening;
   bool get isAvailable => _available;
+  bool get isReady => _available;
 
   void setLocale(String loc) => _locale = loc;
 
   Future<bool> init() async {
     if (_available) return true;
-    _available = await _speech.initialize(
-      onError: (e) => print('STT Error: $e'),
-      onStatus: (s) => print('STT Status: $s'),
-    );
+    if (_initializing) {
+      // انتظر انتهاء التهيئة الجارية
+      for (int i = 0; i < 50; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_available) return true;
+      }
+      return _available;
+    }
+
+    _initializing = true;
+    try {
+      _available = await _speech.initialize(
+        onError: (e) => print('STT Error: $e'),
+        onStatus: (s) => print('STT Status: $s'),
+      );
+    } catch (e) {
+      print('STT Init error: $e');
+      _available = false;
+    }
+    _initializing = false;
     return _available;
   }
 
