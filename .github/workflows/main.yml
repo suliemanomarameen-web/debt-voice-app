@@ -28,7 +28,7 @@ jobs:
         run: |
           rm -rf android
           flutter create --platforms=android --org com.example --project-name debt_voice_app .
-          
+
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -37,10 +37,8 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-              <uses-permission android:name="android.permission.BLUETOOTH"/>
-              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
               <uses-permission android:name="android.permission.WAKE_LOCK"/>
-              
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
               <application
                   android:label="دفتر الديون"
                   android:name="${applicationName}"
