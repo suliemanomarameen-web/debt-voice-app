@@ -18,19 +18,26 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   @override
   void initState() {
     super.initState();
-    _setup();
+    // اقرأ الحالة من الـ singleton — لا تُهيّئ مرة أخرى
+    _checkReady();
   }
 
-  Future<void> _setup() async {
-    await Permission.microphone.request();
-    final ok = await _speech.init();
+  Future<void> _checkReady() async {
+    // اطلب إذن الميكروفون أولاً
+    final mic = await Permission.microphone.request();
+
+    // استخدم الحالة الحالية من الـ singleton (مُهيّأة من التطبيق الرئيسي)
+    if (!_speech.isReady && mic.isGranted) {
+      await _speech.init();
+    }
+
     if (!mounted) return;
-    setState(() => _ready = ok);
+    setState(() => _ready = _speech.isReady);
   }
 
   Future<void> _startRecording() async {
     if (!_ready) {
-      await _setup();
+      await _checkReady();
       if (!_ready) {
         await FlutterOverlayWindow.shareData({'action': 'need_setup'});
         return;
@@ -52,7 +59,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
         timeout: const Duration(seconds: 30),
       );
     } catch (e) {
-      setState(() => _recording = false);
+      if (mounted) setState(() => _recording = false);
     }
   }
 
