@@ -72,7 +72,7 @@ class _DebtsTabState extends State<DebtsTab> {
             heroTag: 'voice_debts',
             onPressed: () async {
               await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const VoiceScreen()));
+    MaterialPageRoute(builder: (_) => VoiceScreen()));
               _refresh();
             },
             backgroundColor: Colors.deepOrange,
