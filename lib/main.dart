@@ -25,7 +25,7 @@ void _setupOverlayListener() {
       if (parsed == null) {
         await NotificationService.show(
           'لم أفهم الجملة',
-          'جرّب: "سجل على محمد 500 ريال"',
+          'النص: "$text"',
         );
         return;
       }
