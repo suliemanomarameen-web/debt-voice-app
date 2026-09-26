@@ -7,7 +7,10 @@ import '../services/parser_service.dart';
 import '../services/speech_service.dart';
 
 class VoiceScreen extends StatefulWidget {
-  const VoiceScreen({super.key});
+  /// نص جاهز للتشغيل التلقائي (من الزر العائم)
+  final String? initialText;
+
+  const VoiceScreen({super.key, this.initialText});
   @override
   State<VoiceScreen> createState() => _VoiceScreenState();
 }
@@ -21,11 +24,20 @@ class _VoiceScreenState extends State<VoiceScreen> {
   List<Customer> _matches = [];
   String? _errorMessage;
   bool _askingWhich = false;
+  bool _autoProcessed = false;
 
   @override
   void initState() {
     super.initState();
     _speech.init();
+
+    // إن جاء نص جاهز → عالجه مباشرة
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _text = widget.initialText!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _process();
+      });
+    }
   }
 
   Future<void> _toggle() async {
@@ -57,6 +69,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   Future<void> _process() async {
+    if (_autoProcessed) return;
+    _autoProcessed = true;
+
     final parsed = ParserService.parse(_text);
     if (parsed == null) {
       setState(() {
@@ -66,7 +81,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // إنشاء حساب جديد
     if (parsed.intent == 'add_account') {
       setState(() {
         _parsed = parsed;
@@ -78,10 +92,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // معاملة عادية: البحث الذكي
     final db = DatabaseHelper.instance;
-
-    // 1) مطابقة كاملة أولاً
     final exact = await db.findExactCustomer(parsed.customerName);
     if (exact != null) {
       setState(() {
@@ -94,9 +105,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // 2) بحث جزئي
     final partial = await db.findCustomersContaining(parsed.customerName);
-
     if (partial.isEmpty) {
       setState(() {
         _parsed = null;
@@ -108,7 +117,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // 3) نتيجة واحدة
     if (partial.length == 1) {
       setState(() {
         _parsed = parsed;
@@ -120,7 +128,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
-    // 4) أكثر من نتيجة → اسأل
     setState(() {
       _parsed = parsed;
       _foundCustomer = null;
@@ -160,8 +167,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName} '
-            '(${AccountType.labelsAr[_parsed!.accountType]})'),
+        content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
         backgroundColor: Colors.green,
       ),
     );
