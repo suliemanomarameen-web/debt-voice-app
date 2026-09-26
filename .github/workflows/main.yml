@@ -39,6 +39,9 @@ jobs:
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
               <uses-permission android:name="android.permission.WAKE_LOCK"/>
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+              <uses-permission android:name="android.permission.BLUETOOTH"/>
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
               <application
                   android:label="دفتر الديون"
                   android:name="${applicationName}"
@@ -59,6 +62,10 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
+                  <service
+                      android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+                      android:exported="false"
+                      android:foregroundServiceType="microphone"/>
                   <meta-data
                       android:name="flutterEmbedding"
                       android:value="2"/>
