@@ -17,22 +17,19 @@ class SettingsTab extends StatelessWidget {
             subtitle: const Text('يظهر على حافة الشاشة من أي تطبيق'),
             trailing: FilledButton(
               onPressed: () async {
-                final granted = await OverlayService.requestPermission();
-                if (granted == true) {
-                  await OverlayService.show();
-                  if (context.mounted) {
+                final ok = await OverlayService.show();
+                if (context.mounted) {
+                  if (ok) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('✅ تم تشغيل الزر العائم'),
                         backgroundColor: Colors.green,
                       ),
                     );
-                  }
-                } else {
-                  if (context.mounted) {
+                  } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('⚠️ لم يتم منح الإذن'),
+                        content: Text('⚠️ فشل التشغيل — امنح الأذونات'),
                         backgroundColor: Colors.orange,
                       ),
                     );
