@@ -39,7 +39,6 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 
     if (_partialText.isEmpty) return;
 
-    // أرسل النص إلى التطبيق الرئيسي
     await FlutterOverlayWindow.shareData({
       'action': 'voice_text',
       'text': _partialText,
