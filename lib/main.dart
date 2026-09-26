@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'services/notification_service.dart';
@@ -16,9 +17,14 @@ void main() async {
   await NotificationService.init();
   await PermissionService.requestAll();
 
-  // هيّئ محرك الصوت من التطبيق الرئيسي (سيُشارَك مع النافذة العائمة)
+  // هيّئ محرك الصوت من التطبيق الرئيسي
   final speech = SpeechService();
   await speech.init();
+
+  // أبلِغ النافذة العائمة (إن كانت مفتوحة) أن الصوت جاهز
+  try {
+    await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
+  } catch (_) {}
 
   _setupOverlayListener();
   runApp(const DebtApp());
@@ -38,6 +44,15 @@ void _setupOverlayListener() {
 
     if (data['action'] == 'voice_text') {
       final text = data['text'] as String? ?? '';
+
+      if (text == '__EMPTY__') {
+        await NotificationService.show(
+          '🎙️ لم أسمع شيئاً',
+          'اضغط مطولاً على الزر وتحدّث بوضوح',
+        );
+        return;
+      }
+
       if (text.isEmpty) return;
 
       final parsed = ParserService.parse(text);
