@@ -10,9 +10,7 @@ class NotificationService {
 
     await _notif.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (resp) {
-        // عند الضغط على الإشعار
-      },
+      onDidReceiveNotificationResponse: (resp) {},
     );
 
     const channel = AndroidNotificationChannel(
@@ -22,13 +20,20 @@ class NotificationService {
       importance: Importance.high,
     );
 
-    await _notif
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+    const persistChannel = AndroidNotificationChannel(
+      'debt_persistent',
+      'الزر العائم',
+      description: 'إشعار دائم لإبقاء الزر العائم يعمل',
+      importance: Importance.low,
+    );
+
+    final androidImpl = _notif.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.createNotificationChannel(channel);
+    await androidImpl?.createNotificationChannel(persistChannel);
+    await androidImpl?.requestNotificationsPermission();
   }
 
-  /// إشعار فوري عادي
   static Future<void> show(String title, String body) async {
     await _notif.show(
       _idCounter++,
@@ -43,5 +48,32 @@ class NotificationService {
         ),
       ),
     );
+  }
+
+  static Future<void> showPersistent({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    await _notif.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'debt_persistent',
+          'الزر العائم',
+          importance: Importance.low,
+          priority: Priority.low,
+          ongoing: true,
+          autoCancel: false,
+          showWhen: false,
+        ),
+      ),
+    );
+  }
+
+  static Future<void> cancel(int id) async {
+    await _notif.cancel(id);
   }
 }
