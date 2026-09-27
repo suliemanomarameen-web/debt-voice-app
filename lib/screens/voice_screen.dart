@@ -7,7 +7,6 @@ import '../services/parser_service.dart';
 import '../services/speech_service.dart';
 
 class VoiceScreen extends StatefulWidget {
-  /// نص جاهز للتشغيل التلقائي (من الزر العائم)
   final String? initialText;
 
   const VoiceScreen({super.key, this.initialText});
@@ -31,7 +30,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     super.initState();
     _speech.init();
 
-    // إن جاء نص جاهز → عالجه مباشرة
     if (widget.initialText != null && widget.initialText!.isNotEmpty) {
       _text = widget.initialText!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +54,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _errorMessage = null;
       _askingWhich = false;
       _listening = true;
+      _autoProcessed = false;
     });
 
     await _speech.listen(onResult: (text, isFinal) {
