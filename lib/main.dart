@@ -11,7 +11,6 @@ import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
 
-// متغير عالمي لحمل النص القادم من الزر العائم
 String? pendingVoiceText;
 
 void main() async {
@@ -64,7 +63,6 @@ void _setupOverlayListener() {
 
       final db = DatabaseHelper.instance;
 
-      // إنشاء حساب
       if (parsed.intent == 'add_account') {
         final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
@@ -80,7 +78,6 @@ void _setupOverlayListener() {
         return;
       }
 
-      // معاملة عادية: ابحث
       final customer = await db.findExactCustomer(parsed.customerName);
       if (customer != null) {
         await _saveTransactionFor(customer, parsed, db);
@@ -93,11 +90,11 @@ void _setupOverlayListener() {
         return;
       }
       if (partial.length > 1) {
-        // احفظ النص لحين فتح التطبيق
         pendingVoiceText = text;
         await NotificationService.show(
           '⚠️ يوجد أكثر من حساب',
           'اضغط هنا لاختيار الحساب',
+          payload: 'choose_customer',
         );
         return;
       }
@@ -128,7 +125,6 @@ Future<void> _saveTransactionFor(
     'return': 'مرتجع',
   }[parsed.intent] ?? 'عملية';
 
-  // الإشعار يعرض: النوع + المبلغ + الأصناف + الرصيد
   final detail = StringBuffer();
   detail.write('${customer.name}\n');
   detail.write('المبلغ: ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}');
