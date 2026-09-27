@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
+import '../services/export_service.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
@@ -56,7 +57,8 @@ class _CustomersTabState extends State<CustomersTab> {
               Text('تأكيد الحذف'),
             ],
           ),
-          content: Text('سيتم حذف "${c.name}" وكل معاملاته.\n\nلا يمكن التراجع.'),
+          content:
+              Text('سيتم حذف "${c.name}" وكل معاملاته.\n\nلا يمكن التراجع.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -77,6 +79,11 @@ class _CustomersTabState extends State<CustomersTab> {
     }
   }
 
+  Future<void> _exportCustomer(Customer c) async {
+    final f = await ExportService.exportCustomerStatement(c.id!);
+    await ExportService.shareFile(f, text: 'كشف حساب ${c.name}');
+  }
+
   void _showMenu(Customer c) {
     showModalBottomSheet(
       context: context,
@@ -92,6 +99,14 @@ class _CustomersTabState extends State<CustomersTab> {
                 onTap: () {
                   Navigator.pop(context);
                   _editCustomer(c);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.table_chart),
+                title: const Text('تصدير كشف الحساب (Excel)'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _exportCustomer(c);
                 },
               ),
               ListTile(
@@ -118,7 +133,8 @@ class _CustomersTabState extends State<CustomersTab> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(100),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Column(
               children: [
                 TextField(
@@ -202,10 +218,12 @@ class _CustomersTabState extends State<CustomersTab> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.people_outline, size: 64, color: Colors.grey),
+                  Icon(Icons.people_outline,
+                      size: 64, color: Colors.grey),
                   SizedBox(height: 12),
                   Text('لا توجد حسابات',
-                      style: TextStyle(color: Colors.grey, fontSize: 16)),
+                      style:
+                          TextStyle(color: Colors.grey, fontSize: 16)),
                 ],
               ),
             )
@@ -222,7 +240,8 @@ class _CustomersTabState extends State<CustomersTab> {
                         child: Text(c.name.characters.first),
                       ),
                       title: Text(c.name),
-                      subtitle: Text(AccountType.labelsAr[c.accountType] ?? ''),
+                      subtitle: Text(
+                          AccountType.labelsAr[c.accountType] ?? ''),
                       trailing: FutureBuilder<double>(
                         future: db.customerBalance(c.id!),
                         builder: (_, snap) {
@@ -242,7 +261,8 @@ class _CustomersTabState extends State<CustomersTab> {
                         await Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => CustomerScreen(customer: c)));
+                                builder: (_) =>
+                                    CustomerScreen(customer: c)));
                         _refresh();
                       },
                       onLongPress: () => _showMenu(c),
