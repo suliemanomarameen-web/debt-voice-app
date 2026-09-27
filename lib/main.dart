@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
@@ -7,6 +8,8 @@ import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
 import 'services/speech_service.dart';
 import 'services/parser_service.dart';
+import 'services/theme_service.dart';
+import 'services/reminder_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
@@ -17,17 +20,24 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await NotificationService.init();
+  await ReminderService.init();
   await PermissionService.requestAll();
 
   final speech = SpeechService();
   await speech.init();
+
+  final theme = ThemeService();
+  await theme.load();
 
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
   _setupOverlayListener();
-  runApp(const DebtApp());
+  runApp(MultiProvider(
+    providers: [ChangeNotifierProvider.value(value: theme)],
+    child: const DebtApp(),
+  ));
 }
 
 void _setupOverlayListener() {
@@ -52,7 +62,6 @@ void _setupOverlayListener() {
         );
         return;
       }
-
       if (text.isEmpty) return;
 
       final parsed = ParserService.parse(text);
@@ -83,7 +92,6 @@ void _setupOverlayListener() {
         await _saveTransactionFor(customer, parsed, db);
         return;
       }
-
       final partial = await db.findCustomersContaining(parsed.customerName);
       if (partial.isEmpty) {
         await NotificationService.show('❌ لا يوجد حساب', parsed.customerName);
@@ -140,13 +148,13 @@ class DebtApp extends StatelessWidget {
   const DebtApp({super.key});
   @override
   Widget build(BuildContext context) {
+    final theme = context.watch<ThemeService>();
     return MaterialApp(
       title: 'دفتر الديون',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF1B6B3A),
-      ),
+      theme: theme.light,
+      darkTheme: theme.dark,
+      themeMode: theme.mode,
       home: const TabsScreen(),
     );
   }
