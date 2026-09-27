@@ -4,13 +4,18 @@ class NotificationService {
   static final _notif = FlutterLocalNotificationsPlugin();
   static int _idCounter = 1;
 
+  /// دالة رد نداء عند الضغط على إشعار
+  static void Function(String? payload)? onTap;
+
   static Future<void> init() async {
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidInit);
 
     await _notif.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (resp) {},
+      onDidReceiveNotificationResponse: (resp) {
+        onTap?.call(resp.payload);
+      },
     );
 
     const channel = AndroidNotificationChannel(
@@ -34,19 +39,25 @@ class NotificationService {
     await androidImpl?.requestNotificationsPermission();
   }
 
-  static Future<void> show(String title, String body) async {
+  static Future<void> show(
+    String title,
+    String body, {
+    String? payload,
+  }) async {
     await _notif.show(
       _idCounter++,
       title,
       body,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
           'debt_channel',
           'دفتر الديون',
           importance: Importance.high,
           priority: Priority.high,
+          styleInformation: BigTextStyleInformation(body),
         ),
       ),
+      payload: payload,
     );
   }
 
