@@ -4,7 +4,9 @@ import '../models/account_type.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../services/parser_service.dart';
+import '../services/query_service.dart';
 import '../services/speech_service.dart';
+import '../services/tts_service.dart';
 
 class VoiceScreen extends StatefulWidget {
   final String? initialText;
@@ -19,6 +21,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   String _text = '';
   bool _listening = false;
   ParsedEntry? _parsed;
+  QueryResult? _queryResult;
   Customer? _foundCustomer;
   List<Customer> _matches = [];
   String? _errorMessage;
@@ -29,12 +32,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
   void initState() {
     super.initState();
     _speech.init();
+    TtsService.init();
 
     if (widget.initialText != null && widget.initialText!.isNotEmpty) {
       _text = widget.initialText!;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _process();
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _process());
     }
   }
 
@@ -49,6 +51,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     setState(() {
       _text = '';
       _parsed = null;
+      _queryResult = null;
       _foundCustomer = null;
       _matches = [];
       _errorMessage = null;
@@ -71,6 +74,21 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (_autoProcessed) return;
     _autoProcessed = true;
 
+    // 1) هل هي استعلام؟
+    if (QueryService.isQuery(_text)) {
+      final result = await QueryService.query(_text);
+      if (!mounted) return;
+      setState(() {
+        _queryResult = result;
+        _parsed = null;
+        _errorMessage = null;
+      });
+      // انطق الجواب
+      await TtsService.speak(result.spokenAnswer);
+      return;
+    }
+
+    // 2) معاملة عادية
     final parsed = ParserService.parse(_text);
     if (parsed == null) {
       setState(() {
@@ -110,9 +128,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
         _parsed = null;
         _foundCustomer = null;
         _matches = [];
-        _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"\n\n'
-            'قل: "أضف حساب عميل ${parsed.customerName}" لإنشائه.';
+        _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"';
       });
+      await TtsService.speak('لا يوجد حساب باسم ${parsed.customerName}');
       return;
     }
 
@@ -134,6 +152,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _errorMessage = null;
       _askingWhich = true;
     });
+    await TtsService.speak('أي حساب تقصد؟');
   }
 
   void _chooseCustomer(Customer c) {
@@ -151,7 +170,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final existing = await db.findExactCustomer(_parsed!.customerName);
     if (existing != null) {
       setState(() {
-        _errorMessage = 'الحساب "${_parsed!.customerName}" موجود مسبقاً';
+        _errorMessage = 'الحساب موجود مسبقاً';
         _parsed = null;
       });
       return;
@@ -164,6 +183,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     ));
 
     if (!mounted) return;
+    await TtsService.speak('تم إنشاء حساب ${_parsed!.customerName}');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
@@ -198,6 +218,23 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final newBalance = await db.customerBalance(c.id!);
     if (!mounted) return;
 
+    // نطق التأكيد
+    final label = {
+      'debt': 'دين',
+      'payment': 'سداد',
+      'return': 'مرتجع',
+    }[p.intent] ?? 'عملية';
+
+    await TtsService.confirmTransaction(
+      type: label,
+      amount: p.amount,
+      customerName: c.name,
+      newBalance: newBalance,
+      currency: p.currency,
+    );
+
+    if (!mounted) return;
+
     final title = {
       'debt': '✅ تم تسجيل الدين',
       'payment': '✅ تم تسجيل السداد',
@@ -214,24 +251,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (p.warning != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(p.warning!,
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.deepOrange)),
-                ),
-                const SizedBox(height: 12),
-              ],
               Text('الاسم: ${c.name}'),
               Text('المبلغ: ${p.amount.toStringAsFixed(0)} ${p.currency}'),
               if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
               const Divider(),
-              Text('الرصيد الجديد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
+              Text('الرصيد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 16)),
             ],
@@ -260,6 +284,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              // النص المكتشف
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -283,6 +308,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+
+              // زر الميكروفون
               GestureDetector(
                 onTap: _toggle,
                 child: Container(
@@ -311,6 +338,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
               Text(_listening ? 'أستمع...' : 'اضغط للتحدث',
                   style: const TextStyle(fontSize: 16)),
 
+              // خطأ
               if (_errorMessage != null) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -328,6 +356,47 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
+              // نتيجة الاستعلام
+              if (_queryResult != null) ...[
+                const SizedBox(height: 20),
+                Card(
+                  color: Colors.blue.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.blue),
+                            SizedBox(width: 8),
+                            Text('الإجابة:',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(_queryResult!.spokenAnswer,
+                            style: const TextStyle(fontSize: 15)),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            const Icon(Icons.volume_up, size: 20),
+                            const SizedBox(width: 6),
+                            TextButton(
+                              onPressed: () =>
+                                  TtsService.speak(_queryResult!.spokenAnswer),
+                              child: const Text('أعد الإجابة صوتياً'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              // قائمة الاختيار
               if (_askingWhich && _matches.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -364,6 +433,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
+              // بطاقة التأكيد
               if (_parsed != null && _foundCustomer != null) ...[
                 const SizedBox(height: 24),
                 Card(
@@ -415,6 +485,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
+              // بطاقة إنشاء حساب
               if (_parsed != null &&
                   _parsed!.intent == 'add_account' &&
                   _foundCustomer == null) ...[
