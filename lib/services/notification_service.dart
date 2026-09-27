@@ -4,7 +4,6 @@ class NotificationService {
   static final _notif = FlutterLocalNotificationsPlugin();
   static int _idCounter = 1;
 
-  /// دالة رد نداء عند الضغط على إشعار
   static void Function(String? payload)? onTap;
 
   static Future<void> init() async {
