@@ -173,8 +173,10 @@ class _CustomersTabState extends State<CustomersTab> {
           FloatingActionButton(
             heroTag: 'voice_customers',
             onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => VoiceScreen()));
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const VoiceScreen()));
               _refresh();
             },
             backgroundColor: Colors.deepOrange,
@@ -184,8 +186,10 @@ class _CustomersTabState extends State<CustomersTab> {
           FloatingActionButton.extended(
             heroTag: 'add_customer_2',
             onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const AddAccountScreen()));
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const AddAccountScreen()));
               _refresh();
             },
             icon: const Icon(Icons.person_add),
