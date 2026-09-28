@@ -74,7 +74,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (_autoProcessed) return;
     _autoProcessed = true;
 
-    // 1) هل هي استعلام؟
     if (QueryService.isQuery(_text)) {
       final result = await QueryService.query(_text);
       if (!mounted) return;
@@ -83,12 +82,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
         _parsed = null;
         _errorMessage = null;
       });
-      // انطق الجواب
       await TtsService.speak(result.spokenAnswer);
       return;
     }
 
-    // 2) معاملة عادية
     final parsed = ParserService.parse(_text);
     if (parsed == null) {
       setState(() {
@@ -218,7 +215,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final newBalance = await db.customerBalance(c.id!);
     if (!mounted) return;
 
-    // نطق التأكيد
     final label = {
       'debt': 'دين',
       'payment': 'سداد',
@@ -241,6 +237,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
       'return': '✅ تم تسجيل المرتجع',
     }[p.intent] ?? '✅ تم التسجيل';
 
+    final theme = Theme.of(context);
+
     await showDialog(
       context: context,
       builder: (_) => Directionality(
@@ -256,8 +254,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
               if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
               const Divider(),
               Text('الرصيد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16)),
+                  style: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16)),
             ],
           ),
           actions: [
@@ -276,6 +276,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -284,25 +287,32 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // النص المكتشف
+              // النص المكتشف — ألوان الثيم
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
+                  color: theme.colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('النص المكتشف:',
-                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    Text('النص المكتشف:',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant)),
                     const SizedBox(height: 8),
                     Text(
                       _text.isEmpty
                           ? (_listening ? '🎙️ أستمع...' : 'اضغط الزر وتحدّث')
                           : _text,
-                      style: const TextStyle(fontSize: 16),
+                      style: TextStyle(
+                          fontSize: 16,
+                          color: theme.colorScheme.onSurface,
+                          fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -317,10 +327,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   height: 120,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _listening ? Colors.red : Colors.green,
+                    color: _listening ? Colors.red : theme.colorScheme.primary,
                     boxShadow: [
                       BoxShadow(
-                        color: (_listening ? Colors.red : Colors.green)
+                        color: (_listening ? Colors.red : theme.colorScheme.primary)
                             .withOpacity(0.4),
                         blurRadius: 20,
                         spreadRadius: 5,
@@ -336,20 +346,25 @@ class _VoiceScreenState extends State<VoiceScreen> {
               ),
               const SizedBox(height: 12),
               Text(_listening ? 'أستمع...' : 'اضغط للتحدث',
-                  style: const TextStyle(fontSize: 16)),
+                  style: TextStyle(
+                      fontSize: 16, color: theme.colorScheme.onSurface)),
 
               // خطأ
               if (_errorMessage != null) ...[
                 const SizedBox(height: 20),
                 Card(
-                  color: Colors.red.shade50,
+                  color: theme.colorScheme.errorContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, color: Colors.red),
+                        Icon(Icons.error_outline,
+                            color: theme.colorScheme.error),
                         const SizedBox(width: 12),
-                        Expanded(child: Text(_errorMessage!)),
+                        Expanded(
+                            child: Text(_errorMessage!,
+                                style: TextStyle(
+                                    color: theme.colorScheme.onErrorContainer))),
                       ],
                     ),
                   ),
@@ -360,28 +375,35 @@ class _VoiceScreenState extends State<VoiceScreen> {
               if (_queryResult != null) ...[
                 const SizedBox(height: 20),
                 Card(
-                  color: Colors.blue.shade50,
+                  color: theme.colorScheme.primaryContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(Icons.info_outline, color: Colors.blue),
-                            SizedBox(width: 8),
+                            Icon(Icons.info_outline,
+                                color: theme.colorScheme.primary),
+                            const SizedBox(width: 8),
                             Text('الإجابة:',
                                 style: TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                                    color: theme.colorScheme.onPrimaryContainer,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16)),
                           ],
                         ),
                         const SizedBox(height: 12),
                         Text(_queryResult!.spokenAnswer,
-                            style: const TextStyle(fontSize: 15)),
+                            style: TextStyle(
+                                fontSize: 15,
+                                color: theme.colorScheme.onPrimaryContainer)),
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            const Icon(Icons.volume_up, size: 20),
+                            Icon(Icons.volume_up,
+                                size: 20,
+                                color: theme.colorScheme.primary),
                             const SizedBox(width: 6),
                             TextButton(
                               onPressed: () =>
@@ -400,29 +422,40 @@ class _VoiceScreenState extends State<VoiceScreen> {
               if (_askingWhich && _matches.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 Card(
-                  color: Colors.orange.shade50,
+                  color: theme.colorScheme.tertiaryContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(Icons.help_outline, color: Colors.orange),
-                            SizedBox(width: 8),
+                            Icon(Icons.help_outline,
+                                color: theme.colorScheme.tertiary),
+                            const SizedBox(width: 8),
                             Text('أي حساب تقصد؟',
                                 style: TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                                    color: theme.colorScheme.onTertiaryContainer,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16)),
                           ],
                         ),
                         const SizedBox(height: 12),
                         ..._matches.map((c) => ListTile(
                               leading: CircleAvatar(
-                                child: Text(c.name.characters.first),
+                                backgroundColor: theme.colorScheme.primary,
+                                child: Text(c.name.characters.first,
+                                    style: const TextStyle(color: Colors.white)),
                               ),
-                              title: Text(c.name),
+                              title: Text(c.name,
+                                  style: TextStyle(
+                                      color:
+                                          theme.colorScheme.onTertiaryContainer)),
                               subtitle: Text(
-                                  AccountType.labelsAr[c.accountType] ?? ''),
+                                  AccountType.labelsAr[c.accountType] ?? '',
+                                  style: TextStyle(
+                                      color: theme
+                                          .colorScheme.onTertiaryContainer)),
                               trailing: const Icon(Icons.arrow_forward_ios,
                                   size: 16),
                               onTap: () => _chooseCustomer(c),
@@ -437,23 +470,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
               if (_parsed != null && _foundCustomer != null) ...[
                 const SizedBox(height: 24),
                 Card(
-                  color: Colors.green.shade50,
+                  color: theme.colorScheme.primaryContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('✅ تأكيد:',
+                        Text('✅ تأكيد:',
                             style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 16)),
+                                color: theme.colorScheme.onPrimaryContainer,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16)),
                         const SizedBox(height: 12),
-                        _row('النوع', _typeLabel(_parsed!.intent)),
-                        _row('الحساب', _foundCustomer!.name),
+                        _row('النوع', _typeLabel(_parsed!.intent), theme),
+                        _row('الحساب', _foundCustomer!.name, theme),
                         _row(
                             'المبلغ',
-                            '${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency}'),
+                            '${_parsed!.amount.toStringAsFixed(0)} ${_parsed!.currency}',
+                            theme),
                         if (_parsed!.items.isNotEmpty)
-                          _row('الأصناف', _parsed!.items),
+                          _row('الأصناف', _parsed!.items, theme),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -491,19 +527,23 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   _foundCustomer == null) ...[
                 const SizedBox(height: 24),
                 Card(
-                  color: Colors.blue.shade50,
+                  color: theme.colorScheme.secondaryContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('➕ إنشاء حساب جديد',
+                        Text('➕ إنشاء حساب جديد',
                             style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 16)),
+                                color: theme.colorScheme.onSecondaryContainer,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16)),
                         const SizedBox(height: 12),
-                        _row('الاسم', _parsed!.customerName),
-                        _row('النوع',
-                            AccountType.labelsAr[_parsed!.accountType] ?? ''),
+                        _row('الاسم', _parsed!.customerName, theme),
+                        _row(
+                            'النوع',
+                            AccountType.labelsAr[_parsed!.accountType] ?? '',
+                            theme),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -547,7 +587,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }[intent] ?? intent;
   }
 
-  Widget _row(String key, String value) {
+  Widget _row(String key, String value, ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -555,9 +595,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
           SizedBox(
             width: 80,
             child: Text('$key:',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: theme.colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.bold)),
           ),
-          Expanded(child: Text(value)),
+          Expanded(
+              child: Text(value,
+                  style: TextStyle(
+                      color: theme.colorScheme.onPrimaryContainer))),
         ],
       ),
     );
