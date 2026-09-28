@@ -3,22 +3,48 @@ import 'package:flutter_tts/flutter_tts.dart';
 class TtsService {
   static final FlutterTts _tts = FlutterTts();
   static bool _initialized = false;
+  static String? _arabicVoice;
 
   static Future<void> init() async {
     if (_initialized) return;
     try {
+      // ابحث عن صوت عربي مثالي
+      final voices = await _tts.getVoices;
+      if (voices is List) {
+        for (final v in voices) {
+          final locale = (v['locale'] ?? '').toString().toLowerCase();
+          if (locale.startsWith('ar')) {
+            _arabicVoice = v['name']?.toString();
+            // فضّل ar-SA أو ar-EG أو ar-AE (أوضح صوتاً)
+            if (locale.contains('sa') ||
+                locale.contains('eg') ||
+                locale.contains('ae')) {
+              break;
+            }
+          }
+        }
+      }
+
+      // ضبط اللغة والنطق
       await _tts.setLanguage('ar-SA');
-      await _tts.setSpeechRate(0.5);
+      if (_arabicVoice != null) {
+        try {
+          await _tts.setVoice({'name': _arabicVoice!, 'locale': 'ar-SA'});
+        } catch (_) {}
+      }
+
+      // إعدادات النطق
+      await _tts.setSpeechRate(0.42);   // أبطأ قليلاً ليتضح النطق
+      await _tts.setPitch(1.05);        // نبرة أعلى قليلاً
       await _tts.setVolume(1.0);
-      await _tts.setPitch(1.0);
       await _tts.awaitSpeakCompletion(true);
+
       _initialized = true;
     } catch (e) {
       print('TTS init error: $e');
     }
   }
 
-  /// إلقاء نص بالصوت
   static Future<void> speak(String text) async {
     if (text.isEmpty) return;
     if (!_initialized) await init();
@@ -32,9 +58,8 @@ class TtsService {
 
   static Future<void> stop() async => _tts.stop();
 
-  /// رسائل جاهزة
   static Future<void> confirmTransaction({
-    required String type,       // 'دين' | 'سداد' | 'مرتجع'
+    required String type,
     required double amount,
     required String customerName,
     required double newBalance,
@@ -45,14 +70,16 @@ class TtsService {
     final cur = currency == 'YER' ? 'ريال' : currency;
 
     if (newBalance > 0) {
-      await speak('تم تسجيل $type $amountStr $cur على $customerName. '
-          'الرصيد المتبقي: $balanceStr $cur');
+      await speak(
+          'تم تسجيل $type بمبلغ $amountStr $cur على $customerName. '
+          'الرصيد المتبقي هو $balanceStr $cur');
     } else if (newBalance < 0) {
-      await speak('تم تسجيل $type $amountStr $cur من $customerName. '
-          'الباقي له: ${(-newBalance).toStringAsFixed(0)} $cur');
+      await speak(
+          'تم تسجيل $type بمبلغ $amountStr $cur من $customerName. '
+          'الباقي له هو ${(-newBalance).toStringAsFixed(0)} $cur');
     } else {
-      await speak('تم تسجيل $type $amountStr $cur. '
-          'الحساب متوازن مع $customerName');
+      await speak('تم تسجيل $type بمبلغ $amountStr $cur. '
+          'حساب $customerName أصبح متوازناً');
     }
   }
 }
