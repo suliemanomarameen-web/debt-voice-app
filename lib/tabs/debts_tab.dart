@@ -24,6 +24,20 @@ class _DebtsTabState extends State<DebtsTab> {
     _refresh();
   }
 
+  String _formatDateTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      final y = dt.year;
+      final m = dt.month.toString().padLeft(2, '0');
+      final d = dt.day.toString().padLeft(2, '0');
+      final h = dt.hour.toString().padLeft(2, '0');
+      final min = dt.minute.toString().padLeft(2, '0');
+      return '$y/$m/$d - $h:$min';
+    } catch (_) {
+      return iso.length >= 16 ? iso.substring(0, 16) : iso;
+    }
+  }
+
   Future<void> _refresh() async {
     final t = await db.totalDebts();
     final all = await db.allCustomers();
@@ -54,6 +68,8 @@ class _DebtsTabState extends State<DebtsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('دفتر الديون'),
@@ -73,8 +89,7 @@ class _DebtsTabState extends State<DebtsTab> {
             onPressed: () async {
               await Navigator.push(
                   context,
-                  MaterialPageRoute(
-                      builder: (_) => const VoiceScreen()));
+                  MaterialPageRoute(builder: (_) => const VoiceScreen()));
               _refresh();
             },
             backgroundColor: Colors.deepOrange,
@@ -84,10 +99,8 @@ class _DebtsTabState extends State<DebtsTab> {
           FloatingActionButton.extended(
             heroTag: 'add_customer',
             onPressed: () async {
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const AddAccountScreen()));
+              await Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AddAccountScreen()));
               _refresh();
             },
             icon: const Icon(Icons.person_add),
@@ -103,8 +116,11 @@ class _DebtsTabState extends State<DebtsTab> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF1B6B3A), Color(0xFF2E8B57)],
+                gradient: LinearGradient(
+                  colors: [
+                    theme.colorScheme.primary,
+                    theme.colorScheme.primary.withOpacity(0.7),
+                  ],
                 ),
                 borderRadius: BorderRadius.circular(16),
               ),
@@ -134,7 +150,9 @@ class _DebtsTabState extends State<DebtsTab> {
               ..._topDebtors.map((c) => Card(
                     child: ListTile(
                       leading: CircleAvatar(
-                        child: Text(c.name.characters.first),
+                        backgroundColor: theme.colorScheme.primary,
+                        child: Text(c.name.characters.first,
+                            style: const TextStyle(color: Colors.white)),
                       ),
                       title: Text(c.name),
                       trailing: FutureBuilder<double>(
@@ -143,7 +161,7 @@ class _DebtsTabState extends State<DebtsTab> {
                           '${(snap.data ?? 0).toStringAsFixed(0)} ريال',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: Colors.red.shade700,
+                            color: theme.colorScheme.error,
                           ),
                         ),
                       ),
@@ -151,8 +169,7 @@ class _DebtsTabState extends State<DebtsTab> {
                         await Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) =>
-                                    CustomerScreen(customer: c)));
+                                builder: (_) => CustomerScreen(customer: c)));
                         _refresh();
                       },
                     ),
@@ -182,27 +199,31 @@ class _DebtsTabState extends State<DebtsTab> {
                               : Icons.arrow_downward),
                       color: isReturn
                           ? Colors.orange
-                          : (isDebt ? Colors.red : Colors.green),
+                          : (isDebt
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.primary),
                     ),
                     title: Text(c.name),
-                    subtitle: Text(
-                      t.items.isEmpty
-                          ? (isDebt ? 'دين' : 'سداد')
-                          : t.items,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (t.items.isNotEmpty)
+                          Text(t.items,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13)),
+                        const SizedBox(height: 2),
                         Text(
-                          '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          _formatDateTime(t.createdAt),
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant),
                         ),
-                        Text(t.createdAt.substring(5, 10),
-                            style: const TextStyle(fontSize: 11)),
                       ],
+                    ),
+                    trailing: Text(
+                      '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     onTap: () async {
                       await Navigator.push(
@@ -216,18 +237,20 @@ class _DebtsTabState extends State<DebtsTab> {
               }),
             ],
             if (_topDebtors.isEmpty && _recent.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(40),
+              Padding(
+                padding: const EdgeInsets.all(40),
                 child: Center(
                   child: Column(
                     children: [
-                      Icon(Icons.inbox, size: 64, color: Colors.grey),
-                      SizedBox(height: 12),
+                      Icon(Icons.inbox, size: 64, color: theme.disabledColor),
+                      const SizedBox(height: 12),
                       Text('لا توجد بيانات بعد',
-                          style: TextStyle(color: Colors.grey, fontSize: 16)),
-                      SizedBox(height: 6),
+                          style: TextStyle(
+                              color: theme.disabledColor, fontSize: 16)),
+                      const SizedBox(height: 6),
                       Text('اضغط الزر البرتقالي للتسجيل بالصوت',
-                          style: TextStyle(color: Colors.grey, fontSize: 12)),
+                          style: TextStyle(
+                              color: theme.disabledColor, fontSize: 12)),
                     ],
                   ),
                 ),
