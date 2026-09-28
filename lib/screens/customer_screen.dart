@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/export_service.dart';
 import 'add_account_screen.dart';
 
 class CustomerScreen extends StatefulWidget {
@@ -32,7 +34,15 @@ class _CustomerScreenState extends State<CustomerScreen> {
     });
   }
 
-  // ============ إضافة معاملة ============
+  String _formatDateTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      return DateFormat('yyyy/MM/dd - HH:mm').format(dt);
+    } catch (_) {
+      return iso.length >= 16 ? iso.substring(0, 16) : iso;
+    }
+  }
+
   Future<void> _addTransaction(String type) async {
     final amountCtrl = TextEditingController();
     final itemsCtrl = TextEditingController();
@@ -91,7 +101,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ============ تعديل معاملة ============
   Future<void> _editTransaction(Transaction t) async {
     final isDebt = t.type == 'debt';
     final isReturn = t.items.startsWith('مرتجع');
@@ -157,7 +166,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ============ حذف معاملة ============
   Future<void> _deleteTransaction(Transaction t) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -175,8 +183,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
             'سيتم حذف هذه العملية نهائياً:\n\n'
             'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
             'المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}\n'
-            '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}\n'
-            'لا يمكن التراجع عن هذا الإجراء.',
+            '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}'
+            'التاريخ: ${_formatDateTime(t.createdAt)}',
           ),
           actions: [
             TextButton(
@@ -207,7 +215,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ حذف الحساب ============
   Future<void> _deleteCustomer() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -254,7 +261,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ قائمة الخيارات ============
+  Future<void> _exportStatement() async {
+    final f = await ExportService.exportCustomerStatement(widget.customer.id!);
+    await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
+  }
+
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
@@ -289,12 +300,19 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.customer.name),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.table_chart),
+              tooltip: 'تصدير كشف الحساب',
+              onPressed: _exportStatement,
+            ),
             PopupMenuButton<String>(
               onSelected: (v) {
                 switch (v) {
@@ -337,18 +355,22 @@ class _CustomerScreenState extends State<CustomerScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
-              color: _balance > 0 ? Colors.red.shade50 : Colors.green.shade50,
+              color: _balance > 0
+                  ? theme.colorScheme.errorContainer
+                  : theme.colorScheme.primaryContainer,
               child: Column(
                 children: [
-                  const Text('الرصيد المتبقي'),
+                  Text('الرصيد المتبقي',
+                      style: TextStyle(
+                          color: theme.colorScheme.onPrimaryContainer)),
                   Text(
                     '${_balance.toStringAsFixed(0)} ريال',
                     style: TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                       color: _balance > 0
-                          ? Colors.red.shade700
-                          : Colors.green.shade700,
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.primary,
                     ),
                   ),
                 ],
@@ -373,18 +395,27 @@ class _CustomerScreenState extends State<CustomerScreen> {
                                     : Icons.arrow_downward),
                             color: isReturn
                                 ? Colors.orange
-                                : (isDebt ? Colors.red : Colors.green),
+                                : (isDebt
+                                    ? theme.colorScheme.error
+                                    : theme.colorScheme.primary),
                           ),
                           title: Text(
                               '${t.amount.toStringAsFixed(0)} ${t.currency}'),
-                          subtitle: Text(
-                            isReturn
-                                ? t.items
-                                : (t.items.isEmpty
-                                    ? (isDebt ? 'دين' : 'سداد')
-                                    : t.items),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (t.items.isNotEmpty)
+                                Text(t.items,
+                                    style: const TextStyle(fontSize: 13)),
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatDateTime(t.createdAt),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                            ],
                           ),
-                          trailing: Text(t.createdAt.substring(0, 10)),
                           onLongPress: () => _showTransactionMenu(t),
                           onTap: () => _showTransactionMenu(t),
                         );
@@ -402,7 +433,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   onPressed: () => _addTransaction('debt'),
                   icon: const Icon(Icons.add),
                   label: const Text('دين'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: theme.colorScheme.error),
                 ),
               ),
               const SizedBox(width: 8),
@@ -411,7 +443,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   onPressed: () => _addTransaction('payment'),
                   icon: const Icon(Icons.payments),
                   label: const Text('سداد'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.green),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary),
                 ),
               ),
               const SizedBox(width: 8),
