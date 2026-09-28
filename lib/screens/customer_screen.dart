@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui' show TextDirection;
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
