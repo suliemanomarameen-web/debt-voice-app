@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:ui' show TextDirection;
-import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
@@ -38,7 +36,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
   String _formatDateTime(String iso) {
     try {
       final dt = DateTime.parse(iso);
-      return DateFormat('yyyy/MM/dd - HH:mm').format(dt);
+      final y = dt.year;
+      final m = dt.month.toString().padLeft(2, '0');
+      final d = dt.day.toString().padLeft(2, '0');
+      final h = dt.hour.toString().padLeft(2, '0');
+      final min = dt.minute.toString().padLeft(2, '0');
+      return '$y/$m/$d - $h:$min';
     } catch (_) {
       return iso.length >= 16 ? iso.substring(0, 16) : iso;
     }
