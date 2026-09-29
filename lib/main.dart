@@ -4,6 +4,7 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
+import 'screens/lock_screen.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -17,10 +18,7 @@ import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
 
-/// متغير عالمي يحمل النص القادم من الزر العائم لفتح VoiceScreen
 String? pendingVoiceText;
-
-/// مفتاح التنقل العام (للسماح بفتح الشاشة من الإشعار)
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
@@ -42,7 +40,6 @@ void main() async {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
-  // اربط الإشعار بفتح VoiceScreen
   NotificationService.onTap = (payload) {
     if (payload == 'choose_customer' && pendingVoiceText != null) {
       final text = pendingVoiceText!;
@@ -68,8 +65,8 @@ void _setupOverlayListener() {
 
     if (data['action'] == 'need_setup') {
       await NotificationService.show(
-        '⚠️ يحتاج إعداد',
-        'افتح التطبيق → الإعدادات → فعّل الأذونات',
+        'يحتاج إعداد',
+        'افتح التطبيق - الإعدادات - فعّل الأذونات',
       );
       return;
     }
@@ -80,8 +77,8 @@ void _setupOverlayListener() {
       if (text == '__EMPTY__') {
         await TtsService.speakDidNotHear();
         await NotificationService.show(
-          '🎙️ لم أسمع شيئاً',
-          'اضغط مطولاً على الزر وتحدّث بوضوح',
+          'لم أسمع شيئا',
+          'اضغط مطولا على الزر وتحدث بوضوح',
         );
         return;
       }
@@ -89,18 +86,16 @@ void _setupOverlayListener() {
 
       final db = DatabaseHelper.instance;
 
-      // ========== 1) استعلام ==========
       if (QueryService.isQuery(text)) {
         final result = await QueryService.query(text);
         await TtsService.speak(result.spokenAnswer);
         await NotificationService.show(
-          result.hasAccount ? '📊 ${result.customerName}' : '⚠️ استعلام',
+          result.hasAccount ? 'استعلام: ${result.customerName}' : 'استعلام',
           result.spokenAnswer,
         );
         return;
       }
 
-      // ========== 2) معاملة / إنشاء حساب ==========
       final parsed = ParserService.parse(text);
       if (parsed == null) {
         await TtsService.speakDidNotUnderstand();
@@ -108,13 +103,12 @@ void _setupOverlayListener() {
         return;
       }
 
-      // ----- إنشاء حساب -----
       if (parsed.intent == 'add_account') {
         if (parsed.customerName.isEmpty) {
-          await TtsService.speak('لَمْ أَفْهَمِ الاِسْمَ');
+          await TtsService.speak('لم أفهم الاسم');
           await NotificationService.show(
-            '⚠️ لم أفهم الاسم',
-            'قل: "أضف حساب باسم محمد"',
+            'لم أفهم الاسم',
+            'قل: أضف حساب باسم محمد',
           );
           return;
         }
@@ -122,10 +116,7 @@ void _setupOverlayListener() {
         final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
           await TtsService.speakExistsBefore(parsed.customerName);
-          await NotificationService.show(
-            '⚠️ موجود مسبقاً',
-            parsed.customerName,
-          );
+          await NotificationService.show('موجود مسبقا', parsed.customerName);
           return;
         }
 
@@ -138,19 +129,18 @@ void _setupOverlayListener() {
         await TtsService.speakAccountCreated(parsed.customerName);
 
         final typeAr = {
-          'customer': 'عَمِيل',
-          'supplier': 'مَوَرِّد',
-          'other': 'أُخْرَى',
-        }[parsed.accountType] ?? 'عَمِيل';
+          'customer': 'عميل',
+          'supplier': 'مورد',
+          'other': 'أخرى',
+        }[parsed.accountType] ?? 'عميل';
 
         await NotificationService.show(
-          '✅ تم إنشاء حساب',
+          'تم إنشاء حساب',
           '${parsed.customerName} ($typeAr)\nالرقم: #$id',
         );
         return;
       }
 
-      // ----- معاملة عادية -----
       final customer = await db.findExactCustomer(parsed.customerName);
       if (customer != null) {
         await _saveTransactionFor(customer, parsed, db);
@@ -160,17 +150,16 @@ void _setupOverlayListener() {
       if (partial.isEmpty) {
         await TtsService.speakNoAccount(parsed.customerName);
         await NotificationService.show(
-          '❌ لا يوجد حساب',
-          '${parsed.customerName}\nقل: "أضف حساب باسم ${parsed.customerName}"',
+          'لا يوجد حساب',
+          '${parsed.customerName}\nقل: أضف حساب باسم ${parsed.customerName}',
         );
         return;
       }
       if (partial.length > 1) {
-        // احفظ النص بانتظار ضغط الإشعار
         pendingVoiceText = text;
         await TtsService.speakMultipleAccounts();
         await NotificationService.show(
-          '⚠️ يوجد أكثر من حساب',
+          'يوجد أكثر من حساب',
           'اضغط هنا لاختيار الحساب',
           payload: 'choose_customer',
         );
@@ -219,7 +208,7 @@ Future<void> _saveTransactionFor(
   }
   detail.write('\nالرصيد: ${newBalance.toStringAsFixed(0)} ${parsed.currency}');
 
-  await NotificationService.show('✅ $label', detail.toString());
+  await NotificationService.show('تم تسجيل $label', detail.toString());
 }
 
 class DebtApp extends StatelessWidget {
@@ -234,7 +223,7 @@ class DebtApp extends StatelessWidget {
       theme: theme.light,
       darkTheme: theme.dark,
       themeMode: theme.mode,
-      home: const TabsScreen(),
+      home: const LockScreen(child: TabsScreen()),
     );
   }
 }
