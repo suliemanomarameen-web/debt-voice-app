@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
+import 'screens/voice_screen.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -16,7 +17,11 @@ import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
 
+/// متغير عالمي يحمل النص القادم من الزر العائم لفتح VoiceScreen
 String? pendingVoiceText;
+
+/// مفتاح التنقل العام (للسماح بفتح الشاشة من الإشعار)
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +41,19 @@ void main() async {
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
+
+  // اربط الإشعار بفتح VoiceScreen
+  NotificationService.onTap = (payload) {
+    if (payload == 'choose_customer' && pendingVoiceText != null) {
+      final text = pendingVoiceText!;
+      pendingVoiceText = null;
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => VoiceScreen(initialText: text),
+        ),
+      );
+    }
+  };
 
   _setupOverlayListener();
   runApp(MultiProvider(
@@ -148,6 +166,7 @@ void _setupOverlayListener() {
         return;
       }
       if (partial.length > 1) {
+        // احفظ النص بانتظار ضغط الإشعار
         pendingVoiceText = text;
         await TtsService.speakMultipleAccounts();
         await NotificationService.show(
@@ -211,6 +230,7 @@ class DebtApp extends StatelessWidget {
     return MaterialApp(
       title: 'دفتر الديون',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
       theme: theme.light,
       darkTheme: theme.dark,
       themeMode: theme.mode,
