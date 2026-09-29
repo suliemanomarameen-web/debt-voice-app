@@ -24,6 +24,13 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
+      - name: Update version in pubspec.yaml
+        run: |
+          NEW_VERSION="1.0.${{ github.run_number }}+${{ github.run_number }}"
+          sed -i "s/^version: .*/version: $NEW_VERSION/" pubspec.yaml
+          echo "نسخة جديدة: $NEW_VERSION"
+          grep '^version:' pubspec.yaml
+
       - name: Regenerate Android files
         run: |
           rm -rf android
@@ -40,14 +47,14 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK"/>
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
               <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
-              <uses-permission android:name="android.permission.BLUETOOTH"/>
-              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+              <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+              <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
               <application
                   android:label="دفتر الديون"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
                   <activity
-                      android:name=".MainActivity"
+                      android:name="io.flutter.embedding.android.FlutterFragmentActivity"
                       android:exported="true"
                       android:launchMode="singleTop"
                       android:theme="@style/LaunchTheme"
@@ -140,9 +147,11 @@ jobs:
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.0-all.zip
           EOF
 
-      - name: Fix minSdkVersion
+      - name: Fix SDK versions
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle
 
       - name: Get dependencies
         run: flutter pub get
