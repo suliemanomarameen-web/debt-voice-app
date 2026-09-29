@@ -8,8 +8,10 @@ import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
 import 'services/speech_service.dart';
 import 'services/parser_service.dart';
+import 'services/query_service.dart';
 import 'services/theme_service.dart';
 import 'services/reminder_service.dart';
+import 'services/tts_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
@@ -25,6 +27,8 @@ void main() async {
 
   final speech = SpeechService();
   await speech.init();
+
+  await TtsService.init();
 
   final theme = ThemeService();
   await theme.load();
@@ -56,6 +60,7 @@ void _setupOverlayListener() {
       final text = data['text'] as String? ?? '';
 
       if (text == '__EMPTY__') {
+        await TtsService.speakDidNotHear();
         await NotificationService.show(
           '🎙️ لم أسمع شيئاً',
           'اضغط مطولاً على الزر وتحدّث بوضوح',
@@ -64,29 +69,70 @@ void _setupOverlayListener() {
       }
       if (text.isEmpty) return;
 
+      final db = DatabaseHelper.instance;
+
+      // ========== 1) استعلام ==========
+      if (QueryService.isQuery(text)) {
+        final result = await QueryService.query(text);
+        await TtsService.speak(result.spokenAnswer);
+        await NotificationService.show(
+          result.hasAccount ? '📊 ${result.customerName}' : '⚠️ استعلام',
+          result.spokenAnswer,
+        );
+        return;
+      }
+
+      // ========== 2) معاملة / إنشاء حساب ==========
       final parsed = ParserService.parse(text);
       if (parsed == null) {
+        await TtsService.speakDidNotUnderstand();
         await NotificationService.show('لم أفهم', 'النص: "$text"');
         return;
       }
 
-      final db = DatabaseHelper.instance;
-
+      // ----- إنشاء حساب -----
       if (parsed.intent == 'add_account') {
-        final existing = await db.findExactCustomer(parsed.customerName);
-        if (existing != null) {
-          await NotificationService.show('موجود مسبقاً', parsed.customerName);
+        if (parsed.customerName.isEmpty) {
+          await TtsService.speak('لَمْ أَفْهَمِ الاِسْمَ');
+          await NotificationService.show(
+            '⚠️ لم أفهم الاسم',
+            'قل: "أضف حساب باسم محمد"',
+          );
           return;
         }
-        await db.insertCustomer(Customer(
+
+        final existing = await db.findExactCustomer(parsed.customerName);
+        if (existing != null) {
+          await TtsService.speakExistsBefore(parsed.customerName);
+          await NotificationService.show(
+            '⚠️ موجود مسبقاً',
+            parsed.customerName,
+          );
+          return;
+        }
+
+        final id = await db.insertCustomer(Customer(
           name: parsed.customerName,
           accountType: parsed.accountType,
           createdAt: DateTime.now().toIso8601String(),
         ));
-        await NotificationService.show('✅ تم إنشاء حساب', parsed.customerName);
+
+        await TtsService.speakAccountCreated(parsed.customerName);
+
+        final typeAr = {
+          'customer': 'عَمِيل',
+          'supplier': 'مَوَرِّد',
+          'other': 'أُخْرَى',
+        }[parsed.accountType] ?? 'عَمِيل';
+
+        await NotificationService.show(
+          '✅ تم إنشاء حساب',
+          '${parsed.customerName} ($typeAr)\nالرقم: #$id',
+        );
         return;
       }
 
+      // ----- معاملة عادية -----
       final customer = await db.findExactCustomer(parsed.customerName);
       if (customer != null) {
         await _saveTransactionFor(customer, parsed, db);
@@ -94,11 +140,16 @@ void _setupOverlayListener() {
       }
       final partial = await db.findCustomersContaining(parsed.customerName);
       if (partial.isEmpty) {
-        await NotificationService.show('❌ لا يوجد حساب', parsed.customerName);
+        await TtsService.speakNoAccount(parsed.customerName);
+        await NotificationService.show(
+          '❌ لا يوجد حساب',
+          '${parsed.customerName}\nقل: "أضف حساب باسم ${parsed.customerName}"',
+        );
         return;
       }
       if (partial.length > 1) {
         pendingVoiceText = text;
+        await TtsService.speakMultipleAccounts();
         await NotificationService.show(
           '⚠️ يوجد أكثر من حساب',
           'اضغط هنا لاختيار الحساب',
@@ -132,6 +183,14 @@ Future<void> _saveTransactionFor(
     'payment': 'سداد',
     'return': 'مرتجع',
   }[parsed.intent] ?? 'عملية';
+
+  await TtsService.confirmTransaction(
+    type: label,
+    amount: parsed.amount,
+    customerName: customer.name,
+    newBalance: newBalance,
+    currency: parsed.currency,
+  );
 
   final detail = StringBuffer();
   detail.write('${customer.name}\n');
