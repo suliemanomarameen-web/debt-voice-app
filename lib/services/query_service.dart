@@ -19,22 +19,69 @@ class QueryResult {
 }
 
 class QueryService {
-  /// هل الجملة استعلام؟
+  /// هل الجملة استعلام؟ (وليس تسجيل معاملة)
   static bool isQuery(String text) {
-    final t = text.toLowerCase();
+    final t = text.toLowerCase().trim();
+
+    // 🔑 إذا كانت الجملة تحتوي على فعل تسجيل → ليست استعلاماً
+    const recordVerbs = [
+      'سجل على', 'سجل ل', 'سجل',
+      'دفع', 'وصل',
+      'مرتجع', 'استلم', 'استلمت', 'سدد',
+    ];
+    final hasRecordVerb = recordVerbs.any((v) => t.contains(v));
+
+    // إذا كانت جملة تسجيل → نتحقق من "كم" أولاً
+    if (hasRecordVerb) {
+      const queryOnlyWords = [
+        'كم عنده', 'كم عندها', 'كم عند',
+        'كم عليه', 'كم عليها',
+        'كم له', 'كم لها',
+        'كم باقي', 'ماذا مع',
+        'how much', 'what does',
+      ];
+      if (queryOnlyWords.any((w) => t.contains(w))) return true;
+      return false; // جملة تسجيل
+    }
+
+    // 🔑 كلمات الاستعلام الواضحة
     const queryWords = [
       'كم عنده', 'كم عندها', 'كم عند',
       'كم عليه', 'كم عليها',
       'كم له', 'كم لها',
-      'كم باقي له', 'كم باقي عليها', 'كم باقي لمحمد',
+      'كم باقي', 'كم باقي له', 'كم باقي عليها',
       'ماذا معه', 'ماذا معها', 'ماذا مع',
       'معه كم', 'معها كم',
-      'رصيد', 'كشف',
-      'what does', 'how much', 'balance',
+      'how much', 'what does', 'balance',
     ];
-    return queryWords.any((w) => t.contains(w));
+    if (queryWords.any((w) => t.contains(w))) return true;
+
+    // 🔑 "رصيد" أو "كشف" — نتحقق: قد تكون صنفاً
+    final words = t.split(RegExp(r'\s+'));
+    if (words.isNotEmpty) {
+      final lastWord = words.last;
+      if (['رصيد', 'كشف'].contains(lastWord)) {
+        // إذا كان قبلها رقم → فهي صنف (وليس استعلاماً)
+        if (words.length >= 2) {
+          final beforeLast = words[words.length - 2];
+          if (RegExp(r'\d').hasMatch(beforeLast)) {
+            return false; // رقم + رصيد = صنف
+          }
+        }
+      }
+    }
+
+    // "رصيد محمد" أو "كشف حساب محمد" → استعلام
+    if (t.startsWith('رصيد ') ||
+        t.startsWith('كشف ') ||
+        t.startsWith('حساب ')) {
+      return true;
+    }
+
+    return false;
   }
 
+  /// استخراج اسم الزبون من سؤال الاستعلام
   static String? extractQueryName(String text) {
     final patterns = [
       RegExp(
@@ -76,7 +123,7 @@ class QueryService {
         customerName: '',
         balance: 0,
         hasAccount: false,
-        spokenAnswer: 'لَمْ أَفْهَمِ الاِسْمَ. قُلْ: كَمْ عِنْدَ مُحَمَّد',
+        spokenAnswer: 'لم أفهم الاسم. قل: كم عند محمد',
       );
     }
 
@@ -92,19 +139,18 @@ class QueryService {
         customerName: name,
         balance: 0,
         hasAccount: false,
-        spokenAnswer: 'لَا يُوجَدُ حِسَابٌ بِاسْمِ $name',
+        spokenAnswer: 'لا يوجد حساب باسم $name',
       );
     }
 
     if (partial.length == 1) return _buildResult(partial.first, db);
 
-    final names = partial.take(3).map((c) => c.name).join('، أَوْ ');
+    final names = partial.take(3).map((c) => c.name).join('، أو ');
     return QueryResult(
       customerName: name,
       balance: 0,
       hasAccount: false,
-      spokenAnswer:
-          'يُوجَدُ أَكْثَرُ مِنْ حِسَاب: $names. حَدِّدِ الاِسْمَ بِدِقَّة',
+      spokenAnswer: 'يوجد أكثر من حساب: $names. حدد الاسم بدقة',
     );
   }
 
@@ -113,19 +159,15 @@ class QueryService {
     final balance = await db.customerBalance(c.id!);
     final txs = await db.customerTransactions(c.id!);
 
-    // بناء النص المنطوق (مشكّل بالكامل)
     String answer;
     if (balance > 0) {
-      answer =
-          '${c.name} عَلَيْهِ ${_numToWords(balance)} رِيَال';
+      answer = '${c.name} عليه ${balance.toStringAsFixed(0)} ريال';
     } else if (balance < 0) {
-      answer =
-          '${c.name} بَاقِي لَهُ ${_numToWords(-balance)} رِيَال';
+      answer = '${c.name} باقي له ${(-balance).toStringAsFixed(0)} ريال';
     } else {
-      answer = 'حِسَابُ ${c.name} مُتَوَازِن، لَا دُيُونَ وَلَا مُسْتَحَقَّات';
+      answer = 'حساب ${c.name} متوازن، لا ديون ولا مستحقات';
     }
 
-    // أضف آخر 3 عمليات
     if (txs.isNotEmpty) {
       final recent = txs.take(3).toList();
       final parts = <String>[];
@@ -134,20 +176,19 @@ class QueryService {
         final isReturn = t.items.startsWith('مرتجع');
         String prefix;
         if (isReturn) {
-          prefix = 'مُرْتَجَع';
+          prefix = 'مرتجع';
         } else if (isDebt) {
-          prefix = 'دَيْن';
+          prefix = 'دين';
         } else {
-          prefix = 'دَفْع';
+          prefix = 'دفع';
         }
 
-        final amount = _numToWords(t.amount);
         final items = t.items.isEmpty
             ? ''
             : ' ${t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '')}';
-        parts.add('$prefix $amount$items');
+        parts.add('$prefix ${t.amount.toStringAsFixed(0)}$items');
       }
-      answer += '. آخِرُ العَمَلِيَّات: ${parts.join("، ثُمَّ ")}';
+      answer += '. آخر العمليات: ${parts.join("، ثم ")}';
     }
 
     return QueryResult(
@@ -157,55 +198,5 @@ class QueryService {
       spokenAnswer: answer,
       transactions: txs,
     );
-  }
-
-  /// تحويل الرقم إلى كلمات عربية مشكّلة
-  static String _numToWords(double num) {
-    final n = num.round();
-    if (n == 0) return 'صِفْر';
-    if (n < 0) return 'سَالِب ${_numToWords((-n).toDouble())}';
-
-    const ones = [
-      '', 'وَاحِد', 'اِثْنَان', 'ثَلَاثَة', 'أَرْبَعَة', 'خَمْسَة',
-      'سِتَّة', 'سَبْعَة', 'ثَمَانِيَة', 'تِسْعَة', 'عَشَرَة',
-      'أَحَدَ عَشَر', 'اِثْنَا عَشَر', 'ثَلَاثَةَ عَشَر', 'أَرْبَعَةَ عَشَر',
-      'خَمْسَةَ عَشَر', 'سِتَّةَ عَشَر', 'سَبْعَةَ عَشَر', 'ثَمَانِيَةَ عَشَر',
-      'تِسْعَةَ عَشَر',
-    ];
-    const tens = [
-      '', '', 'عِشْرُون', 'ثَلَاثُون', 'أَرْبَعُون', 'خَمْسُون',
-      'سِتُّون', 'سَبْعُون', 'ثَمَانُون', 'تِسْعُون',
-    ];
-
-    if (n < 20) return ones[n];
-    if (n < 100) {
-      final t = n ~/ 10;
-      final o = n % 10;
-      if (o == 0) return tens[t];
-      return '${ones[o]} وَ${tens[t]}';
-    }
-    if (n < 1000) {
-      final h = n ~/ 100;
-      final rest = n % 100;
-      final hStr = h == 1
-          ? 'مِائَة'
-          : h == 2
-              ? 'مِائَتَاْن'
-              : '${ones[h]} مِائَة';
-      if (rest == 0) return hStr;
-      return '$hStr و${_numToWords(rest.toDouble())}';
-    }
-    if (n < 1000000) {
-      final k = n ~/ 1000;
-      final rest = n % 1000;
-      final kStr = k == 1
-          ? 'أَلْف'
-          : k == 2
-              ? 'أَلْفَان'
-              : '${_numToWords(k.toDouble())} آلَاف';
-      if (rest == 0) return kStr;
-      return '$kStr و${_numToWords(rest.toDouble())}';
-    }
-    return n.toString();
   }
 }
