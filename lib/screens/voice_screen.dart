@@ -74,6 +74,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (_autoProcessed) return;
     _autoProcessed = true;
 
+    // 1) استعلام
     if (QueryService.isQuery(_text)) {
       final result = await QueryService.query(_text);
       if (!mounted) return;
@@ -86,12 +87,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
+    // 2) معاملة
     final parsed = ParserService.parse(_text);
     if (parsed == null) {
       setState(() {
         _parsed = null;
         _errorMessage = 'لم أفهم الجملة. جرّب: "سجل على محمد 1500 ريال"';
       });
+      await TtsService.speakDidNotUnderstand();
       return;
     }
 
@@ -127,7 +130,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
         _matches = [];
         _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"';
       });
-      await TtsService.speak('لا يوجد حساب باسم ${parsed.customerName}');
+      await TtsService.speakNoAccount(parsed.customerName);
       return;
     }
 
@@ -149,7 +152,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _errorMessage = null;
       _askingWhich = true;
     });
-    await TtsService.speak('أي حساب تقصد؟');
+    await TtsService.speakMultipleAccounts();
   }
 
   void _chooseCustomer(Customer c) {
@@ -170,6 +173,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
         _errorMessage = 'الحساب موجود مسبقاً';
         _parsed = null;
       });
+      await TtsService.speakExistsBefore(_parsed!.customerName);
       return;
     }
 
@@ -180,7 +184,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     ));
 
     if (!mounted) return;
-    await TtsService.speak('تم إنشاء حساب ${_parsed!.customerName}');
+    await TtsService.speakAccountCreated(_parsed!.customerName);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
@@ -277,7 +281,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -287,7 +290,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // النص المكتشف — ألوان الثيم
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -318,8 +320,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // زر الميكروفون
               GestureDetector(
                 onTap: _toggle,
                 child: Container(
@@ -330,7 +330,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     color: _listening ? Colors.red : theme.colorScheme.primary,
                     boxShadow: [
                       BoxShadow(
-                        color: (_listening ? Colors.red : theme.colorScheme.primary)
+                        color: (_listening
+                                ? Colors.red
+                                : theme.colorScheme.primary)
                             .withOpacity(0.4),
                         blurRadius: 20,
                         spreadRadius: 5,
@@ -349,7 +351,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   style: TextStyle(
                       fontSize: 16, color: theme.colorScheme.onSurface)),
 
-              // خطأ
               if (_errorMessage != null) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -364,14 +365,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
                         Expanded(
                             child: Text(_errorMessage!,
                                 style: TextStyle(
-                                    color: theme.colorScheme.onErrorContainer))),
+                                    color:
+                                        theme.colorScheme.onErrorContainer))),
                       ],
                     ),
                   ),
                 ),
               ],
 
-              // نتيجة الاستعلام
               if (_queryResult != null) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -388,7 +389,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                             const SizedBox(width: 8),
                             Text('الإجابة:',
                                 style: TextStyle(
-                                    color: theme.colorScheme.onPrimaryContainer,
+                                    color:
+                                        theme.colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16)),
                           ],
@@ -418,7 +420,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // قائمة الاختيار
               if (_askingWhich && _matches.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 Card(
@@ -435,7 +436,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                             const SizedBox(width: 8),
                             Text('أي حساب تقصد؟',
                                 style: TextStyle(
-                                    color: theme.colorScheme.onTertiaryContainer,
+                                    color:
+                                        theme.colorScheme.onTertiaryContainer,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16)),
                           ],
@@ -445,12 +447,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
                               leading: CircleAvatar(
                                 backgroundColor: theme.colorScheme.primary,
                                 child: Text(c.name.characters.first,
-                                    style: const TextStyle(color: Colors.white)),
+                                    style: const TextStyle(
+                                        color: Colors.white)),
                               ),
                               title: Text(c.name,
                                   style: TextStyle(
-                                      color:
-                                          theme.colorScheme.onTertiaryContainer)),
+                                      color: theme
+                                          .colorScheme.onTertiaryContainer)),
                               subtitle: Text(
                                   AccountType.labelsAr[c.accountType] ?? '',
                                   style: TextStyle(
@@ -466,7 +469,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // بطاقة التأكيد
               if (_parsed != null && _foundCustomer != null) ...[
                 const SizedBox(height: 24),
                 Card(
@@ -521,7 +523,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 ),
               ],
 
-              // بطاقة إنشاء حساب
               if (_parsed != null &&
                   _parsed!.intent == 'add_account' &&
                   _foundCustomer == null) ...[
@@ -535,7 +536,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       children: [
                         Text('➕ إنشاء حساب جديد',
                             style: TextStyle(
-                                color: theme.colorScheme.onSecondaryContainer,
+                                color:
+                                    theme.colorScheme.onSecondaryContainer,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16)),
                         const SizedBox(height: 12),
@@ -601,8 +603,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
           ),
           Expanded(
               child: Text(value,
-                  style: TextStyle(
-                      color: theme.colorScheme.onPrimaryContainer))),
+                  style:
+                      TextStyle(color: theme.colorScheme.onPrimaryContainer))),
         ],
       ),
     );
