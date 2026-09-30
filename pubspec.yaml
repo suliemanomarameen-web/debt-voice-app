@@ -28,6 +28,7 @@ dependencies:
   url_launcher: ^6.2.5
   package_info_plus: ^8.0.0
   local_auth: ^2.2.0
+  crypto: ^3.0.3
 
 flutter:
   uses-material-design: true
