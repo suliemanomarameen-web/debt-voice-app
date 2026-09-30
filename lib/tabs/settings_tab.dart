@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../db/database_helper.dart';
 import '../services/auth_service.dart';
+import '../services/auto_backup_service.dart';
 import '../services/backup_service.dart';
 import '../services/export_service.dart';
 import '../services/overlay_service.dart';
@@ -26,21 +27,32 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _speechReady = false;
   String _version = '...';
   bool _backupBusy = false;
+  bool _autoEnabled = false;
+  String _autoFreq = 'daily';
 
   @override
   void initState() {
     super.initState();
     _checkStatus();
     _loadVersion();
+    _loadAutoBackup();
+  }
+
+  Future<void> _loadAutoBackup() async {
+    final enabled = await AutoBackupService.isEnabled();
+    final freq = await AutoBackupService.getFrequency();
+    if (!mounted) return;
+    setState(() {
+      _autoEnabled = enabled;
+      _autoFreq = freq;
+    });
   }
 
   Future<void> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
       if (!mounted) return;
-      setState(() {
-        _version = '${info.version} (${info.buildNumber})';
-      });
+      setState(() => _version = '${info.version} (${info.buildNumber})');
     } catch (_) {
       if (mounted) setState(() => _version = '1.0.0');
     }
@@ -113,12 +125,10 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== النسخ الاحتياطي ==============
+  // ============== النسخ اليدوي ==============
   Future<void> _createBackup() async {
     setState(() => _backupBusy = true);
-
     final result = await BackupService.createBackup();
-
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
@@ -139,8 +149,8 @@ class _SettingsTabState extends State<SettingsTab> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('✅ ${result.customersCount} حساب'),
-                Text('✅ ${result.transactionsCount} عملية'),
+                Text('${result.customersCount} حساب'),
+                Text('${result.transactionsCount} عملية'),
                 const Divider(),
                 Text('المسار:\n${result.filePath}',
                     style: const TextStyle(fontSize: 11)),
@@ -165,19 +175,11 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
         ),
       );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.message),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
   Future<void> _showBackupsList() async {
     final backups = await BackupService.listBackups();
-
     if (!mounted) return;
 
     if (backups.isEmpty) {
@@ -197,8 +199,8 @@ class _SettingsTabState extends State<SettingsTab> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              const Text('النسخ الاحتياطية المحفوظة',
-                  style: TextStyle(
+              Text('النسخ المحفوظة (${backups.length})',
+                  style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               Expanded(
@@ -210,14 +212,14 @@ class _SettingsTabState extends State<SettingsTab> {
                     return Card(
                       child: ListTile(
                         leading: const Icon(Icons.description),
-                        title: Text(name),
+                        title:
+                            Text(name, style: const TextStyle(fontSize: 13)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
                               icon: const Icon(Icons.restore,
                                   color: Colors.blue),
-                              tooltip: 'استعادة',
                               onPressed: () {
                                 Navigator.pop(context);
                                 _restoreFromFile(file.path);
@@ -273,7 +275,6 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _restoreFromFile(String filePath) async {
-    // عرض معلومات الملف
     final info = await BackupService.peekFile(filePath);
     if (!mounted) return;
 
@@ -292,17 +293,16 @@ class _SettingsTabState extends State<SettingsTab> {
       builder: (ctx) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
-          title: const Text('استعادة نسخة احتياطية'),
+          title: const Text('استعادة نسخة'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('التاريخ: ${info['created_at']}'),
-              const SizedBox(height: 4),
               Text('الحسابات: ${info['customers_count']}'),
               Text('العمليات: ${info['transactions_count']}'),
               const Divider(height: 24),
-              const Text('اختر طريقة الاستعادة:',
+              const Text('طريقة الاستعادة:',
                   style: TextStyle(fontWeight: FontWeight.bold)),
             ],
           ),
@@ -312,8 +312,7 @@ class _SettingsTabState extends State<SettingsTab> {
               child: const Text('إلغاء'),
             ),
             OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, 'replace'),
               child: const Text('استبدال كامل'),
             ),
@@ -329,8 +328,7 @@ class _SettingsTabState extends State<SettingsTab> {
     if (mode == null) return;
 
     setState(() => _backupBusy = true);
-    final result =
-        await BackupService.restoreFromFile(filePath, mode: mode);
+    final result = await BackupService.restoreFromFile(filePath, mode: mode);
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
@@ -365,6 +363,76 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       ),
     );
+  }
+
+  // ============== النسخ التلقائي ==============
+  Future<void> _toggleAutoBackup(bool v) async {
+    await AutoBackupService.setEnabled(v);
+    if (!mounted) return;
+    setState(() => _autoEnabled = v);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content:
+            Text(v ? 'تم تفعيل النسخ التلقائي' : 'تم إيقاف النسخ التلقائي'),
+        backgroundColor: v ? Colors.green : Colors.grey,
+      ),
+    );
+  }
+
+  Future<void> _changeFreq() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('تكرار النسخ التلقائي'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'daily'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'daily')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('يومياً'),
+                ],
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'weekly'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'weekly')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('أسبوعياً'),
+                ],
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'monthly'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'monthly')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('شهرياً'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    await AutoBackupService.setFrequency(result);
+    if (!mounted) return;
+    setState(() => _autoFreq = result);
+  }
+
+  String _freqLabel(String f) {
+    return {'daily': 'يومياً', 'weekly': 'أسبوعياً', 'monthly': 'شهرياً'}[f] ??
+        f;
   }
 
   @override
@@ -413,7 +481,6 @@ class _SettingsTabState extends State<SettingsTab> {
                     ListTile(
                       leading: const Icon(Icons.lock_outline),
                       title: const Text('تفعيل القفل'),
-                      subtitle: const Text('حماية التطبيق بكلمة مرور'),
                       trailing: FilledButton(
                         onPressed: () => _enableLockDialog(),
                         child: const Text('تفعيل'),
@@ -423,13 +490,6 @@ class _SettingsTabState extends State<SettingsTab> {
                     const ListTile(
                       leading: Icon(Icons.lock, color: Colors.green),
                       title: Text('القفل مفعّل'),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.password),
-                      title: const Text('تغيير كلمة المرور'),
-                      trailing:
-                          const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () => _changePwdDialog(),
                     ),
                     ListTile(
                       leading:
@@ -455,27 +515,61 @@ class _SettingsTabState extends State<SettingsTab> {
                   )
                 : const Icon(Icons.backup, color: Colors.blue),
             title: const Text('إنشاء نسخة احتياطية'),
-            subtitle: const Text('حفظ كل البيانات في ملف'),
-            trailing:
-                const Icon(Icons.arrow_forward_ios, size: 16),
+            subtitle: const Text('حفظ يدوي الآن'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: _backupBusy ? null : _createBackup,
           ),
           ListTile(
             leading: const Icon(Icons.history, color: Colors.green),
             title: const Text('عرض النسخ المحفوظة'),
-            subtitle: const Text('اختر نسخة لاستعادتها'),
-            trailing:
-                const Icon(Icons.arrow_forward_ios, size: 16),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: _showBackupsList,
           ),
           ListTile(
             leading: const Icon(Icons.restore, color: Colors.orange),
             title: const Text('استعادة من ملف'),
-            subtitle: const Text('اختر ملف JSON من جوالك'),
-            trailing:
-                const Icon(Icons.arrow_forward_ios, size: 16),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: _backupBusy ? null : _pickAndRestore,
           ),
+
+          const Divider(height: 24),
+
+          // ========== النسخ التلقائي ==========
+          SwitchListTile(
+            secondary: const Icon(Icons.schedule, color: Colors.purple),
+            title: const Text('النسخ التلقائي'),
+            subtitle: Text(_autoEnabled
+                ? 'النسخ كل ${_freqLabel(_autoFreq)}'
+                : 'نسخ احتياطي في الخلفية'),
+            value: _autoEnabled,
+            onChanged: _toggleAutoBackup,
+          ),
+          if (_autoEnabled)
+            ListTile(
+              leading: const Icon(Icons.repeat),
+              title: const Text('تكرار النسخ'),
+              subtitle: Text(_freqLabel(_autoFreq)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _changeFreq,
+            ),
+          if (_autoEnabled)
+            ListTile(
+              leading: const Icon(Icons.play_arrow, color: Colors.green),
+              title: const Text('تشغيل نسخة الآن'),
+              subtitle: const Text('اختبار فوري'),
+              onTap: () async {
+                setState(() => _backupBusy = true);
+                await AutoBackupService.runNow();
+                if (!mounted) return;
+                setState(() => _backupBusy = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم إنشاء نسخة'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+            ),
 
           // ========== الزر العائم ==========
           const _SectionHeader('الزر العائم'),
@@ -622,7 +716,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ========== حوارات القفل (مختصرة) ==========
+  // ========== حوارات القفل ==========
   Future<void> _enableLockDialog() async {
     final pwd1 = TextEditingController();
     final pwd2 = TextEditingController();
@@ -745,13 +839,6 @@ class _SettingsTabState extends State<SettingsTab> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _changePwdDialog() async {
-    // نسخة مبسطة
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('استخدم زر التغيير في الشاشة الرئيسية')),
-    );
-  }
-
   Future<void> _disableLockDialog() async {
     final ctrl = TextEditingController();
     String? error;
@@ -779,7 +866,8 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               FilledButton(
                 onPressed: () async {
-                  final ok = await AuthService.verifyPassword(ctrl.text.trim());
+                  final ok =
+                      await AuthService.verifyPassword(ctrl.text.trim());
                   if (!ok) {
                     setSt(() => error = 'غير صحيحة');
                     return;
