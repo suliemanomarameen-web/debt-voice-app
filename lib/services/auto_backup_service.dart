@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'backup_service.dart';
 
-/// مهام النسخ الاحتياطي التلقائي
+/// معرف المهمة
 const String taskAutoBackup = 'debt_auto_backup';
 
 @pragma('vm:entry-point')
@@ -12,11 +12,9 @@ void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     try {
       if (task == taskAutoBackup) {
-        // نسخة احتياطية
         final result = await BackupService.createBackup();
         if (result.success) {
-          debugPrint('✅ Auto backup created: ${result.filePath}');
-          // احذف النسخ القديمة
+          debugPrint('✅ Auto backup: ${result.filePath}');
           await AutoBackupService.trimOldBackups();
         } else {
           debugPrint('❌ Auto backup failed: ${result.message}');
@@ -32,7 +30,7 @@ void callbackDispatcher() {
 
 class AutoBackupService {
   static const _keyEnabled = 'auto_backup_enabled';
-  static const _keyFrequency = 'auto_backup_frequency'; // daily/weekly/monthly
+  static const _keyFrequency = 'auto_backup_frequency';
   static const _maxBackups = 10;
 
   // ========== إعدادات ==========
@@ -66,51 +64,52 @@ class AutoBackupService {
 
   // ========== التهيئة ==========
   static Future<void> init() async {
-    await Workmanager().initialize(
-      callbackDispatcher,
-      isInDebugMode: false,
-    );
+    try {
+      await Workmanager().initialize(
+        callbackDispatcher,
+        isInDebugMode: false,
+      );
 
-    if (await isEnabled()) {
-      await _schedule();
+      if (await isEnabled()) {
+        await _schedule();
+      }
+    } catch (e) {
+      debugPrint('Workmanager init error: $e');
     }
   }
 
   // ========== الجدولة ==========
   static Future<void> _schedule() async {
-    await cancel();
+    try {
+      await cancel();
 
-    final freq = await getFrequency();
-    Duration interval;
-    switch (freq) {
-      case 'weekly':
-        interval = const Duration(days: 7);
-        break;
-      case 'monthly':
-        interval = const Duration(days: 30);
-        break;
-      case 'daily':
-      default:
-        interval = const Duration(hours: 24);
-        break;
+      final freq = await getFrequency();
+      Duration interval;
+      switch (freq) {
+        case 'weekly':
+          interval = const Duration(days: 7);
+          break;
+        case 'monthly':
+          interval = const Duration(days: 30);
+          break;
+        case 'daily':
+        default:
+          interval = const Duration(hours: 24);
+          break;
+      }
+
+      // ✅ API مبسط — بدون خصائص غير مدعومة
+      await Workmanager().registerPeriodicTask(
+        taskAutoBackup,
+        taskAutoBackup,
+        frequency: interval,
+        initialDelay: const Duration(minutes: 15),
+      );
+
+      debugPrint('✅ Auto backup scheduled: $freq');
+    } catch (e) {
+      debugPrint('Schedule error: $e');
     }
-
-    await Workmanager().registerPeriodicTask(
-      taskAutoBackup,
-      taskAutoBackup,
-      frequency: interval,
-      initialDelay: const Duration(minutes: 15),
-      constraints: Constraints(
-        networkType: NetworkType.notRequired,
-        requiresBatteryNotLow: false,
-        requiresCharging: false,
-        requiresDeviceIdle: false,
-        requiresStorageNotLow: false,
-      ),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
-    );
-
-    debugPrint('Auto backup scheduled: $freq');
   }
 
   static Future<void> cancel() async {
@@ -122,11 +121,15 @@ class AutoBackupService {
     }
   }
 
-  /// تشغيل يدوي الآن (اختبار)
+  /// تشغيل يدوي الآن
   static Future<void> runNow() async {
-    final result = await BackupService.createBackup();
-    if (result.success) {
-      await trimOldBackups();
+    try {
+      final result = await BackupService.createBackup();
+      if (result.success) {
+        await trimOldBackups();
+      }
+    } catch (e) {
+      debugPrint('RunNow error: $e');
     }
   }
 
@@ -136,7 +139,6 @@ class AutoBackupService {
       final backups = await BackupService.listBackups();
       if (backups.length <= _maxBackups) return;
 
-      // رتّبت بالفعل من الأحدث للأقدم في listBackups
       final toDelete = backups.skip(_maxBackups);
       for (final file in toDelete) {
         try {
