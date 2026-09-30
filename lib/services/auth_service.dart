@@ -80,22 +80,25 @@ class AuthService {
     try {
       final supported = await _auth.isDeviceSupported();
       final canCheck = await _auth.canCheckBiometrics;
-      return supported && canCheck;
+      final available = await _auth.getAvailableBiometrics();
+      debugPrint('Bio: supported=$supported canCheck=$canCheck available=$available');
+      return supported && canCheck && available.isNotEmpty;
     } catch (e) {
       debugPrint('canUseBiometrics error: $e');
       return false;
     }
   }
 
-  /// Authenticate — مع معالجة كاملة للأخطاء
+  /// Authenticate — نسخة محصّنة ضد الخروج
   static Future<bool> authenticate({String reason = 'افتح دفتر الديون'}) async {
     try {
       final result = await _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: false,
-          useErrorDialogs: false, // ← نمنع dialogs مخصصة
+          biometricOnly: true,    // ← فقط البصمة، لا PIN النظام
+          useErrorDialogs: false, // ← لا dialogs
+          sensitiveTransaction: false,
         ),
       );
       return result;
