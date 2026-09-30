@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../db/database_helper.dart';
+import '../services/auth_service.dart';
 import '../services/export_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
@@ -19,11 +21,25 @@ class _SettingsTabState extends State<SettingsTab> {
   final _speech = SpeechService();
   bool _micReady = false;
   bool _speechReady = false;
+  String _version = '...';
 
   @override
   void initState() {
     super.initState();
     _checkStatus();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _version = '${info.version} (${info.buildNumber})';
+      });
+    } catch (_) {
+      if (mounted) setState(() => _version = '1.0.0');
+    }
   }
 
   Future<void> _checkStatus() async {
@@ -47,7 +63,7 @@ class _SettingsTabState extends State<SettingsTab> {
     if (_micReady && _speechReady) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ كل شيء جاهز'),
+          content: Text('كل شيء جاهز'),
           backgroundColor: Colors.green,
         ),
       );
@@ -56,7 +72,7 @@ class _SettingsTabState extends State<SettingsTab> {
       if (!_micReady) msg += 'الميكروفون غير مسموح. ';
       if (!_speechReady) msg += 'محرك الصوت غير جاهز.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('⚠️ $msg'), backgroundColor: Colors.orange),
+        SnackBar(content: Text(msg), backgroundColor: Colors.orange),
       );
     }
   }
@@ -72,14 +88,14 @@ class _SettingsTabState extends State<SettingsTab> {
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ تم تشغيل الزر العائم'),
+          content: Text('تم تشغيل الزر العائم'),
           backgroundColor: Colors.green,
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('⚠️ فشل التشغيل'),
+          content: Text('فشل التشغيل'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -105,7 +121,7 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('✅ تم تفعيل التذكير اليومي (9 صباحاً)'),
+        content: Text('تم تفعيل التذكير اليومي'),
         backgroundColor: Colors.green,
       ),
     );
@@ -119,7 +135,6 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ===== التهيئة =====
           const _SectionHeader('التهيئة'),
           ListTile(
             leading: Icon(
@@ -127,7 +142,7 @@ class _SettingsTabState extends State<SettingsTab> {
               color: _micReady ? Colors.green : Colors.red,
             ),
             title: const Text('إذن الميكروفون'),
-            subtitle: Text(_micReady ? 'ممنوح ✅' : 'غير ممنوح'),
+            subtitle: Text(_micReady ? 'ممنوح' : 'غير ممنوح'),
           ),
           ListTile(
             leading: Icon(
@@ -135,7 +150,7 @@ class _SettingsTabState extends State<SettingsTab> {
               color: _speechReady ? Colors.green : Colors.red,
             ),
             title: const Text('محرك الصوت'),
-            subtitle: Text(_speechReady ? 'جاهز ✅' : 'غير جاهز'),
+            subtitle: Text(_speechReady ? 'جاهز' : 'غير جاهز'),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -146,7 +161,42 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // ===== الزر العائم =====
+          // 🆕 قسم الحماية
+          const _SectionHeader('الحماية'),
+          FutureBuilder<bool>(
+            future: AuthService.canUseBiometrics(),
+            builder: (_, snap) {
+              final supported = snap.data ?? false;
+              return FutureBuilder<bool>(
+                future: AuthService.isEnabled(),
+                builder: (_, snap2) {
+                  final enabled = snap2.data ?? false;
+                  return SwitchListTile(
+                    secondary: const Icon(Icons.fingerprint),
+                    title: const Text('القفل ببصمة الإصبع'),
+                    subtitle: Text(supported
+                        ? 'يُقفل التطبيق عند مغادرته'
+                        : 'الجهاز لا يدعم البصمة'),
+                    value: enabled,
+                    onChanged: !supported
+                        ? null
+                        : (v) async {
+                            if (v) {
+                              final ok = await AuthService.authenticate(
+                                  reason: 'لتأكيد التفعيل');
+                              if (!ok) return;
+                            }
+                            await AuthService.setEnabled(v);
+                            if (context.mounted) {
+                              setState(() {});
+                            }
+                          },
+                  );
+                },
+              );
+            },
+          ),
+
           const _SectionHeader('الزر العائم'),
           ListTile(
             leading: const Icon(Icons.picture_in_picture_alt),
@@ -169,7 +219,6 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ===== المظهر =====
           const _SectionHeader('المظهر'),
           ListTile(
             leading: const Icon(Icons.brightness_6),
@@ -190,7 +239,7 @@ class _SettingsTabState extends State<SettingsTab> {
                             Navigator.pop(context);
                           },
                           child: Text({
-                            ThemeMode.system: 'تلقائي (حسب النظام)',
+                            ThemeMode.system: 'تلقائي',
                             ThemeMode.light: 'نهاري',
                             ThemeMode.dark: 'ليلي',
                           }[m]!),
@@ -242,7 +291,6 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // ===== الإحصائيات =====
           const _SectionHeader('الإحصائيات'),
           ListTile(
             leading: const Icon(Icons.bar_chart),
@@ -255,39 +303,36 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // ===== التصدير =====
           const _SectionHeader('التصدير'),
           ListTile(
             leading: const Icon(Icons.table_chart),
             title: const Text('تصدير Excel'),
-            subtitle: const Text('كل الحسابات في ملف Excel'),
+            subtitle: const Text('كل الحسابات'),
             onTap: _exportAllExcel,
           ),
           ListTile(
             leading: const Icon(Icons.file_download),
             title: const Text('تصدير CSV'),
-            subtitle: const Text('كل الحسابات في ملف CSV'),
+            subtitle: const Text('كل الحسابات'),
             onTap: _exportAllCsv,
           ),
 
-          // ===== التذكيرات =====
           const _SectionHeader('التذكيرات'),
           ListTile(
             leading: const Icon(Icons.notifications_active),
             title: const Text('تذكير يومي'),
-            subtitle: const Text('إشعار كل يوم 9 صباحاً بالرصيد الكلي'),
+            subtitle: const Text('إشعار كل يوم 9 صباحاً'),
             trailing: FilledButton(
               onPressed: _scheduleDaily,
               child: const Text('تفعيل'),
             ),
           ),
 
-          // ===== معلومات =====
           const _SectionHeader('معلومات'),
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('دفتر الديون'),
-            subtitle: Text('الإصدار 1.0.0'),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('دفتر الديون'),
+            subtitle: Text('الإصدار: $_version'),
           ),
           const SizedBox(height: 24),
         ],
