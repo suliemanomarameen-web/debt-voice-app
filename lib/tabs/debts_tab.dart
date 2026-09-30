@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/date_filter.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
@@ -17,6 +18,7 @@ class _DebtsTabState extends State<DebtsTab> {
   double _total = 0;
   List<Customer> _topDebtors = [];
   List<MapEntry<Customer, Transaction>> _recent = [];
+  DateFilter _dateFilter = DateFilter();
 
   @override
   void initState() {
@@ -52,8 +54,10 @@ class _DebtsTabState extends State<DebtsTab> {
     final recent = <MapEntry<Customer, Transaction>>[];
     for (final c in all) {
       final tx = await db.customerTransactions(c.id!);
-      if (tx.isNotEmpty) {
-        recent.add(MapEntry(c, tx.first));
+      for (final t in tx) {
+        if (_dateFilter.matches(t.createdAt)) {
+          recent.add(MapEntry(c, t));
+        }
       }
     }
     recent.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
@@ -62,8 +66,69 @@ class _DebtsTabState extends State<DebtsTab> {
     setState(() {
       _total = t;
       _topDebtors = withBalance.take(5).map((e) => e.key).toList();
-      _recent = recent.take(5).toList();
+      _recent = recent.take(10).toList();
     });
+  }
+
+  Future<void> _showDateFilter() async {
+    final result = await showModalBottomSheet<DateFilter>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('فلترة بالتاريخ',
+                    style: TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('الكل'),
+                trailing: _dateFilter.type == DateFilterType.all
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(context, DateFilter()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.today),
+                title: const Text('اليوم'),
+                trailing: _dateFilter.type == DateFilterType.today
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.today)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.date_range),
+                title: const Text('آخر 7 أيام'),
+                trailing: _dateFilter.type == DateFilterType.week
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.week)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.calendar_month),
+                title: const Text('آخر 30 يوماً'),
+                trailing: _dateFilter.type == DateFilterType.month
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.month)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (result != null) {
+      setState(() => _dateFilter = result);
+      _refresh();
+    }
   }
 
   @override
@@ -74,6 +139,15 @@ class _DebtsTabState extends State<DebtsTab> {
       appBar: AppBar(
         title: const Text('دفتر الديون'),
         actions: [
+          IconButton(
+            icon: Icon(
+              _dateFilter.type == DateFilterType.all
+                  ? Icons.filter_alt_outlined
+                  : Icons.filter_alt,
+            ),
+            tooltip: 'فلترة: ${_dateFilter.label}',
+            onPressed: _showDateFilter,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refresh,
@@ -138,6 +212,40 @@ class _DebtsTabState extends State<DebtsTab> {
                 ],
               ),
             ),
+
+            // شريط الفلتر النشط
+            if (_dateFilter.type != DateFilterType.all) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.filter_alt,
+                        size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text('فلتر: ${_dateFilter.label}',
+                        style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Text('${_recent.length} عملية'),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        setState(() => _dateFilter = DateFilter());
+                        _refresh();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 20),
             if (_topDebtors.isNotEmpty) ...[
               const Padding(
@@ -244,13 +352,9 @@ class _DebtsTabState extends State<DebtsTab> {
                     children: [
                       Icon(Icons.inbox, size: 64, color: theme.disabledColor),
                       const SizedBox(height: 12),
-                      Text('لا توجد بيانات بعد',
+                      Text('لا توجد بيانات',
                           style: TextStyle(
                               color: theme.disabledColor, fontSize: 16)),
-                      const SizedBox(height: 6),
-                      Text('اضغط الزر البرتقالي للتسجيل بالصوت',
-                          style: TextStyle(
-                              color: theme.disabledColor, fontSize: 12)),
                     ],
                   ),
                 ),
