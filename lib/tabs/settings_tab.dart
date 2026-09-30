@@ -127,6 +127,80 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // ========== نافذة إنشاء كلمة مرور ==========
+  Future<String?> _askForNewPassword() async {
+    final ctrl1 = TextEditingController();
+    final ctrl2 = TextEditingController();
+    String? error;
+
+    return await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('أنشئ كلمة مرور'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('ستُستخدم عند فشل البصمة',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: ctrl1,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 20,
+                  decoration: const InputDecoration(
+                    labelText: 'كلمة المرور (أرقام فقط)',
+                    border: OutlineInputBorder(),
+                    counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: ctrl2,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 20,
+                  decoration: InputDecoration(
+                    labelText: 'تأكيد كلمة المرور',
+                    border: const OutlineInputBorder(),
+                    counterText: '',
+                    errorText: error,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final p1 = ctrl1.text.trim();
+                  final p2 = ctrl2.text.trim();
+                  if (p1.length < 4) {
+                    setSt(() => error = 'على الأقل 4 أرقام');
+                    return;
+                  }
+                  if (p1 != p2) {
+                    setSt(() => error = 'كلمتا المرور غير متطابقتين');
+                    return;
+                  }
+                  Navigator.pop(ctx, p1);
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
@@ -161,38 +235,51 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // 🆕 قسم الحماية
           const _SectionHeader('الحماية'),
           FutureBuilder<bool>(
-            future: AuthService.canUseBiometrics(),
+            future: AuthService.isEnabled(),
             builder: (_, snap) {
-              final supported = snap.data ?? false;
-              return FutureBuilder<bool>(
-                future: AuthService.isEnabled(),
-                builder: (_, snap2) {
-                  final enabled = snap2.data ?? false;
-                  return SwitchListTile(
+              final enabled = snap.data ?? false;
+              return Column(
+                children: [
+                  SwitchListTile(
                     secondary: const Icon(Icons.fingerprint),
                     title: const Text('القفل ببصمة الإصبع'),
-                    subtitle: Text(supported
-                        ? 'يُقفل التطبيق عند مغادرته'
-                        : 'الجهاز لا يدعم البصمة'),
+                    subtitle: const Text('مع كلمة مرور احتياطية'),
                     value: enabled,
-                    onChanged: !supported
-                        ? null
-                        : (v) async {
-                            if (v) {
-                              final ok = await AuthService.authenticate(
-                                  reason: 'لتأكيد التفعيل');
-                              if (!ok) return;
-                            }
-                            await AuthService.setEnabled(v);
-                            if (context.mounted) {
-                              setState(() {});
-                            }
-                          },
-                  );
-                },
+                    onChanged: (v) async {
+                      if (v) {
+                        final pwd = await _askForNewPassword();
+                        if (pwd == null) return;
+                        await AuthService.setPassword(pwd);
+                        await AuthService.setEnabled(true);
+                      } else {
+                        await AuthService.setEnabled(false);
+                      }
+                      if (context.mounted) setState(() {});
+                    },
+                  ),
+                  if (enabled)
+                    ListTile(
+                      leading: const Icon(Icons.password),
+                      title: const Text('تغيير كلمة المرور'),
+                      trailing:
+                          const Icon(Icons.arrow_forward_ios, size: 16),
+                      onTap: () async {
+                        final pwd = await _askForNewPassword();
+                        if (pwd == null) return;
+                        await AuthService.setPassword(pwd);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم تغيير كلمة المرور'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                ],
               );
             },
           ),
