@@ -1,13 +1,10 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
-  static final _auth = LocalAuthentication();
-  static const _keyEnabled = 'biometric_enabled';
+  static const _keyEnabled = 'lock_enabled';
   static const _keyPasswordHash = 'password_hash';
 
   // ========== تفعيل/تعطيل ==========
@@ -73,41 +70,5 @@ class AuthService {
   static String _hash(String text) {
     final bytes = utf8.encode(text);
     return sha256.convert(bytes).toString();
-  }
-
-  // ========== البصمة ==========
-  static Future<bool> canUseBiometrics() async {
-    try {
-      final supported = await _auth.isDeviceSupported();
-      final canCheck = await _auth.canCheckBiometrics;
-      final available = await _auth.getAvailableBiometrics();
-      debugPrint('Bio: supported=$supported canCheck=$canCheck available=$available');
-      return supported && canCheck && available.isNotEmpty;
-    } catch (e) {
-      debugPrint('canUseBiometrics error: $e');
-      return false;
-    }
-  }
-
-  /// Authenticate — نسخة محصّنة ضد الخروج
-  static Future<bool> authenticate({String reason = 'افتح دفتر الديون'}) async {
-    try {
-      final result = await _auth.authenticate(
-        localizedReason: reason,
-        options: const AuthenticationOptions(
-          stickyAuth: true,
-          biometricOnly: true,    // ← فقط البصمة، لا PIN النظام
-          useErrorDialogs: false, // ← لا dialogs
-          sensitiveTransaction: false,
-        ),
-      );
-      return result;
-    } on PlatformException catch (e) {
-      debugPrint('authenticate PlatformException: ${e.code} - ${e.message}');
-      return false;
-    } catch (e) {
-      debugPrint('authenticate error: $e');
-      return false;
-    }
   }
 }
