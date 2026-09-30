@@ -14,7 +14,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
   bool _checking = true;
   bool _showPassword = false;
   bool _obscure = true;
-  bool _biometricAvailable = true;
   DateTime? _lastPaused;
   final _passwordCtrl = TextEditingController();
   String? _error;
@@ -59,7 +58,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
         _enabled = enabled;
         _checking = false;
       });
-      // ⚠️ لا نستدعي authenticate تلقائياً — نعرض الزر فقط
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -71,19 +69,24 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _tryBiometric() async {
-    // تأخير بسيط للتأكد من الاستقرار
     await Future.delayed(const Duration(milliseconds: 300));
 
+    bool ok = false;
     try {
-      final ok = await AuthService.authenticate();
-      if (!mounted) return;
-      if (ok) {
-        setState(() => _unlocked = true);
-      } else {
-        setState(() => _showPassword = true);
-      }
+      ok = await AuthService.authenticate();
     } catch (e) {
-      if (mounted) setState(() => _showPassword = true);
+      ok = false;
+    }
+
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _unlocked = true);
+    } else {
+      // فشلت → انتقل لكلمة المرور
+      setState(() {
+        _showPassword = true;
+        _error = 'فشلت البصمة. أدخل كلمة المرور';
+      });
     }
   }
 
@@ -147,9 +150,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 30),
 
-                // ========== وضع البصمة + كلمة المرور ==========
                 if (!_showPassword) ...[
-                  // زر البصمة — المستخدم يضغط بنفسه
                   FilledButton.icon(
                     onPressed: _tryBiometric,
                     icon: const Icon(Icons.fingerprint),
@@ -174,7 +175,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                   ),
                 ],
 
-                // ========== وضع كلمة المرور ==========
                 if (_showPassword) ...[
                   SizedBox(
                     width: 280,
