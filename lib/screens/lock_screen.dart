@@ -12,7 +12,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
   bool _unlocked = false;
   bool _enabled = false;
   bool _checking = true;
-  bool _showPassword = false;
   bool _obscure = true;
   DateTime? _lastPaused;
   final _passwordCtrl = TextEditingController();
@@ -41,7 +40,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
           DateTime.now().difference(_lastPaused!).inSeconds > 30) {
         setState(() {
           _unlocked = false;
-          _showPassword = false;
           _passwordCtrl.clear();
           _error = null;
         });
@@ -65,28 +63,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
           _checking = false;
         });
       }
-    }
-  }
-
-  Future<void> _tryBiometric() async {
-    await Future.delayed(const Duration(milliseconds: 300));
-
-    bool ok = false;
-    try {
-      ok = await AuthService.authenticate();
-    } catch (e) {
-      ok = false;
-    }
-
-    if (!mounted) return;
-    if (ok) {
-      setState(() => _unlocked = true);
-    } else {
-      // فشلت → انتقل لكلمة المرور
-      setState(() {
-        _showPassword = true;
-        _error = 'فشلت البصمة. أدخل كلمة المرور';
-      });
     }
   }
 
@@ -142,85 +118,45 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                     style: TextStyle(
                         fontSize: 26, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                Text(
-                  _showPassword
-                      ? 'أدخل كلمة المرور للمتابعة'
-                      : 'اختر طريقة الفتح',
-                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                ),
+                const Text('أدخل كلمة المرور للمتابعة',
+                    style: TextStyle(fontSize: 14, color: Colors.grey)),
                 const SizedBox(height: 30),
 
-                if (!_showPassword) ...[
-                  FilledButton.icon(
-                    onPressed: _tryBiometric,
-                    icon: const Icon(Icons.fingerprint),
-                    label: const Text('افتح ببصمة الإصبع'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(220, 48),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _showPassword = true;
-                        _error = null;
-                      });
-                    },
-                    icon: const Icon(Icons.password),
-                    label: const Text('استخدم كلمة المرور'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(220, 48),
-                    ),
-                  ),
-                ],
-
-                if (_showPassword) ...[
-                  SizedBox(
-                    width: 280,
-                    child: TextField(
-                      controller: _passwordCtrl,
-                      obscureText: _obscure,
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      maxLength: 20,
-                      autofocus: true,
-                      decoration: InputDecoration(
-                        labelText: 'كلمة المرور',
-                        border: const OutlineInputBorder(),
-                        counterText: '',
-                        errorText: _error,
-                        suffixIcon: IconButton(
-                          icon: Icon(_obscure
-                              ? Icons.visibility
-                              : Icons.visibility_off),
-                          onPressed: () {
-                            setState(() => _obscure = !_obscure);
-                          },
-                        ),
+                SizedBox(
+                  width: 280,
+                  child: TextField(
+                    controller: _passwordCtrl,
+                    obscureText: _obscure,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    maxLength: 20,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: 'كلمة المرور',
+                      border: const OutlineInputBorder(),
+                      counterText: '',
+                      errorText: _error,
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscure
+                            ? Icons.visibility
+                            : Icons.visibility_off),
+                        onPressed: () {
+                          setState(() => _obscure = !_obscure);
+                        },
                       ),
-                      onSubmitted: (_) => _tryPassword(),
                     ),
+                    onSubmitted: (_) => _tryPassword(),
                   ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _tryPassword,
-                    icon: const Icon(Icons.login),
-                    label: const Text('فتح'),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _tryPassword,
+                  icon: const Icon(Icons.login),
+                  label: const Text('فتح'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(220, 48),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _showPassword = false;
-                        _error = null;
-                        _passwordCtrl.clear();
-                      });
-                    },
-                    icon: const Icon(Icons.fingerprint),
-                    label: const Text('استخدم البصمة'),
-                  ),
-                ],
+                ),
               ],
             ),
           ),
