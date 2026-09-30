@@ -36,6 +36,16 @@ jobs:
           rm -rf android
           flutter create --platforms=android --org com.example --project-name debt_voice_app .
 
+          # 🔐 MainActivity يرث من FlutterFragmentActivity (لبصمة الإصبع)
+          mkdir -p android/app/src/main/kotlin/com/example/debt_voice_app
+          cat > android/app/src/main/kotlin/com/example/debt_voice_app/MainActivity.kt << 'KOTEOF'
+          package com.example.debt_voice_app
+
+          import io.flutter.embedding.android.FlutterFragmentActivity
+
+          class MainActivity : FlutterFragmentActivity()
+          KOTEOF
+
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -54,7 +64,7 @@ jobs:
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher">
                   <activity
-                      android:name="io.flutter.embedding.android.FlutterFragmentActivity"
+                      android:name=".MainActivity"
                       android:exported="true"
                       android:launchMode="singleTop"
                       android:theme="@style/LaunchTheme"
