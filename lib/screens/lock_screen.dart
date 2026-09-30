@@ -23,10 +23,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // تأخير بسيط لتجنب مشاكل الإطارات الأولى
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _init();
-    });
+    _checkEnabled();
   }
 
   @override
@@ -54,19 +51,15 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _init() async {
+  Future<void> _checkEnabled() async {
     try {
       final enabled = await AuthService.isEnabled();
-      final canBio = await AuthService.canUseBiometrics();
       if (!mounted) return;
       setState(() {
         _enabled = enabled;
-        _biometricAvailable = canBio;
         _checking = false;
       });
-      if (enabled && !_unlocked) {
-        await _tryBiometric();
-      }
+      // ⚠️ لا نستدعي authenticate تلقائياً — نعرض الزر فقط
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -77,25 +70,10 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _checkEnabled() async {
-    try {
-      final enabled = await AuthService.isEnabled();
-      if (!mounted) return;
-      setState(() {
-        _enabled = enabled;
-        _checking = false;
-      });
-      if (enabled && !_unlocked) _tryBiometric();
-    } catch (e) {
-      if (mounted) setState(() => _checking = false);
-    }
-  }
-
   Future<void> _tryBiometric() async {
-    if (!_biometricAvailable) {
-      if (mounted) setState(() => _showPassword = true);
-      return;
-    }
+    // تأخير بسيط للتأكد من الاستقرار
+    await Future.delayed(const Duration(milliseconds: 300));
+
     try {
       final ok = await AuthService.authenticate();
       if (!mounted) return;
@@ -164,20 +142,24 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                 Text(
                   _showPassword
                       ? 'أدخل كلمة المرور للمتابعة'
-                      : 'افتح ببصمة الإصبع',
+                      : 'اختر طريقة الفتح',
                   style: const TextStyle(fontSize: 14, color: Colors.grey),
                 ),
                 const SizedBox(height: 30),
 
+                // ========== وضع البصمة + كلمة المرور ==========
                 if (!_showPassword) ...[
-                  if (_biometricAvailable)
-                    FilledButton.icon(
-                      onPressed: _tryBiometric,
-                      icon: const Icon(Icons.fingerprint),
-                      label: const Text('افتح ببصمة الإصبع'),
+                  // زر البصمة — المستخدم يضغط بنفسه
+                  FilledButton.icon(
+                    onPressed: _tryBiometric,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('افتح ببصمة الإصبع'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(220, 48),
                     ),
-                  if (_biometricAvailable) const SizedBox(height: 16),
-                  TextButton.icon(
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
                     onPressed: () {
                       setState(() {
                         _showPassword = true;
@@ -186,9 +168,13 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                     },
                     icon: const Icon(Icons.password),
                     label: const Text('استخدم كلمة المرور'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(220, 48),
+                    ),
                   ),
                 ],
 
+                // ========== وضع كلمة المرور ==========
                 if (_showPassword) ...[
                   SizedBox(
                     width: 280,
@@ -198,6 +184,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                       keyboardType: TextInputType.number,
                       textAlign: TextAlign.center,
                       maxLength: 20,
+                      autofocus: true,
                       decoration: InputDecoration(
                         labelText: 'كلمة المرور',
                         border: const OutlineInputBorder(),
@@ -222,19 +209,17 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
                     label: const Text('فتح'),
                   ),
                   const SizedBox(height: 8),
-                  if (_biometricAvailable)
-                    TextButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _showPassword = false;
-                          _error = null;
-                          _passwordCtrl.clear();
-                        });
-                        _tryBiometric();
-                      },
-                      icon: const Icon(Icons.fingerprint),
-                      label: const Text('استخدم البصمة'),
-                    ),
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _showPassword = false;
+                        _error = null;
+                        _passwordCtrl.clear();
+                      });
+                    },
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('استخدم البصمة'),
+                  ),
                 ],
               ],
             ),
