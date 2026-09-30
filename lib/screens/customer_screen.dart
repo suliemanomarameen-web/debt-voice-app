@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/date_filter.dart';
 import '../services/export_service.dart';
 import 'add_account_screen.dart';
 
@@ -15,7 +16,9 @@ class CustomerScreen extends StatefulWidget {
 class _CustomerScreenState extends State<CustomerScreen> {
   final db = DatabaseHelper.instance;
   double _balance = 0;
+  List<Transaction> _allTx = [];
   List<Transaction> _tx = [];
+  DateFilter _dateFilter = DateFilter();
 
   @override
   void initState() {
@@ -25,12 +28,17 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   Future<void> _load() async {
     final bal = await db.customerBalance(widget.customer.id!);
-    final tx = await db.customerTransactions(widget.customer.id!);
+    final allTx = await db.customerTransactions(widget.customer.id!);
     if (!mounted) return;
     setState(() {
       _balance = bal;
-      _tx = tx;
+      _allTx = allTx;
+      _applyFilter();
     });
+  }
+
+  void _applyFilter() {
+    _tx = _allTx.where((t) => _dateFilter.matches(t.createdAt)).toList();
   }
 
   String _formatDateTime(String iso) {
@@ -47,6 +55,101 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
+  // ============ فلتر التاريخ ============
+  Future<void> _showDateFilter() async {
+    final result = await showModalBottomSheet<DateFilter>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('فلترة بالتاريخ',
+                    style: TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('الكل'),
+                trailing: _dateFilter.type == DateFilterType.all
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(context, DateFilter()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.today),
+                title: const Text('اليوم'),
+                trailing: _dateFilter.type == DateFilterType.today
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.today)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.date_range),
+                title: const Text('آخر 7 أيام'),
+                trailing: _dateFilter.type == DateFilterType.week
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.week)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.calendar_month),
+                title: const Text('آخر 30 يوماً'),
+                trailing: _dateFilter.type == DateFilterType.month
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(
+                    context, DateFilter(type: DateFilterType.month)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_calendar),
+                title: const Text('نطاق مخصص'),
+                trailing: _dateFilter.type == DateFilterType.custom
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picked = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now(),
+                    initialDateRange: DateTimeRange(
+                      start: _dateFilter.from ?? DateTime.now(),
+                      end: _dateFilter.to ?? DateTime.now(),
+                    ),
+                    locale: const Locale('ar'),
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _dateFilter = DateFilter(
+                        type: DateFilterType.custom,
+                        from: picked.start,
+                        to: picked.end,
+                      );
+                      _applyFilter();
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (result != null) {
+      setState(() {
+        _dateFilter = result;
+        _applyFilter();
+      });
+    }
+  }
+
+  // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
     final amountCtrl = TextEditingController();
     final itemsCtrl = TextEditingController();
@@ -210,7 +313,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ تم حذف العملية'),
+            content: Text('تم حذف العملية'),
             backgroundColor: Colors.red,
           ),
         );
@@ -233,7 +336,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ],
           ),
           content: Text(
-            'سيتم حذف الحساب "${widget.customer.name}" وكل معاملاته (${_tx.length} عملية).\n\n'
+            'سيتم حذف الحساب "${widget.customer.name}" وكل معاملاته (${_allTx.length} عملية).\n\n'
             'لا يمكن التراجع عن هذا الإجراء.',
           ),
           actions: [
@@ -257,7 +360,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ تم حذف الحساب'),
+            content: Text('تم حذف الحساب'),
             backgroundColor: Colors.red,
           ),
         );
@@ -312,6 +415,18 @@ class _CustomerScreenState extends State<CustomerScreen> {
         appBar: AppBar(
           title: Text(widget.customer.name),
           actions: [
+            IconButton(
+              icon: Icon(
+                _dateFilter.type == DateFilterType.all
+                    ? Icons.filter_alt_outlined
+                    : Icons.filter_alt,
+                color: _dateFilter.type == DateFilterType.all
+                    ? null
+                    : theme.colorScheme.primary,
+              ),
+              tooltip: 'فلترة: ${_dateFilter.label}',
+              onPressed: _showDateFilter,
+            ),
             IconButton(
               icon: const Icon(Icons.table_chart),
               tooltip: 'تصدير كشف الحساب',
@@ -380,9 +495,42 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ],
               ),
             ),
+
+            // شريط الفلتر النشط
+            if (_dateFilter.type != DateFilterType.all)
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                color: theme.colorScheme.primary.withOpacity(0.1),
+                child: Row(
+                  children: [
+                    Icon(Icons.filter_alt,
+                        size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text('فلتر: ${_dateFilter.label}',
+                        style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Text('${_tx.length} عملية',
+                        style: const TextStyle(fontSize: 12)),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _dateFilter = DateFilter();
+                          _applyFilter();
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
             Expanded(
               child: _tx.isEmpty
-                  ? const Center(child: Text('لا توجد عمليات بعد'))
+                  ? const Center(child: Text('لا توجد عمليات في هذا النطاق'))
                   : ListView.builder(
                       itemCount: _tx.length,
                       itemBuilder: (_, i) {
