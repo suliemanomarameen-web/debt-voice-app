@@ -29,6 +29,7 @@ dependencies:
   package_info_plus: ^8.0.0
   crypto: ^3.0.3
   file_picker: ^8.0.0
+  workmanager: ^0.5.2
 
 flutter:
   uses-material-design: true
