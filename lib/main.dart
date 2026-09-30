@@ -5,6 +5,7 @@ import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
+import 'services/auto_backup_service.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -35,6 +36,9 @@ void main() async {
 
   final theme = ThemeService();
   await theme.load();
+
+  // 🔄 النسخ الاحتياطي التلقائي
+  await AutoBackupService.init();
 
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
@@ -106,34 +110,26 @@ void _setupOverlayListener() {
       if (parsed.intent == 'add_account') {
         if (parsed.customerName.isEmpty) {
           await TtsService.speak('لم أفهم الاسم');
-          await NotificationService.show(
-            'لم أفهم الاسم',
-            'قل: أضف حساب باسم محمد',
-          );
+          await NotificationService.show('لم أفهم الاسم', '');
           return;
         }
-
         final existing = await db.findExactCustomer(parsed.customerName);
         if (existing != null) {
           await TtsService.speakExistsBefore(parsed.customerName);
           await NotificationService.show('موجود مسبقا', parsed.customerName);
           return;
         }
-
         final id = await db.insertCustomer(Customer(
           name: parsed.customerName,
           accountType: parsed.accountType,
           createdAt: DateTime.now().toIso8601String(),
         ));
-
         await TtsService.speakAccountCreated(parsed.customerName);
-
         final typeAr = {
           'customer': 'عميل',
           'supplier': 'مورد',
           'other': 'أخرى',
         }[parsed.accountType] ?? 'عميل';
-
         await NotificationService.show(
           'تم إنشاء حساب',
           '${parsed.customerName} ($typeAr)\nالرقم: #$id',
@@ -149,10 +145,7 @@ void _setupOverlayListener() {
       final partial = await db.findCustomersContaining(parsed.customerName);
       if (partial.isEmpty) {
         await TtsService.speakNoAccount(parsed.customerName);
-        await NotificationService.show(
-          'لا يوجد حساب',
-          '${parsed.customerName}\nقل: أضف حساب باسم ${parsed.customerName}',
-        );
+        await NotificationService.show('لا يوجد حساب', parsed.customerName);
         return;
       }
       if (partial.length > 1) {
