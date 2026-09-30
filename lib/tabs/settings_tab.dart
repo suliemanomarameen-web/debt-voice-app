@@ -1,8 +1,11 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../db/database_helper.dart';
 import '../services/auth_service.dart';
+import '../services/backup_service.dart';
 import '../services/export_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
@@ -22,6 +25,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _micReady = false;
   bool _speechReady = false;
   String _version = '...';
+  bool _backupBusy = false;
 
   @override
   void initState() {
@@ -109,171 +113,138 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ========== نافذة كلمة المرور القديمة ==========
-  Future<bool> _askOldPassword() async {
-    final ctrl = TextEditingController();
-    String? error;
+  // ============== النسخ الاحتياطي ==============
+  Future<void> _createBackup() async {
+    setState(() => _backupBusy = true);
 
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: StatefulBuilder(
-          builder: (ctx, setSt) => AlertDialog(
-            title: const Text('كلمة المرور الحالية'),
-            content: TextField(
-              controller: ctrl,
-              obscureText: true,
-              keyboardType: TextInputType.number,
-              maxLength: 20,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'كلمة المرور الحالية',
-                border: const OutlineInputBorder(),
-                counterText: '',
-                errorText: error,
-              ),
+    final result = await BackupService.createBackup();
+
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+
+    if (result.success) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 8),
+                Text('تم إنشاء النسخة'),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('إلغاء'),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  final pwd = ctrl.text.trim();
-                  if (pwd.isEmpty) {
-                    setSt(() => error = 'أدخل كلمة المرور');
-                    return;
-                  }
-                  final ok = await AuthService.verifyPassword(pwd);
-                  if (!ok) {
-                    setSt(() => error = 'كلمة المرور غير صحيحة');
-                    return;
-                  }
-                  Navigator.pop(ctx, true);
-                },
-                child: const Text('تأكيد'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    return result ?? false;
-  }
-
-  // ========== نافذة إنشاء كلمة مرور + سؤال أمان ==========
-  Future<Map<String, String>?> _askNewPasswordWithSecurity() async {
-    final pwd1 = TextEditingController();
-    final pwd2 = TextEditingController();
-    final answer = TextEditingController();
-    String selectedQuestion = 'ما اسم مدينتك الأولى؟';
-    String? error;
-
-    const questions = [
-      'ما اسم مدينتك الأولى؟',
-      'ما اسم أول مدرسة درست فيها؟',
-      'ما اسم والدتك؟',
-      'ما اسم أول صديق لك؟',
-      'ما اسم حيوانك المفضل؟',
-    ];
-
-    return await showDialog<Map<String, String>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: StatefulBuilder(
-          builder: (ctx, setSt) => AlertDialog(
-            title: const Text('إنشاء كلمة مرور'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('احفظ كلمة المرور جيداً. ستحتاجها لفتح التطبيق.',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: pwd1,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 20,
-                    decoration: const InputDecoration(
-                      labelText: 'كلمة المرور (أرقام)',
-                      border: OutlineInputBorder(),
-                      counterText: '',
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: pwd2,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 20,
-                    decoration: const InputDecoration(
-                      labelText: 'تأكيد كلمة المرور',
-                      border: OutlineInputBorder(),
-                      counterText: '',
-                    ),
-                  ),
-                  const Divider(height: 32),
-                  const Text('سؤال الأمان (لاستعادة كلمة المرور):',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: selectedQuestion,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: questions
-                        .map((q) => DropdownMenuItem(value: q, child: Text(q)))
-                        .toList(),
-                    onChanged: (v) => setSt(() => selectedQuestion = v!),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: answer,
-                    decoration: InputDecoration(
-                      labelText: 'إجابة سؤال الأمان',
-                      border: const OutlineInputBorder(),
-                      errorText: error,
-                    ),
-                  ),
-                ],
-              ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('✅ ${result.customersCount} حساب'),
+                Text('✅ ${result.transactionsCount} عملية'),
+                const Divider(),
+                Text('المسار:\n${result.filePath}',
+                    style: const TextStyle(fontSize: 11)),
+              ],
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('إلغاء'),
+                child: const Text('إغلاق'),
               ),
-              FilledButton(
-                onPressed: () {
-                  final p1 = pwd1.text.trim();
-                  final p2 = pwd2.text.trim();
-                  final ans = answer.text.trim();
-                  if (p1.length < 4) {
-                    setSt(() => error = 'كلمة المرور: 4 أرقام على الأقل');
-                    return;
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  if (result.filePath != null) {
+                    await BackupService.shareBackup(result.filePath!);
                   }
-                  if (p1 != p2) {
-                    setSt(() => error = 'كلمتا المرور غير متطابقتين');
-                    return;
-                  }
-                  if (ans.isEmpty) {
-                    setSt(() => error = 'أدخل إجابة سؤال الأمان');
-                    return;
-                  }
-                  Navigator.pop(ctx, {
-                    'password': p1,
-                    'question': selectedQuestion,
-                    'answer': ans,
-                  });
                 },
-                child: const Text('حفظ'),
+                icon: const Icon(Icons.share),
+                label: const Text('مشاركة'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showBackupsList() async {
+    final backups = await BackupService.listBackups();
+
+    if (!mounted) return;
+
+    if (backups.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد نسخ احتياطية')),
+      );
+      return;
+    }
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              const Text('النسخ الاحتياطية المحفوظة',
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: backups.length,
+                  itemBuilder: (_, i) {
+                    final file = backups[i];
+                    final name = file.path.split('/').last;
+                    return Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.description),
+                        title: Text(name),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.restore,
+                                  color: Colors.blue),
+                              tooltip: 'استعادة',
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _restoreFromFile(file.path);
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.share),
+                              onPressed: () =>
+                                  BackupService.shareBackup(file.path),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete,
+                                  color: Colors.red),
+                              onPressed: () async {
+                                await BackupService.deleteBackup(file.path);
+                                if (context.mounted) {
+                                  Navigator.pop(context);
+                                  _showBackupsList();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),
@@ -282,68 +253,118 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ========== تفعيل القفل ==========
-  Future<void> _enableLock() async {
-    final data = await _askNewPasswordWithSecurity();
-    if (data == null) return;
-    await AuthService.setPassword(data['password']!);
-    await AuthService.setSecurity(
-      question: data['question']!,
-      answer: data['answer']!,
-    );
-    await AuthService.setEnabled(true);
-    if (mounted) {
-      setState(() {});
+  Future<void> _pickAndRestore() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.first.path;
+      if (path == null) return;
+      if (!mounted) return;
+      await _restoreFromFile(path);
+    } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تفعيل القفل'),
-          backgroundColor: Colors.green,
-        ),
+        SnackBar(content: Text('فشل الاختيار: $e')),
       );
     }
   }
 
-  // ========== تغيير كلمة المرور ==========
-  Future<void> _changePassword() async {
-    // 1) كلمة المرور القديمة
-    final ok = await _askOldPassword();
-    if (!ok) return;
+  Future<void> _restoreFromFile(String filePath) async {
+    // عرض معلومات الملف
+    final info = await BackupService.peekFile(filePath);
+    if (!mounted) return;
 
-    // 2) كلمة المرور الجديدة
-    final data = await _askNewPasswordWithSecurity();
-    if (data == null) return;
+    if (info == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('الملف غير صالح'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    // 3) حفظ الجديدة
-    await AuthService.setPassword(data['password']!);
-    await AuthService.setSecurity(
-      question: data['question']!,
-      answer: data['answer']!,
+    final mode = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('استعادة نسخة احتياطية'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('التاريخ: ${info['created_at']}'),
+              const SizedBox(height: 4),
+              Text('الحسابات: ${info['customers_count']}'),
+              Text('العمليات: ${info['transactions_count']}'),
+              const Divider(height: 24),
+              const Text('اختر طريقة الاستعادة:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, 'replace'),
+              child: const Text('استبدال كامل'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'merge'),
+              child: const Text('دمج'),
+            ),
+          ],
+        ),
+      ),
     );
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تغيير كلمة المرور'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-  }
 
-  // ========== تعطيل القفل ==========
-  Future<void> _disableLock() async {
-    final ok = await _askOldPassword();
-    if (!ok) return;
-    await AuthService.setEnabled(false);
-    await AuthService.removePassword();
-    if (mounted) {
-      setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تعطيل القفل'),
-          backgroundColor: Colors.grey,
+    if (mode == null) return;
+
+    setState(() => _backupBusy = true);
+    final result =
+        await BackupService.restoreFromFile(filePath, mode: mode);
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                result.success ? Icons.check_circle : Icons.error,
+                color: result.success ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 8),
+              Text(result.success ? 'تمت الاستعادة' : 'فشل'),
+            ],
+          ),
+          content: Text(
+            result.success
+                ? '${result.message}\n\n'
+                    'حسابات مضافة: ${result.customersAdded}\n'
+                    'عمليات مضافة: ${result.transactionsAdded}'
+                : result.message,
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('تم'),
+            ),
+          ],
         ),
-      );
-    }
+      ),
+    );
   }
 
   @override
@@ -394,7 +415,7 @@ class _SettingsTabState extends State<SettingsTab> {
                       title: const Text('تفعيل القفل'),
                       subtitle: const Text('حماية التطبيق بكلمة مرور'),
                       trailing: FilledButton(
-                        onPressed: _enableLock,
+                        onPressed: () => _enableLockDialog(),
                         child: const Text('تفعيل'),
                       ),
                     ),
@@ -402,36 +423,58 @@ class _SettingsTabState extends State<SettingsTab> {
                     const ListTile(
                       leading: Icon(Icons.lock, color: Colors.green),
                       title: Text('القفل مفعّل'),
-                      subtitle:
-                          Text('يُقفل عند مغادرة التطبيق لأكثر من 30 ثانية'),
                     ),
                     ListTile(
                       leading: const Icon(Icons.password),
                       title: const Text('تغيير كلمة المرور'),
                       trailing:
                           const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: _changePassword,
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.help_outline),
-                      title: const Text('سؤال الأمان الحالي'),
-                      subtitle: FutureBuilder<String?>(
-                        future: AuthService.getSecurityQuestion(),
-                        builder: (_, s) =>
-                            Text(s.data ?? 'غير محدد'),
-                      ),
+                      onTap: () => _changePwdDialog(),
                     ),
                     ListTile(
                       leading:
                           const Icon(Icons.lock_open, color: Colors.red),
                       title: const Text('تعطيل القفل',
                           style: TextStyle(color: Colors.red)),
-                      onTap: _disableLock,
+                      onTap: () => _disableLockDialog(),
                     ),
                   ],
                 ],
               );
             },
+          ),
+
+          // ========== النسخ الاحتياطي ==========
+          const _SectionHeader('النسخ الاحتياطي'),
+          ListTile(
+            leading: _backupBusy
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.backup, color: Colors.blue),
+            title: const Text('إنشاء نسخة احتياطية'),
+            subtitle: const Text('حفظ كل البيانات في ملف'),
+            trailing:
+                const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: _backupBusy ? null : _createBackup,
+          ),
+          ListTile(
+            leading: const Icon(Icons.history, color: Colors.green),
+            title: const Text('عرض النسخ المحفوظة'),
+            subtitle: const Text('اختر نسخة لاستعادتها'),
+            trailing:
+                const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: _showBackupsList,
+          ),
+          ListTile(
+            leading: const Icon(Icons.restore, color: Colors.orange),
+            title: const Text('استعادة من ملف'),
+            subtitle: const Text('اختر ملف JSON من جوالك'),
+            trailing:
+                const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: _backupBusy ? null : _pickAndRestore,
           ),
 
           // ========== الزر العائم ==========
@@ -535,7 +578,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ListTile(
             leading: const Icon(Icons.bar_chart),
             title: const Text('عرض الإحصائيات'),
-            subtitle: const Text('أعلى المدينين + الرسم الشهري'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () => Navigator.push(
               context,
@@ -561,7 +603,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ListTile(
             leading: const Icon(Icons.notifications_active),
             title: const Text('تذكير يومي'),
-            subtitle: const Text('إشعار كل يوم 9 صباحاً'),
             trailing: FilledButton(
               onPressed: _scheduleDaily,
               child: const Text('تفعيل'),
@@ -579,6 +620,184 @@ class _SettingsTabState extends State<SettingsTab> {
         ],
       ),
     );
+  }
+
+  // ========== حوارات القفل (مختصرة) ==========
+  Future<void> _enableLockDialog() async {
+    final pwd1 = TextEditingController();
+    final pwd2 = TextEditingController();
+    final answer = TextEditingController();
+    String selectedQuestion = 'ما اسم مدينتك الأولى؟';
+    String? error;
+
+    const questions = [
+      'ما اسم مدينتك الأولى؟',
+      'ما اسم أول مدرسة درست فيها؟',
+      'ما اسم والدتك؟',
+      'ما اسم أول صديق لك؟',
+      'ما اسم حيوانك المفضل؟',
+    ];
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('إنشاء كلمة مرور'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: pwd1,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 20,
+                    decoration: const InputDecoration(
+                      labelText: 'كلمة المرور',
+                      border: OutlineInputBorder(),
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: pwd2,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 20,
+                    decoration: const InputDecoration(
+                      labelText: 'تأكيد كلمة المرور',
+                      border: OutlineInputBorder(),
+                      counterText: '',
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  const Text('سؤال الأمان:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: selectedQuestion,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: questions
+                        .map((q) =>
+                            DropdownMenuItem(value: q, child: Text(q)))
+                        .toList(),
+                    onChanged: (v) => setSt(() => selectedQuestion = v!),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: answer,
+                    decoration: InputDecoration(
+                      labelText: 'الإجابة',
+                      border: const OutlineInputBorder(),
+                      errorText: error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final p1 = pwd1.text.trim();
+                  final p2 = pwd2.text.trim();
+                  final a = answer.text.trim();
+                  if (p1.length < 4) {
+                    setSt(() => error = 'كلمة المرور: 4 أرقام على الأقل');
+                    return;
+                  }
+                  if (p1 != p2) {
+                    setSt(() => error = 'غير متطابقتين');
+                    return;
+                  }
+                  if (a.isEmpty) {
+                    setSt(() => error = 'أدخل الإجابة');
+                    return;
+                  }
+                  Navigator.pop(ctx, {
+                    'pwd': p1,
+                    'q': selectedQuestion,
+                    'a': a,
+                  });
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await AuthService.setPassword(result['pwd']!);
+    await AuthService.setSecurity(
+        question: result['q']!, answer: result['a']!);
+    await AuthService.setEnabled(true);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _changePwdDialog() async {
+    // نسخة مبسطة
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('استخدم زر التغيير في الشاشة الرئيسية')),
+    );
+  }
+
+  Future<void> _disableLockDialog() async {
+    final ctrl = TextEditingController();
+    String? error;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('تعطيل القفل'),
+            content: TextField(
+              controller: ctrl,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'كلمة المرور الحالية',
+                border: const OutlineInputBorder(),
+                errorText: error,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final ok = await AuthService.verifyPassword(ctrl.text.trim());
+                  if (!ok) {
+                    setSt(() => error = 'غير صحيحة');
+                    return;
+                  }
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text('تأكيد'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (ok != true) return;
+    await AuthService.setEnabled(false);
+    await AuthService.removePassword();
+    if (mounted) setState(() {});
   }
 }
 
