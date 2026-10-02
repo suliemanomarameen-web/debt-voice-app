@@ -176,38 +176,64 @@ jobs:
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.0-all.zip
           EOF
 
-      - name: Add signing config to app/build.gradle
+      - name: Create key.properties
         run: |
-          # أنشئ key.properties
           cat > android/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           keyAlias=${{ secrets.KEY_ALIAS }}
           storeFile=$HOME/release.keystore
           EOF
-          
-          # أضف استيراد keystoreProperties في أعلى build.gradle
+          echo "✅ key.properties created"
+          echo "=== key.properties ==="
+          cat android/key.properties
+          echo ""
+          echo "=== original build.gradle ==="
+          cat android/app/build.gradle
+
+      - name: Fix SDK versions
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 35/' android/app/build.gradle
+          sed -i 's/com.example.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
+
+      - name: Add signing config to build.gradle
+        run: |
           python3 << 'PYEOF'
-          import os
+          import re
           
           gradle_file = 'android/app/build.gradle'
           
           with open(gradle_file, 'r') as f:
               content = f.read()
           
-          # أضف keystoreProperties في الأعلى
-          header = '''
+          # 1) ابحث عن آخر موقع لـ "}" في plugins block
+          plugins_end = content.find('}', content.find('plugins {'))
+          
+          if plugins_end != -1:
+              # ابحث عن } المناسب (plugins تنتهي بـ } بعد آخر apply false)
+              # نستخدم regex للعثور على نهاية plugins
+              plugins_match = re.search(r'plugins\s*\{(.*?)\n\}', content, re.DOTALL)
+              if plugins_match:
+                  plugins_end = plugins_match.end()
+                  
+                  keystore_def = '''
+          
           def keystoreProperties = new Properties()
           def keystorePropertiesFile = rootProject.file('key.properties')
           if (keystorePropertiesFile.exists()) {
               keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
           }
-          
           '''
-          content = header + content
+                  
+                  content = content[:plugins_end] + keystore_def + content[plugins_end:]
           
-          # أضف signingConfigs داخل android {}
-          signing_block = '''
+          # 2) أضف signingConfigs داخل android { }
+          android_match = re.search(r'android\s*\{', content)
+          if android_match:
+              insert_at = android_match.end()
+              signing_block = '''
               signingConfigs {
                   release {
                       keyAlias keystoreProperties['keyAlias']
@@ -216,28 +242,31 @@ jobs:
                       storePassword keystoreProperties['storePassword']
                   }
               }
-          '''
+              '''
+              content = content[:insert_at] + signing_block + content[insert_at:]
           
-          # ابحث عن "android {" وأدخل بعده
-          idx = content.find('android {')
-          if idx != -1:
-              # انسخ ما قبل android {
-              before = content[:idx + len('android {')]
-              # ما بعد
-              after = content[idx + len('android {'):]
-              # ادمج
-              content = before + '\n' + signing_block + '\n' + after
-          
-          # ابحث عن buildTypes واستبدل signingConfig
-          if 'buildTypes {' in content:
-              # أضف signingConfig إلى release
-              import re
-              content = re.sub(
-                  r'release\s*\{([^}]*)\}',
-                  r'release {\1 signingConfig signingConfigs.release\n}',
-                  content,
-                  count=1
-              )
+          # 3) أضف signingConfig إلى release build type
+          # ابحث عن buildTypes { ... release { ... } }
+          build_types_match = re.search(r'buildTypes\s*\{', content)
+          if build_types_match:
+              # ابحث عن "release" داخل buildTypes
+              start = build_types_match.end()
+              # ابحث عن "release {" بعد buildTypes
+              release_match = re.search(r'release\s*\{', content[start:])
+              if release_match:
+                  release_start = start + release_match.end()
+                  # ابحث عن أول } بعد release {
+                  depth = 1
+                  i = release_start
+                  while i < len(content) and depth > 0:
+                      if content[i] == '{':
+                          depth += 1
+                      elif content[i] == '}':
+                          depth -= 1
+                      i += 1
+                  # أضف signingConfig قبل }
+                  signing_line = "\n            signingConfig signingConfigs.release\n        "
+                  content = content[:i-1] + signing_line + content[i-1:]
           
           with open(gradle_file, 'w') as f:
               f.write(content)
@@ -246,15 +275,8 @@ jobs:
           PYEOF
           
           echo ""
-          echo "=== build.gradle preview (first 60 lines) ==="
-          head -60 android/app/build.gradle
-
-      - name: Fix SDK versions
-        run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
-          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 35/' android/app/build.gradle
-          sed -i 's/com.example.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
+          echo "=== modified build.gradle ==="
+          cat android/app/build.gradle
 
       - name: Get dependencies
         run: flutter pub get
@@ -266,7 +288,11 @@ jobs:
         run: |
           echo "=== Verifying APK signature ==="
           APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
-          keytool -printcert -jarfile $APK_PATH 2>&1 | grep -E "SHA1:|SHA-1:|SHA256:" || echo "No cert info"
+          if [ -f "$APK_PATH" ]; then
+            keytool -printcert -jarfile $APK_PATH 2>&1 | grep -E "SHA1:|SHA-1:|SHA256:" || echo "No cert info"
+          else
+            echo "❌ APK not found at $APK_PATH"
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
