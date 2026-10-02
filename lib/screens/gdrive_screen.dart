@@ -192,12 +192,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
     final isDark = theme.brightness == Brightness.dark;
     final signedIn = GDriveService.isSignedIn;
 
-    // 🎨 ألوان الوضع الليلي
     final cardBg = isDark
         ? theme.colorScheme.surfaceContainerHighest
         : theme.colorScheme.surfaceContainerLow;
-    final onCard =
-        isDark ? Colors.white : theme.colorScheme.onSurface;
+    final onCard = isDark ? Colors.white : theme.colorScheme.onSurface;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -222,7 +220,9 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       Icon(
                         signedIn ? Icons.cloud_done : Icons.cloud_off,
                         color: signedIn
-                            ? (isDark ? Colors.green.shade300 : theme.colorScheme.primary)
+                            ? (isDark
+                                ? Colors.green.shade300
+                                : theme.colorScheme.primary)
                             : (isDark ? Colors.grey.shade400 : Colors.grey),
                         size: 40,
                       ),
@@ -233,7 +233,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                           children: [
                             Text(
                               signedIn
-                                  ? (GDriveService.userName ?? 'مستخدم Google')
+                                  ? (GDriveService.userName ??
+                                      'مستخدم Google')
                                   : 'غير متصل',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
@@ -327,7 +328,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                         const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child:
+                              CircularProgressIndicator(strokeWidth: 2),
                         )
                       else
                         Icon(
@@ -337,10 +339,16 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                   ? Icons.error
                                   : Icons.info,
                           color: _status.startsWith('✅')
-                              ? (isDark ? Colors.green.shade300 : Colors.green)
+                              ? (isDark
+                                  ? Colors.green.shade300
+                                  : Colors.green)
                               : _status.startsWith('❌')
-                                  ? (isDark ? Colors.red.shade300 : Colors.red)
-                                  : (isDark ? Colors.blue.shade300 : Colors.blue),
+                                  ? (isDark
+                                      ? Colors.red.shade300
+                                      : Colors.red)
+                                  : (isDark
+                                      ? Colors.blue.shade300
+                                      : Colors.blue),
                         ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -371,7 +379,9 @@ class _GDriveScreenState extends State<GDriveScreen> {
                 Row(
                   children: [
                     Icon(Icons.folder,
-                        color: isDark ? Colors.blue.shade300 : Colors.blue),
+                        color: isDark
+                            ? Colors.blue.shade300
+                            : Colors.blue),
                     const SizedBox(width: 8),
                     Text(
                       'النسخ على Drive (${_backups.length})',
@@ -388,11 +398,13 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       color: cardBg,
                       child: ListTile(
                         leading: Icon(Icons.cloud,
-                            color:
-                                isDark ? Colors.blue.shade300 : Colors.blue),
+                            color: isDark
+                                ? Colors.blue.shade300
+                                : Colors.blue),
                         title: Text(
                           b['name'] ?? '',
-                          style: TextStyle(fontSize: 13, color: onCard),
+                          style: TextStyle(
+                              fontSize: 13, color: onCard),
                         ),
                         subtitle: Text(
                           _fmtDate(b['created']),
@@ -411,7 +423,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                       : Colors.green),
                               onPressed: _busy
                                   ? null
-                                  : () => _download(b['id'], b['name']),
+                                  : () =>
+                                      _download(b['id'], b['name']),
                             ),
                             IconButton(
                               icon: Icon(Icons.delete,
@@ -440,14 +453,16 @@ class _GDriveScreenState extends State<GDriveScreen> {
                               : Colors.grey.shade400),
                       const SizedBox(height: 16),
                       Text('لا توجد نسخ على Drive',
-                          style: TextStyle(
-                              color: onCard, fontSize: 16)),
+                          style:
+                              TextStyle(color: onCard, fontSize: 16)),
                       const SizedBox(height: 8),
-                      Text('اضغط "رفع نسخة احتياطية الآن" للبدء',
-                          style: TextStyle(
-                            color: onCard.withOpacity(0.7),
-                            fontSize: 12,
-                          )),
+                      Text(
+                        'اضغط "رفع نسخة احتياطية الآن" للبدء',
+                        style: TextStyle(
+                          color: onCard.withOpacity(0.7),
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -471,12 +486,15 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                   ? Colors.blue.shade300
                                   : Colors.blue.shade700),
                           const SizedBox(width: 8),
-                          Text('كيف يعمل؟',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark
-                                      ? Colors.blue.shade100
-                                      : Colors.blue.shade900)),
+                          Text(
+                            'كيف يعمل؟',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: isDark
+                                  ? Colors.blue.shade100
+                                  : Colors.blue.shade900,
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 8),
