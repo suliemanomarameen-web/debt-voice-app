@@ -8,11 +8,13 @@ import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
 import '../services/backup_service.dart';
 import '../services/export_service.dart';
+import '../services/gdrive_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
 import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/theme_service.dart';
+import '../screens/gdrive_screen.dart';
 import '../screens/stats_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -29,6 +31,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _backupBusy = false;
   bool _autoEnabled = false;
   String _autoFreq = 'daily';
+  bool _gdriveSignedIn = false;
 
   @override
   void initState() {
@@ -36,6 +39,13 @@ class _SettingsTabState extends State<SettingsTab> {
     _checkStatus();
     _loadVersion();
     _loadAutoBackup();
+    _checkGDrive();
+  }
+
+  Future<void> _checkGDrive() async {
+    final signed = GDriveService.isSignedIn;
+    if (!mounted) return;
+    setState(() => _gdriveSignedIn = signed);
   }
 
   Future<void> _loadAutoBackup() async {
@@ -212,8 +222,8 @@ class _SettingsTabState extends State<SettingsTab> {
                     return Card(
                       child: ListTile(
                         leading: const Icon(Icons.description),
-                        title:
-                            Text(name, style: const TextStyle(fontSize: 13)),
+                        title: Text(name,
+                            style: const TextStyle(fontSize: 13)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -443,6 +453,7 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
+          // ========== التهيئة ==========
           const _SectionHeader('التهيئة'),
           ListTile(
             leading: Icon(
@@ -504,7 +515,7 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== النسخ الاحتياطي ==========
+          // ========== النسخ الاحتياطي المحلي ==========
           const _SectionHeader('النسخ الاحتياطي'),
           ListTile(
             leading: _backupBusy
@@ -570,6 +581,27 @@ class _SettingsTabState extends State<SettingsTab> {
                 );
               },
             ),
+
+          // ========== Google Drive ==========
+          const _SectionHeader('Google Drive'),
+          ListTile(
+            leading: Icon(
+              Icons.cloud,
+              color: _gdriveSignedIn ? Colors.green : Colors.blue,
+            ),
+            title: const Text('النسخ الاحتياطي على Drive'),
+            subtitle: Text(_gdriveSignedIn
+                ? 'متصل: ${GDriveService.userEmail ?? ""}'
+                : 'ارفع واستعد من Google Drive'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const GDriveScreen()),
+              );
+              _checkGDrive();
+            },
+          ),
 
           // ========== الزر العائم ==========
           const _SectionHeader('الزر العائم'),
