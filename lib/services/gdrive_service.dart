@@ -86,7 +86,6 @@ class GDriveService {
   // ========== رفع نسخة احتياطية ==========
   static Future<Map<String, dynamic>> uploadBackup() async {
     try {
-      // 1) تأكد من تسجيل الدخول
       if (_driveApi == null) {
         final ok = await signIn();
         if (!ok) {
@@ -97,7 +96,6 @@ class GDriveService {
         }
       }
 
-      // 2) أنشئ نسخة محلية
       final backup = await BackupService.createBackup();
       if (!backup.success || backup.filePath == null) {
         return {
@@ -109,10 +107,8 @@ class GDriveService {
       final file = File(backup.filePath!);
       final fileName = backup.filePath!.split('/').last;
 
-      // 3) مجلد التطبيق على Drive
       final folderId = await _getOrCreateFolder('DebtBookBackups');
 
-      // 4) ارفع الملف
       final driveFile = drive.File()
         ..name = fileName
         ..parents = [folderId];
@@ -129,7 +125,6 @@ class GDriveService {
 
       debugPrint('✅ Uploaded: ${uploaded.name}');
 
-      // 5) احذف النسخ القديمة (نُبقي 5)
       await _cleanOldBackups(folderId, keep: 5);
 
       return {
@@ -192,20 +187,18 @@ class GDriveService {
         }
       }
 
-      // 1) احصل على اسم الملف
+      // ✅ التعديل: نوع صريح
       final fileInfo = await _driveApi!.files.get(
         fileId,
         $fields: 'name',
-      );
+      ) as drive.File;
       final fileName = fileInfo.name ?? 'backup_drive.json';
 
-      // 2) حمّل المحتوى
       final media = await _driveApi!.files.get(
         fileId,
         downloadOptions: drive.DownloadOptions.fullMedia,
       ) as drive.Media;
 
-      // 3) احفظه محلياً
       final dir = await getApplicationDocumentsDirectory();
       final backupDir = Directory('${dir.path}/debt_book_backups');
       if (!await backupDir.exists()) {
@@ -252,7 +245,6 @@ class GDriveService {
   // ========== إدارة المجلدات ==========
   static Future<String> _getOrCreateFolder(String name) async {
     try {
-      // ابحث
       final result = await _driveApi!.files.list(
         q: "name = '$name' "
             "and mimeType = 'application/vnd.google-apps.folder' "
@@ -263,7 +255,6 @@ class GDriveService {
         return result.files!.first.id!;
       }
 
-      // أنشئ
       final folder = drive.File()
         ..name = name
         ..mimeType = 'application/vnd.google-apps.folder';
@@ -276,7 +267,6 @@ class GDriveService {
     }
   }
 
-  /// حذف أقدم النسخ (نبقي آخر `keep` فقط)
   static Future<void> _cleanOldBackups(String folderId,
       {int keep = 5}) async {
     try {
