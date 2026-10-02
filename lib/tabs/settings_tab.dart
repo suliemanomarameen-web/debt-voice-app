@@ -265,11 +265,11 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // ⚡ الإصلاح: FileType.any بدلاً من FileType.custom
   Future<void> _pickAndRestore() async {
     try {
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json'],
+        type: FileType.any,
       );
       if (result == null || result.files.isEmpty) return;
       final path = result.files.first.path;
@@ -448,6 +448,7 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
+    final isDark = theme.mode == ThemeMode.dark;
 
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات')),
@@ -515,7 +516,7 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== النسخ الاحتياطي المحلي ==========
+          // ========== النسخ الاحتياطي ==========
           const _SectionHeader('النسخ الاحتياطي'),
           ListTile(
             leading: _backupBusy
