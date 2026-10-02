@@ -34,12 +34,12 @@ jobs:
       - name: Regenerate Android files
         run: |
           rm -rf android
-          flutter create --platforms=android --org com.example --project-name debt_voice_app .
+          flutter create --platforms=android --org ye.sulieman --project-name debtbook .
 
-          # 🔐 MainActivity يرث من FlutterFragmentActivity (لبصمة الإصبع)
-          mkdir -p android/app/src/main/kotlin/com/example/debt_voice_app
-          cat > android/app/src/main/kotlin/com/example/debt_voice_app/MainActivity.kt << 'KOTEOF'
-          package com.example.debt_voice_app
+          # 🔐 MainActivity يرث من FlutterFragmentActivity
+          mkdir -p android/app/src/main/kotlin/ye/sulieman/debtbook
+          cat > android/app/src/main/kotlin/ye/sulieman/debtbook/MainActivity.kt << 'KOTEOF'
+          package ye.sulieman.debtbook
 
           import io.flutter.embedding.android.FlutterFragmentActivity
 
@@ -59,6 +59,7 @@ jobs:
               <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
               <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
               <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+              <uses-permission android:name="android.permission.GET_ACCOUNTS"/>
               <application
                   android:label="دفتر الديون"
                   android:name="${applicationName}"
@@ -96,8 +97,21 @@ jobs:
           </manifest>
           EOF
 
-      - name: Upgrade Kotlin version
+      - name: Configure Gradle
         run: |
+          cat > android/gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.daemon=false
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          systemProp.org.gradle.internal.http.connectionTimeout=120000
+          systemProp.org.gradle.internal.http.socketTimeout=120000
+          systemProp.org.gradle.internal.repository.max.tentatives=5
+          systemProp.org.gradle.internal.repository.initial.backoff=500
+          EOF
+
           cat > android/settings.gradle << 'EOF'
           pluginManagement {
               def flutterSdkPath = {
@@ -114,6 +128,9 @@ jobs:
                   google()
                   mavenCentral()
                   gradlePluginPortal()
+                  maven { url 'https://maven.aliyun.com/repository/google' }
+                  maven { url 'https://maven.aliyun.com/repository/central' }
+                  maven { url 'https://maven.aliyun.com/repository/public' }
               }
           }
 
@@ -131,6 +148,9 @@ jobs:
               repositories {
                   google()
                   mavenCentral()
+                  maven { url 'https://maven.aliyun.com/repository/google' }
+                  maven { url 'https://maven.aliyun.com/repository/central' }
+                  maven { url 'https://maven.aliyun.com/repository/public' }
               }
           }
 
@@ -162,6 +182,18 @@ jobs:
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
           sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle
           sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle
+
+      - name: Fix package namespace
+        run: |
+          sed -i 's/com.example.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
+
+      - name: Get SHA-1 fingerprint
+        run: |
+          cd android
+          ./gradlew signingReport 2>&1 | grep -A 5 "Variant: debug" | grep -i "sha1" || true
+          echo "=========== ALL SHA1 ==========="
+          ./gradlew signingReport 2>&1 | grep -i "sha1" || true
+        continue-on-error: true
 
       - name: Get dependencies
         run: flutter pub get
