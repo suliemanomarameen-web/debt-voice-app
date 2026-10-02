@@ -97,14 +97,12 @@ jobs:
       - name: Configure Gradle
         run: |
           cat > android/gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=2G
           android.useAndroidX=true
           android.enableJetifier=true
           org.gradle.daemon=false
           org.gradle.parallel=true
           org.gradle.caching=true
-          systemProp.org.gradle.internal.http.connectionTimeout=120000
-          systemProp.org.gradle.internal.http.socketTimeout=120000
           EOF
 
           cat > android/settings.gradle << 'EOF'
@@ -179,39 +177,6 @@ jobs:
       - name: Fix package namespace
         run: |
           sed -i 's/com.example.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
-
-      # ==================== إنشاء debug keystore ====================
-      - name: Create debug keystore
-        run: |
-          mkdir -p ~/.android
-          keytool -genkey -v \
-            -keystore ~/.android/debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          echo "✅ Debug keystore created"
-          ls -la ~/.android/
-
-      # ==================== طباعة SHA-1 ====================
-      - name: Extract SHA-1 Fingerprint
-        run: |
-          echo "========================================="
-          echo "EXTRACTING SHA-1 FINGERPRINT"
-          echo "========================================="
-          keytool -list -v \
-            -keystore ~/.android/debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android 2>&1 | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
-          echo ""
-          echo "========================================="
-          echo "END OF SHA-1 EXTRACTION"
-          echo "========================================="
-        continue-on-error: true
 
       - name: Get dependencies
         run: flutter pub get
