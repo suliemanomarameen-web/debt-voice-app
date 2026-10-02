@@ -31,23 +31,43 @@ class GDriveService {
     return _googleSignIn!;
   }
 
-  // ========== تسجيل الدخول ==========
-  static Future<bool> signIn() async {
+  // ========== تسجيل الدخول مع كشف الأخطاء ==========
+  /// يعيد: null إذا نجح، أو نص الخطأ
+  static Future<String?> signInWithError() async {
     try {
+      debugPrint('🔵 [GDrive] Starting sign in...');
+
       final account = await _signIn.signIn();
-      if (account == null) return false;
+      if (account == null) {
+        debugPrint('🟡 [GDrive] User cancelled');
+        return 'تم إلغاء تسجيل الدخول';
+      }
+
       _currentUser = account;
+      debugPrint('🟢 [GDrive] Got account: ${account.email}');
 
       final authClient = await _signIn.authenticatedClient();
-      if (authClient == null) return false;
+      if (authClient == null) {
+        debugPrint('🔴 [GDrive] authClient is null');
+        return 'فشل الحصول على Auth Client\n\n'
+            'تأكد من:\n'
+            '1. SHA-1 مُسجَّل في Console\n'
+            '2. Package name = ye.sulieman.debtbook\n'
+            '3. انتظر 10 دقائق بعد الإضافة';
+      }
 
       _driveApi = drive.DriveApi(authClient);
-      debugPrint('✅ Signed in: ${account.email}');
-      return true;
+      debugPrint('✅ [GDrive] Signed in: ${account.email}');
+      return null;
     } catch (e) {
-      debugPrint('❌ Sign in error: $e');
-      return false;
+      debugPrint('❌ [GDrive] Sign in error: $e');
+      return 'خطأ:\n${e.toString()}';
     }
+  }
+
+  static Future<bool> signIn() async {
+    final err = await signInWithError();
+    return err == null;
   }
 
   static Future<void> signOut() async {
@@ -75,7 +95,7 @@ class GDriveService {
       if (authClient == null) return false;
 
       _driveApi = drive.DriveApi(authClient);
-      debugPrint('✅ Restored session: ${account.email}');
+      debugPrint('✅ [GDrive] Restored: ${account.email}');
       return true;
     } catch (e) {
       debugPrint('Silent sign-in error: $e');
@@ -87,12 +107,9 @@ class GDriveService {
   static Future<Map<String, dynamic>> uploadBackup() async {
     try {
       if (_driveApi == null) {
-        final ok = await signIn();
-        if (!ok) {
-          return {
-            'success': false,
-            'message': 'يجب تسجيل الدخول أولاً',
-          };
+        final err = await signInWithError();
+        if (err != null) {
+          return {'success': false, 'message': err};
         }
       }
 
@@ -144,12 +161,14 @@ class GDriveService {
     }
   }
 
-  // ========== قائمة النسخ على Drive ==========
+  // ========== قائمة النسخ ==========
   static Future<List<Map<String, dynamic>>> listBackups() async {
     try {
       if (_driveApi == null) {
-        final ok = await trySilentSignIn() || await signIn();
-        if (!ok) return [];
+        if (!await trySilentSignIn()) {
+          final err = await signInWithError();
+          if (err != null) return [];
+        }
       }
 
       final folderId = await _getOrCreateFolder('DebtBookBackups');
@@ -174,20 +193,18 @@ class GDriveService {
     }
   }
 
-  // ========== تحميل نسخة من Drive ==========
+  // ========== تحميل نسخة ==========
   static Future<Map<String, dynamic>> downloadBackup(String fileId) async {
     try {
       if (_driveApi == null) {
-        final ok = await trySilentSignIn() || await signIn();
-        if (!ok) {
-          return {
-            'success': false,
-            'message': 'يجب تسجيل الدخول',
-          };
+        if (!await trySilentSignIn()) {
+          final err = await signInWithError();
+          if (err != null) {
+            return {'success': false, 'message': err};
+          }
         }
       }
 
-      // ✅ التعديل: نوع صريح
       final fileInfo = await _driveApi!.files.get(
         fileId,
         $fields: 'name',
@@ -227,12 +244,14 @@ class GDriveService {
     }
   }
 
-  // ========== حذف نسخة من Drive ==========
+  // ========== حذف نسخة ==========
   static Future<bool> deleteBackup(String fileId) async {
     try {
       if (_driveApi == null) {
-        final ok = await trySilentSignIn() || await signIn();
-        if (!ok) return false;
+        if (!await trySilentSignIn()) {
+          final err = await signInWithError();
+          if (err != null) return false;
+        }
       }
       await _driveApi!.files.delete(fileId);
       return true;
