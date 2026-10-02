@@ -21,7 +21,6 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
   Future<void> _init() async {
     setState(() => _busy = true);
-    // حاول استرجاع الجلسة
     await GDriveService.trySilentSignIn();
     await _refreshList();
     if (mounted) setState(() => _busy = false);
@@ -42,13 +41,16 @@ class _GDriveScreenState extends State<GDriveScreen> {
       _busy = true;
       _status = 'جاري تسجيل الدخول...';
     });
-    final ok = await GDriveService.signIn();
+
+    final err = await GDriveService.signInWithError();
+
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _status = ok ? '✅ تم تسجيل الدخول' : '❌ فشل تسجيل الدخول';
+      _status = err == null ? '✅ تم تسجيل الدخول' : '❌ $err';
     });
-    if (ok) await _refreshList();
+
+    if (err == null) await _refreshList();
   }
 
   Future<void> _signOut() async {
@@ -99,7 +101,6 @@ class _GDriveScreenState extends State<GDriveScreen> {
       return;
     }
 
-    // اسأل: دمج أم استبدال؟
     final mode = await showDialog<String>(
       context: context,
       builder: (ctx) => Directionality(
@@ -159,13 +160,16 @@ class _GDriveScreenState extends State<GDriveScreen> {
   }
 
   Future<bool> _confirm(String title, String message) async {
+    final theme = Theme.of(context);
     final r = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
-          title: Text(title),
-          content: Text(message),
+          title: Text(title,
+              style: TextStyle(color: theme.colorScheme.onSurface)),
+          content: Text(message,
+              style: TextStyle(color: theme.colorScheme.onSurface)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -185,7 +189,15 @@ class _GDriveScreenState extends State<GDriveScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final signedIn = GDriveService.isSignedIn;
+
+    // 🎨 ألوان الوضع الليلي
+    final cardBg = isDark
+        ? theme.colorScheme.surfaceContainerHighest
+        : theme.colorScheme.surfaceContainerLow;
+    final onCard =
+        isDark ? Colors.white : theme.colorScheme.onSurface;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -199,8 +211,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
               // ========== حالة الحساب ==========
               Card(
                 color: signedIn
-                    ? theme.colorScheme.primaryContainer
-                    : theme.colorScheme.surfaceContainerHighest,
+                    ? (isDark
+                        ? Colors.green.shade900.withOpacity(0.4)
+                        : theme.colorScheme.primaryContainer)
+                    : cardBg,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -208,8 +222,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       Icon(
                         signedIn ? Icons.cloud_done : Icons.cloud_off,
                         color: signedIn
-                            ? theme.colorScheme.primary
-                            : Colors.grey,
+                            ? (isDark ? Colors.green.shade300 : theme.colorScheme.primary)
+                            : (isDark ? Colors.grey.shade400 : Colors.grey),
                         size: 40,
                       ),
                       const SizedBox(width: 12),
@@ -221,22 +235,26 @@ class _GDriveScreenState extends State<GDriveScreen> {
                               signedIn
                                   ? (GDriveService.userName ?? 'مستخدم Google')
                                   : 'غير متصل',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
+                                color: onCard,
                               ),
                             ),
                             if (signedIn)
                               Text(
                                 GDriveService.userEmail ?? '',
-                                style: const TextStyle(fontSize: 12),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: onCard.withOpacity(0.7),
+                                ),
                               ),
                           ],
                         ),
                       ),
                       if (signedIn)
                         IconButton(
-                          icon: const Icon(Icons.logout),
+                          icon: Icon(Icons.logout, color: onCard),
                           tooltip: 'تسجيل الخروج',
                           onPressed: _busy ? null : _signOut,
                         ),
@@ -247,7 +265,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
               const SizedBox(height: 16),
 
-              // ========== أزرار الإجراءات ==========
+              // ========== الأزرار ==========
               if (!signedIn)
                 FilledButton.icon(
                   onPressed: _busy ? null : _signIn,
@@ -285,20 +303,25 @@ class _GDriveScreenState extends State<GDriveScreen> {
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
                     color: _status.startsWith('✅')
-                        ? Colors.green.shade50
+                        ? (isDark
+                            ? Colors.green.shade900.withOpacity(0.4)
+                            : Colors.green.shade50)
                         : _status.startsWith('❌')
-                            ? Colors.red.shade50
-                            : theme.colorScheme.surfaceContainerHighest,
+                            ? (isDark
+                                ? Colors.red.shade900.withOpacity(0.4)
+                                : Colors.red.shade50)
+                            : cardBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: _status.startsWith('✅')
-                          ? Colors.green.shade300
+                          ? Colors.green.shade400
                           : _status.startsWith('❌')
-                              ? Colors.red.shade300
-                              : theme.colorScheme.outline.withOpacity(0.3),
+                              ? Colors.red.shade400
+                              : theme.colorScheme.outline,
                     ),
                   ),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (_busy)
                         const SizedBox(
@@ -314,13 +337,29 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                   ? Icons.error
                                   : Icons.info,
                           color: _status.startsWith('✅')
-                              ? Colors.green
+                              ? (isDark ? Colors.green.shade300 : Colors.green)
                               : _status.startsWith('❌')
-                                  ? Colors.red
-                                  : Colors.blue,
+                                  ? (isDark ? Colors.red.shade300 : Colors.red)
+                                  : (isDark ? Colors.blue.shade300 : Colors.blue),
                         ),
                       const SizedBox(width: 12),
-                      Expanded(child: Text(_status)),
+                      Expanded(
+                        child: SelectableText(
+                          _status,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: _status.startsWith('✅')
+                                ? (isDark
+                                    ? Colors.green.shade100
+                                    : Colors.green.shade900)
+                                : _status.startsWith('❌')
+                                    ? (isDark
+                                        ? Colors.red.shade100
+                                        : Colors.red.shade900)
+                                    : onCard,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -331,44 +370,54 @@ class _GDriveScreenState extends State<GDriveScreen> {
                 const SizedBox(height: 24),
                 Row(
                   children: [
-                    const Icon(Icons.folder, color: Colors.blue),
+                    Icon(Icons.folder,
+                        color: isDark ? Colors.blue.shade300 : Colors.blue),
                     const SizedBox(width: 8),
                     Text(
                       'النسخ على Drive (${_backups.length})',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
+                        color: onCard,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
                 ..._backups.map((b) => Card(
+                      color: cardBg,
                       child: ListTile(
-                        leading: const Icon(Icons.cloud, color: Colors.blue),
+                        leading: Icon(Icons.cloud,
+                            color:
+                                isDark ? Colors.blue.shade300 : Colors.blue),
                         title: Text(
                           b['name'] ?? '',
-                          style: const TextStyle(fontSize: 13),
+                          style: TextStyle(fontSize: 13, color: onCard),
                         ),
                         subtitle: Text(
                           _fmtDate(b['created']),
-                          style: const TextStyle(fontSize: 11),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: onCard.withOpacity(0.7),
+                          ),
                         ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.download,
-                                  color: Colors.green),
-                              tooltip: 'تنزيل واستعادة',
+                              icon: Icon(Icons.download,
+                                  color: isDark
+                                      ? Colors.green.shade300
+                                      : Colors.green),
                               onPressed: _busy
                                   ? null
                                   : () => _download(b['id'], b['name']),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete,
-                                  color: Colors.red),
-                              tooltip: 'حذف من Drive',
+                              icon: Icon(Icons.delete,
+                                  color: isDark
+                                      ? Colors.red.shade300
+                                      : Colors.red),
                               onPressed:
                                   _busy ? null : () => _delete(b['id']),
                             ),
@@ -381,16 +430,24 @@ class _GDriveScreenState extends State<GDriveScreen> {
               // ========== حالة فارغة ==========
               if (signedIn && _backups.isEmpty && !_busy) ...[
                 const SizedBox(height: 50),
-                const Center(
+                Center(
                   child: Column(
                     children: [
-                      Icon(Icons.cloud_queue, size: 80, color: Colors.grey),
-                      SizedBox(height: 16),
+                      Icon(Icons.cloud_queue,
+                          size: 80,
+                          color: isDark
+                              ? Colors.grey.shade600
+                              : Colors.grey.shade400),
+                      const SizedBox(height: 16),
                       Text('لا توجد نسخ على Drive',
-                          style: TextStyle(color: Colors.grey, fontSize: 16)),
-                      SizedBox(height: 8),
+                          style: TextStyle(
+                              color: onCard, fontSize: 16)),
+                      const SizedBox(height: 8),
                       Text('اضغط "رفع نسخة احتياطية الآن" للبدء',
-                          style: TextStyle(color: Colors.grey, fontSize: 12)),
+                          style: TextStyle(
+                            color: onCard.withOpacity(0.7),
+                            fontSize: 12,
+                          )),
                     ],
                   ),
                 ),
@@ -399,7 +456,9 @@ class _GDriveScreenState extends State<GDriveScreen> {
               // ========== تلميحات ==========
               const SizedBox(height: 24),
               Card(
-                color: Colors.blue.shade50,
+                color: isDark
+                    ? Colors.blue.shade900.withOpacity(0.3)
+                    : Colors.blue.shade50,
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
@@ -408,12 +467,16 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       Row(
                         children: [
                           Icon(Icons.info_outline,
-                              color: Colors.blue.shade700),
+                              color: isDark
+                                  ? Colors.blue.shade300
+                                  : Colors.blue.shade700),
                           const SizedBox(width: 8),
                           Text('كيف يعمل؟',
                               style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue.shade900)),
+                                  color: isDark
+                                      ? Colors.blue.shade100
+                                      : Colors.blue.shade900)),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -422,7 +485,11 @@ class _GDriveScreenState extends State<GDriveScreen> {
                         '2. ارفع نسخة احتياطية → تُحفظ في Drive\n'
                         '3. من أي جهاز آخر: سجّل الدخول → حمّل → استعد',
                         style: TextStyle(
-                            fontSize: 12, color: Colors.blue.shade900),
+                          fontSize: 12,
+                          color: isDark
+                              ? Colors.blue.shade100
+                              : Colors.blue.shade900,
+                        ),
                       ),
                     ],
                   ),
