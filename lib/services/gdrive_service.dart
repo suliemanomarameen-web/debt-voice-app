@@ -8,9 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'backup_service.dart';
 
 class GDriveService {
-  // ⚠️ Client ID من Google Cloud Console
+  // ⚠️ Web Client ID من Google Cloud Console (Web Application)
   static const String _serverClientId =
-      '889184576541-qvobtlhujbftskconckpkqfijbvb9rld.apps.googleusercontent.com';
+      '889184576541-406c2kom3ka5491m9utf74rfjt7plovf.apps.googleusercontent.com';
 
   static const List<String> _scopes = [
     'https://www.googleapis.com/auth/drive.file',
