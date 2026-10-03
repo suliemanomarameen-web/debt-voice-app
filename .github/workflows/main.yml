@@ -191,12 +191,18 @@ jobs:
           echo "=== original build.gradle ==="
           cat android/app/build.gradle
 
-      - name: Fix SDK versions
+      - name: Fix SDK versions and namespace
         run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
-          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 35/' android/app/build.gradle
-          sed -i 's/com.example.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
+          # ⚡ استبدال شامل: يعمل مع أي صيغة
+          # يستبدل "flutter.compileSdkVersion" و "flutter.targetSdkVersion" و "flutter.minSdkVersion"
+          sed -i 's/flutter\.compileSdkVersion/35/g' android/app/build.gradle
+          sed -i 's/flutter\.targetSdkVersion/35/g' android/app/build.gradle
+          sed -i 's/flutter\.minSdkVersion/23/g' android/app/build.gradle
+          sed -i 's/com\.example\.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
+          
+          echo ""
+          echo "=== After SDK fix ==="
+          grep -E "compileSdk|targetSdk|minSdk|applicationId|namespace" android/app/build.gradle || true
 
       - name: Add signing config to build.gradle
         run: |
@@ -208,17 +214,11 @@ jobs:
           with open(gradle_file, 'r') as f:
               content = f.read()
           
-          # 1) ابحث عن آخر موقع لـ "}" في plugins block
-          plugins_end = content.find('}', content.find('plugins {'))
-          
-          if plugins_end != -1:
-              # ابحث عن } المناسب (plugins تنتهي بـ } بعد آخر apply false)
-              # نستخدم regex للعثور على نهاية plugins
-              plugins_match = re.search(r'plugins\s*\{(.*?)\n\}', content, re.DOTALL)
-              if plugins_match:
-                  plugins_end = plugins_match.end()
-                  
-                  keystore_def = '''
+          # 1) أضف keystoreProperties بعد plugins block
+          plugins_match = re.search(r'plugins\s*\{.*?\n\}', content, re.DOTALL)
+          if plugins_match:
+              plugins_end = plugins_match.end()
+              keystore_def = '''
           
           def keystoreProperties = new Properties()
           def keystorePropertiesFile = rootProject.file('key.properties')
@@ -226,8 +226,7 @@ jobs:
               keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
           }
           '''
-                  
-                  content = content[:plugins_end] + keystore_def + content[plugins_end:]
+              content = content[:plugins_end] + keystore_def + content[plugins_end:]
           
           # 2) أضف signingConfigs داخل android { }
           android_match = re.search(r'android\s*\{', content)
@@ -246,16 +245,12 @@ jobs:
               content = content[:insert_at] + signing_block + content[insert_at:]
           
           # 3) أضف signingConfig إلى release build type
-          # ابحث عن buildTypes { ... release { ... } }
           build_types_match = re.search(r'buildTypes\s*\{', content)
           if build_types_match:
-              # ابحث عن "release" داخل buildTypes
               start = build_types_match.end()
-              # ابحث عن "release {" بعد buildTypes
               release_match = re.search(r'release\s*\{', content[start:])
               if release_match:
                   release_start = start + release_match.end()
-                  # ابحث عن أول } بعد release {
                   depth = 1
                   i = release_start
                   while i < len(content) and depth > 0:
@@ -264,7 +259,6 @@ jobs:
                       elif content[i] == '}':
                           depth -= 1
                       i += 1
-                  # أضف signingConfig قبل }
                   signing_line = "\n            signingConfig signingConfigs.release\n        "
                   content = content[:i-1] + signing_line + content[i-1:]
           
