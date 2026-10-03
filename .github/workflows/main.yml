@@ -35,7 +35,6 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $HOME/release.keystore
           echo "✅ Keystore restored"
           ls -la $HOME/release.keystore
-          keytool -list -keystore $HOME/release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" | head -5
 
       - name: Regenerate Android files
         run: |
@@ -185,21 +184,15 @@ jobs:
           storeFile=$HOME/release.keystore
           EOF
           echo "✅ key.properties created"
-          echo "=== key.properties ==="
-          cat android/key.properties
-          echo ""
-          echo "=== original build.gradle ==="
-          cat android/app/build.gradle
 
       - name: Fix SDK versions and namespace
         run: |
-          # ⚡ استبدال شامل: يعمل مع أي صيغة
-          # يستبدل "flutter.compileSdkVersion" و "flutter.targetSdkVersion" و "flutter.minSdkVersion"
-          sed -i 's/flutter\.compileSdkVersion/35/g' android/app/build.gradle
-          sed -i 's/flutter\.targetSdkVersion/35/g' android/app/build.gradle
-          sed -i 's/flutter\.minSdkVersion/23/g' android/app/build.gradle
+          # ⚡ استبدال السطر بالكامل — يعمل مع أي صيغة
+          sed -i -E 's/^[[:space:]]*compileSdk.*$/        compileSdk = 35/' android/app/build.gradle
+          sed -i -E 's/^[[:space:]]*targetSdk.*$/        targetSdk = 35/' android/app/build.gradle
+          sed -i -E 's/^[[:space:]]*minSdk.*$/        minSdk = 23/' android/app/build.gradle
           sed -i 's/com\.example\.debt_voice_app/ye.sulieman.debtbook/g' android/app/build.gradle
-          
+
           echo ""
           echo "=== After SDK fix ==="
           grep -E "compileSdk|targetSdk|minSdk|applicationId|namespace" android/app/build.gradle || true
@@ -208,18 +201,18 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import re
-          
+
           gradle_file = 'android/app/build.gradle'
-          
+
           with open(gradle_file, 'r') as f:
               content = f.read()
-          
+
           # 1) أضف keystoreProperties بعد plugins block
           plugins_match = re.search(r'plugins\s*\{.*?\n\}', content, re.DOTALL)
           if plugins_match:
               plugins_end = plugins_match.end()
               keystore_def = '''
-          
+
           def keystoreProperties = new Properties()
           def keystorePropertiesFile = rootProject.file('key.properties')
           if (keystorePropertiesFile.exists()) {
@@ -227,7 +220,7 @@ jobs:
           }
           '''
               content = content[:plugins_end] + keystore_def + content[plugins_end:]
-          
+
           # 2) أضف signingConfigs داخل android { }
           android_match = re.search(r'android\s*\{', content)
           if android_match:
@@ -243,7 +236,7 @@ jobs:
               }
               '''
               content = content[:insert_at] + signing_block + content[insert_at:]
-          
+
           # 3) أضف signingConfig إلى release build type
           build_types_match = re.search(r'buildTypes\s*\{', content)
           if build_types_match:
@@ -261,13 +254,13 @@ jobs:
                       i += 1
                   signing_line = "\n            signingConfig signingConfigs.release\n        "
                   content = content[:i-1] + signing_line + content[i-1:]
-          
+
           with open(gradle_file, 'w') as f:
               f.write(content)
-          
+
           print("✅ Signing config added")
           PYEOF
-          
+
           echo ""
           echo "=== modified build.gradle ==="
           cat android/app/build.gradle
