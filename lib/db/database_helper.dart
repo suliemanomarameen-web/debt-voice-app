@@ -16,7 +16,12 @@ class DatabaseHelper {
 
   Future<Database> _initDB(String file) async {
     final path = join(await getDatabasesPath(), file);
-    return openDatabase(path, version: 1, onCreate: _createDB);
+    return openDatabase(
+      path,
+      version: 3,
+      onCreate: _createDB,
+      onUpgrade: _upgrade,
+    );
   }
 
   Future _createDB(Database db, int v) async {
@@ -27,6 +32,8 @@ class DatabaseHelper {
         phone TEXT,
         account_type TEXT DEFAULT 'customer',
         note TEXT,
+        photo_path TEXT,
+        category TEXT DEFAULT 'normal',
         created_at TEXT NOT NULL
       )
     ''');
@@ -44,7 +51,24 @@ class DatabaseHelper {
     ''');
   }
 
-  // ============ الزبائن / الحسابات ============
+  Future _upgrade(Database db, int oldV, int newV) async {
+    if (oldV < 2) {
+      try {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN account_type TEXT DEFAULT 'customer'");
+        await db.execute("ALTER TABLE customers ADD COLUMN note TEXT");
+      } catch (_) {}
+    }
+    if (oldV < 3) {
+      try {
+        await db.execute("ALTER TABLE customers ADD COLUMN photo_path TEXT");
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN category TEXT DEFAULT 'normal'");
+      } catch (_) {}
+    }
+  }
+
+  // ============ الزبائن ============
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
     return db.insert('customers', c.toMap());
@@ -69,41 +93,28 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  /// بحث دقيق: يُرجع الزبون الذي يطابق الاسم بالضبط أو null
-Future<Customer?> findExactCustomer(String name) async {
-  final db = await database;
-  final r = await db.query('customers',
-      where: 'name = ?', whereArgs: [name], limit: 1);
-  if (r.isEmpty) return null;
-  return Customer.fromMap(r.first);
-}
+  Future<List<Customer>> customersByCategory(String category) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'category = ?', whereArgs: [category], orderBy: 'name ASC');
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
 
-/// بحث واسع: يُرجع كل الزبائن الذين يحتوي اسمهم على النص
-Future<List<Customer>> findCustomersContaining(String name) async {
-  final db = await database;
-  final r = await db.query('customers',
-      where: 'name LIKE ?', whereArgs: ['%$name%'],
-      orderBy: 'name ASC');
-  return r.map((e) => Customer.fromMap(e)).toList();
-}
+  Future<Customer?> findExactCustomer(String name) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'name = ?', whereArgs: [name], limit: 1);
+    if (r.isEmpty) return null;
+    return Customer.fromMap(r.first);
+  }
 
-/// بحث ذكي (يُستخدم في voice_screen):
-/// - يطابق الاسم الكامل أولاً
-/// - إن لم يجد، يبحث عن أسماء تحتوي النص
-/// - يُرجع كل النتائج للاختيار
-Future<List<Customer>> smartSearch(String name) async {
-  final exact = await findExactCustomer(name);
-  if (exact != null) return [exact];
-  return await findCustomersContaining(name);
-}
+  Future<List<Customer>> findCustomersContaining(String name) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'name LIKE ?', whereArgs: ['%$name%'], orderBy: 'name ASC');
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
 
-/// للتوافق مع الكود القديم
-Future<Customer?> findCustomerByName(String name) async {
-  final exact = await findExactCustomer(name);
-  if (exact != null) return exact;
-  final list = await findCustomersContaining(name);
-  return list.isEmpty ? null : list.first;
-}
   // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
