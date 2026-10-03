@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
@@ -106,36 +107,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 onTap: () => Navigator.pop(
                     context, DateFilter(type: DateFilterType.month)),
               ),
-              ListTile(
-                leading: const Icon(Icons.edit_calendar),
-                title: const Text('نطاق مخصص'),
-                trailing: _dateFilter.type == DateFilterType.custom
-                    ? const Icon(Icons.check, color: Colors.green)
-                    : null,
-                onTap: () async {
-                  Navigator.pop(context);
-                  final picked = await showDateRangePicker(
-                    context: context,
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime.now(),
-                    initialDateRange: DateTimeRange(
-                      start: _dateFilter.from ?? DateTime.now(),
-                      end: _dateFilter.to ?? DateTime.now(),
-                    ),
-                    locale: const Locale('ar'),
-                  );
-                  if (picked != null) {
-                    setState(() {
-                      _dateFilter = DateFilter(
-                        type: DateFilterType.custom,
-                        from: picked.start,
-                        to: picked.end,
-                      );
-                      _applyFilter();
-                    });
-                  }
-                },
-              ),
             ],
           ),
         ),
@@ -208,6 +179,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
+  // ============ تعديل معاملة ============
   Future<void> _editTransaction(Transaction t) async {
     final isDebt = t.type == 'debt';
     final isReturn = t.items.startsWith('مرتجع');
@@ -273,6 +245,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
+  // ============ حذف معاملة ============
   Future<void> _deleteTransaction(Transaction t) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -322,7 +295,452 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  Future<void> _deleteCustomer() async {
+  void _showTransactionMenu(Transaction t) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('تعديل'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _editTransaction(t);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('حذف', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteTransaction(t);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportStatement() async {
+    final f = await ExportService.exportCustomerStatement(widget.customer.id!);
+    await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
+  }
+
+  // ============ Header (الصورة + الاسم + الرصيد) ============
+  Widget _buildHeader(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final catColor = Color(CustomerCategory.color(widget.customer.category));
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _balance > 0
+            ? (isDark
+                ? Colors.red.shade900.withOpacity(0.3)
+                : Colors.red.shade50)
+            : (isDark
+                ? Colors.green.shade900.withOpacity(0.3)
+                : Colors.green.shade50),
+      ),
+      child: Column(
+        children: [
+          // ===== الصورة + الاسم =====
+          Row(
+            children: [
+              // صورة العميل
+              Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: theme.colorScheme.primary.withOpacity(0.2),
+                  border: Border.all(
+                    color: catColor,
+                    width: 3,
+                  ),
+                  image: widget.customer.photoPath != null &&
+                          File(widget.customer.photoPath!).existsSync()
+                      ? DecorationImage(
+                          image: FileImage(File(widget.customer.photoPath!)),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
+                ),
+                child: widget.customer.photoPath == null ||
+                        !File(widget.customer.photoPath!).existsSync()
+                    ? Center(
+                        child: Text(
+                          widget.customer.name.characters.first,
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 16),
+
+              // الاسم + التصنيف
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.customer.name,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        // شارة التصنيف
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: catColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: catColor),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.star, size: 14, color: catColor),
+                              const SizedBox(width: 4),
+                              Text(
+                                CustomerCategory.label(widget.customer.category),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: catColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // شارة النوع
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _accountTypeLabel(widget.customer.accountType),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (widget.customer.phone != null) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(Icons.phone,
+                              size: 14,
+                              color: theme.colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 4),
+                          Text(
+                            widget.customer.phone!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+
+          // ===== الرصيد =====
+          const Text('الرصيد المتبقي',
+              style: TextStyle(fontSize: 13, color: Colors.grey)),
+          Text(
+            '${_balance.toStringAsFixed(0)} ريال',
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
+              color: _balance > 0
+                  ? (isDark ? Colors.red.shade300 : Colors.red.shade700)
+                  : (isDark ? Colors.green.shade300 : Colors.green.shade700),
+            ),
+          ),
+
+          if (widget.customer.note != null &&
+              widget.customer.note!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.note, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      widget.customer.note!,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _accountTypeLabel(String t) {
+    return {
+      'customer': 'عميل',
+      'supplier': 'مورد',
+      'other': 'أخرى',
+    }[t] ?? 'عميل';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.customer.name),
+          actions: [
+            IconButton(
+              icon: Icon(
+                _dateFilter.type == DateFilterType.all
+                    ? Icons.filter_alt_outlined
+                    : Icons.filter_alt,
+                color: _dateFilter.type == DateFilterType.all
+                    ? null
+                    : theme.colorScheme.primary,
+              ),
+              tooltip: 'فلترة: ${_dateFilter.label}',
+              onPressed: _showDateFilter,
+            ),
+            IconButton(
+              icon: const Icon(Icons.table_chart),
+              tooltip: 'تصدير كشف الحساب',
+              onPressed: _exportStatement,
+            ),
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                switch (v) {
+                  case 'edit':
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            AddAccountScreen(existing: widget.customer),
+                      ),
+                    ).then((changed) {
+                      if (changed == true && mounted) {
+                        Navigator.pop(context, true);
+                      } else {
+                        _load();
+                      }
+                    });
+                    break;
+                  case 'delete':
+                    _showDeleteCustomer();
+                    break;
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'edit',
+                  child: ListTile(
+                    leading: Icon(Icons.edit),
+                    title: Text('تعديل بيانات الحساب'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete, color: Colors.red),
+                    title: Text('حذف الحساب',
+                        style: TextStyle(color: Colors.red)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            // ===== Header =====
+            _buildHeader(theme),
+
+            // ===== شريط الفلتر النشط =====
+            if (_dateFilter.type != DateFilterType.all)
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                color: theme.colorScheme.primary.withOpacity(0.1),
+                child: Row(
+                  children: [
+                    Icon(Icons.filter_alt,
+                        size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text('فلتر: ${_dateFilter.label}',
+                        style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Text('${_tx.length} عملية',
+                        style: const TextStyle(fontSize: 12)),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _dateFilter = DateFilter();
+                          _applyFilter();
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+            // ===== قائمة العمليات =====
+            Expanded(
+              child: _tx.isEmpty
+                  ? Center(
+                      child: Text(
+                        'لا توجد عمليات في هذا النطاق',
+                        style: TextStyle(
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _tx.length,
+                      itemBuilder: (_, i) {
+                        final t = _tx[i];
+                        final isDebt = t.type == 'debt';
+                        final isReturn = t.items.startsWith('مرتجع');
+
+                        return ListTile(
+                          leading: Icon(
+                            isReturn
+                                ? Icons.keyboard_return
+                                : (isDebt
+                                    ? Icons.arrow_upward
+                                    : Icons.arrow_downward),
+                            color: isReturn
+                                ? Colors.orange
+                                : (isDebt
+                                    ? (isDark
+                                        ? Colors.red.shade300
+                                        : theme.colorScheme.error)
+                                    : (isDark
+                                        ? Colors.green.shade300
+                                        : theme.colorScheme.primary)),
+                          ),
+                          title: Text(
+                              '${t.amount.toStringAsFixed(0)} ${t.currency}'),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (t.items.isNotEmpty)
+                                Text(t.items,
+                                    style: const TextStyle(fontSize: 13)),
+                              const SizedBox(height: 2),
+                              Text(
+                                _formatDateTime(t.createdAt),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                          onLongPress: () => _showTransactionMenu(t),
+                          onTap: () => _showTransactionMenu(t),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+
+        // ===== أزرار سفلية =====
+        bottomNavigationBar: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _addTransaction('debt'),
+                  icon: const Icon(Icons.add),
+                  label: const Text('دين'),
+                  style: FilledButton.styleFrom(
+                      backgroundColor:
+                          isDark ? Colors.red.shade400 : Colors.red),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _addTransaction('payment'),
+                  icon: const Icon(Icons.payments),
+                  label: const Text('سداد'),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: isDark
+                          ? Colors.green.shade400
+                          : theme.colorScheme.primary),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _addTransaction('return'),
+                  icon: const Icon(Icons.keyboard_return),
+                  label: const Text('مرتجع'),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: Colors.orange),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDeleteCustomer() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
@@ -366,252 +784,5 @@ class _CustomerScreenState extends State<CustomerScreen> {
         );
       }
     }
-  }
-
-  Future<void> _exportStatement() async {
-    final f = await ExportService.exportCustomerStatement(widget.customer.id!);
-    await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
-  }
-
-  void _showTransactionMenu(Transaction t) {
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('تعديل'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _editTransaction(t);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('حذف', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _deleteTransaction(t);
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.customer.name),
-          actions: [
-            IconButton(
-              icon: Icon(
-                _dateFilter.type == DateFilterType.all
-                    ? Icons.filter_alt_outlined
-                    : Icons.filter_alt,
-                color: _dateFilter.type == DateFilterType.all
-                    ? null
-                    : theme.colorScheme.primary,
-              ),
-              tooltip: 'فلترة: ${_dateFilter.label}',
-              onPressed: _showDateFilter,
-            ),
-            IconButton(
-              icon: const Icon(Icons.table_chart),
-              tooltip: 'تصدير كشف الحساب',
-              onPressed: _exportStatement,
-            ),
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                switch (v) {
-                  case 'edit':
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            AddAccountScreen(existing: widget.customer),
-                      ),
-                    ).then((_) => _load());
-                    break;
-                  case 'delete':
-                    _deleteCustomer();
-                    break;
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit),
-                    title: Text('تعديل بيانات الحساب'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete, color: Colors.red),
-                    title: Text('حذف الحساب',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              color: _balance > 0
-                  ? theme.colorScheme.errorContainer
-                  : theme.colorScheme.primaryContainer,
-              child: Column(
-                children: [
-                  Text('الرصيد المتبقي',
-                      style: TextStyle(
-                          color: theme.colorScheme.onPrimaryContainer)),
-                  Text(
-                    '${_balance.toStringAsFixed(0)} ريال',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: _balance > 0
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // شريط الفلتر النشط
-            if (_dateFilter.type != DateFilterType.all)
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                color: theme.colorScheme.primary.withOpacity(0.1),
-                child: Row(
-                  children: [
-                    Icon(Icons.filter_alt,
-                        size: 18, color: theme.colorScheme.primary),
-                    const SizedBox(width: 6),
-                    Text('فلتر: ${_dateFilter.label}',
-                        style: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.bold)),
-                    const Spacer(),
-                    Text('${_tx.length} عملية',
-                        style: const TextStyle(fontSize: 12)),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: () {
-                        setState(() {
-                          _dateFilter = DateFilter();
-                          _applyFilter();
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-            Expanded(
-              child: _tx.isEmpty
-                  ? const Center(child: Text('لا توجد عمليات في هذا النطاق'))
-                  : ListView.builder(
-                      itemCount: _tx.length,
-                      itemBuilder: (_, i) {
-                        final t = _tx[i];
-                        final isDebt = t.type == 'debt';
-                        final isReturn = t.items.startsWith('مرتجع');
-
-                        return ListTile(
-                          leading: Icon(
-                            isReturn
-                                ? Icons.keyboard_return
-                                : (isDebt
-                                    ? Icons.arrow_upward
-                                    : Icons.arrow_downward),
-                            color: isReturn
-                                ? Colors.orange
-                                : (isDebt
-                                    ? theme.colorScheme.error
-                                    : theme.colorScheme.primary),
-                          ),
-                          title: Text(
-                              '${t.amount.toStringAsFixed(0)} ${t.currency}'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (t.items.isNotEmpty)
-                                Text(t.items,
-                                    style: const TextStyle(fontSize: 13)),
-                              const SizedBox(height: 2),
-                              Text(
-                                _formatDateTime(t.createdAt),
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                          onLongPress: () => _showTransactionMenu(t),
-                          onTap: () => _showTransactionMenu(t),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-        bottomNavigationBar: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('debt'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('دين'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: theme.colorScheme.error),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('payment'),
-                  icon: const Icon(Icons.payments),
-                  label: const Text('سداد'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: theme.colorScheme.primary),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('return'),
-                  icon: const Icon(Icons.keyboard_return),
-                  label: const Text('مرتجع'),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
