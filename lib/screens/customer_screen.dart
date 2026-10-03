@@ -5,7 +5,9 @@ import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
+import '../services/pdf_service.dart';
 import 'add_account_screen.dart';
+import 'share_receipt_screen.dart';
 
 class CustomerScreen extends StatefulWidget {
   final Customer customer;
@@ -332,7 +334,34 @@ class _CustomerScreenState extends State<CustomerScreen> {
     await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
   }
 
-  // ============ Header (الصورة + الاسم + الرصيد) ============
+  // ============ PDF ============
+  Future<void> _exportPdf() async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final file = await PdfService.generateStatement(widget.customer);
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      await PdfService.share(file, widget.customer.name);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('فشل إنشاء PDF: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // ============ Header ============
   Widget _buildHeader(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final catColor = Color(CustomerCategory.color(widget.customer.category));
@@ -351,20 +380,15 @@ class _CustomerScreenState extends State<CustomerScreen> {
       ),
       child: Column(
         children: [
-          // ===== الصورة + الاسم =====
           Row(
             children: [
-              // صورة العميل
               Container(
                 width: 70,
                 height: 70,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: theme.colorScheme.primary.withOpacity(0.2),
-                  border: Border.all(
-                    color: catColor,
-                    width: 3,
-                  ),
+                  border: Border.all(color: catColor, width: 3),
                   image: widget.customer.photoPath != null &&
                           File(widget.customer.photoPath!).existsSync()
                       ? DecorationImage(
@@ -388,8 +412,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     : null,
               ),
               const SizedBox(width: 16),
-
-              // الاسم + التصنيف
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -404,7 +426,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     const SizedBox(height: 6),
                     Row(
                       children: [
-                        // شارة التصنيف
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
@@ -419,7 +440,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                               Icon(Icons.star, size: 14, color: catColor),
                               const SizedBox(width: 4),
                               Text(
-                                CustomerCategory.label(widget.customer.category),
+                                CustomerCategory.label(
+                                    widget.customer.category),
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -430,12 +452,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // شارة النوع
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.primary.withOpacity(0.15),
+                            color:
+                                theme.colorScheme.primary.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
@@ -471,12 +493,9 @@ class _CustomerScreenState extends State<CustomerScreen> {
               ),
             ],
           ),
-
           const SizedBox(height: 16),
           const Divider(),
           const SizedBox(height: 8),
-
-          // ===== الرصيد =====
           const Text('الرصيد المتبقي',
               style: TextStyle(fontSize: 13, color: Colors.grey)),
           Text(
@@ -486,10 +505,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
               fontWeight: FontWeight.bold,
               color: _balance > 0
                   ? (isDark ? Colors.red.shade300 : Colors.red.shade700)
-                  : (isDark ? Colors.green.shade300 : Colors.green.shade700),
+                  : (isDark
+                      ? Colors.green.shade300
+                      : Colors.green.shade700),
             ),
           ),
-
           if (widget.customer.note != null &&
               widget.customer.note!.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -537,6 +557,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         appBar: AppBar(
           title: Text(widget.customer.name),
           actions: [
+            // فلتر
             IconButton(
               icon: Icon(
                 _dateFilter.type == DateFilterType.all
@@ -549,14 +570,34 @@ class _CustomerScreenState extends State<CustomerScreen> {
               tooltip: 'فلترة: ${_dateFilter.label}',
               onPressed: _showDateFilter,
             ),
+
+            // مشاركة كصورة
             IconButton(
-              icon: const Icon(Icons.table_chart),
-              tooltip: 'تصدير كشف الحساب',
-              onPressed: _exportStatement,
+              icon: const Icon(Icons.image),
+              tooltip: 'مشاركة كصورة',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      ShareReceiptScreen(customer: widget.customer),
+                ),
+              ),
             ),
+
+            // PDF
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf),
+              tooltip: 'كشف حساب PDF',
+              onPressed: _exportPdf,
+            ),
+
+            // قائمة
             PopupMenuButton<String>(
               onSelected: (v) {
                 switch (v) {
+                  case 'excel':
+                    _exportStatement();
+                    break;
                   case 'edit':
                     Navigator.push(
                       context,
@@ -579,6 +620,13 @@ class _CustomerScreenState extends State<CustomerScreen> {
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(
+                  value: 'excel',
+                  child: ListTile(
+                    leading: Icon(Icons.table_chart),
+                    title: Text('تصدير Excel'),
+                  ),
+                ),
+                PopupMenuItem(
                   value: 'edit',
                   child: ListTile(
                     leading: Icon(Icons.edit),
@@ -599,10 +647,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
         body: Column(
           children: [
-            // ===== Header =====
             _buildHeader(theme),
-
-            // ===== شريط الفلتر النشط =====
             if (_dateFilter.type != DateFilterType.all)
               Container(
                 width: double.infinity,
@@ -633,8 +678,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   ],
                 ),
               ),
-
-            // ===== قائمة العمليات =====
             Expanded(
               child: _tx.isEmpty
                   ? Center(
@@ -683,7 +726,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                                 _formatDateTime(t.createdAt),
                                 style: TextStyle(
                                     fontSize: 11,
-                                    color: theme.colorScheme.onSurfaceVariant),
+                                    color:
+                                        theme.colorScheme.onSurfaceVariant),
                               ),
                             ],
                           ),
@@ -695,8 +739,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
           ],
         ),
-
-        // ===== أزرار سفلية =====
         bottomNavigationBar: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
