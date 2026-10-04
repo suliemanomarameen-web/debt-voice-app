@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
@@ -194,7 +195,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
-                // حفظ العملية
                 await db.insertTransaction(Transaction(
                   customerId: widget.customer.id!,
                   amount: amt,
@@ -205,16 +205,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   createdAt: DateTime.now().toIso8601String(),
                 ));
 
-                // حساب الرصيد الجديد
                 final newBalance =
                     await db.customerBalance(widget.customer.id!);
 
                 if (mounted) Navigator.pop(context);
-
-                // إعادة تحميل البيانات
                 await _load();
 
-                // إرسال رسالة واتساب تلقائياً (إذا كانت مفعلة)
                 final sp = await SharedPreferences.getInstance();
                 final autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
 
@@ -360,6 +356,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
+  // ============ قائمة العمليات (مع أيقونات واتساب/مشاركة/طباعة) ============
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
@@ -369,6 +366,119 @@ class _CustomerScreenState extends State<CustomerScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // رأس القائمة
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Text(
+                      '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _formatDateTime(t.createdAt),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              // إرسال واتساب
+              ListTile(
+                leading: const Icon(Icons.message, color: Colors.green),
+                title: const Text('إرسال عبر واتساب'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  if (widget.customer.phone == null ||
+                      widget.customer.phone!.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('لا يوجد رقم هاتف لهذا العميل'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+                  try {
+                    await WhatsAppService.sendTransactionNotification(
+                      phone: widget.customer.phone,
+                      customerName: widget.customer.name,
+                      type: t.type,
+                      amount: t.amount,
+                      newBalance: _balance,
+                    );
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('خطأ: $e')),
+                      );
+                    }
+                  }
+                },
+              ),
+
+              // مشاركة
+              ListTile(
+                leading: const Icon(Icons.share, color: Colors.blue),
+                title: const Text('مشاركة'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final typeLabel = t.type == 'debt'
+                      ? 'دين'
+                      : t.items.startsWith('مرتجع')
+                          ? 'مرتجع'
+                          : 'سداد';
+                  final text = '''
+السلام عليكم ${widget.customer.name}،
+تم تسجيل العملية التالية:
+
+النوع: $typeLabel
+المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}
+${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_formatDateTime(t.createdAt)}
+
+الرصيد المتبقي: ${_balance.toStringAsFixed(0)} ريال
+
+شكراً لتعاملكم معنا
+''';
+                  await Share.share(text);
+                },
+              ),
+
+              // طباعة PDF للعملية
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.orange),
+                title: const Text('طباعة / حفظ PDF للعملية'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  // إنشاء PDF للعملية الواحدة
+                  try {
+                    final file = await PdfService.generateStatement(
+                      widget.customer,
+                      fromDate: DateTime.parse(t.createdAt),
+                      toDate: DateTime.parse(t.createdAt),
+                    );
+                    await PdfService.share(file, widget.customer.name);
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('فشل: $e')),
+                      );
+                    }
+                  }
+                },
+              ),
+
+              const Divider(height: 1),
+
+              // تعديل
               ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('تعديل'),
@@ -377,6 +487,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   _editTransaction(t);
                 },
               ),
+
+              // حذف
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('حذف', style: TextStyle(color: Colors.red)),
@@ -401,70 +513,96 @@ class _CustomerScreenState extends State<CustomerScreen> {
   Future<void> _exportPdf() async {
     DateTime? fromDate;
     DateTime? toDate;
+    String selectedFont = 'Tajawal';
 
-    final result = await showDialog<Map<String, DateTime?>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setStateDialog) => Directionality(
           textDirection: TextDirection.rtl,
           child: AlertDialog(
             title: const Text('فلترة كشف الحساب'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('اختر الفترة (اتركها فارغة للكل)',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-                const SizedBox(height: 16),
-                ListTile(
-                  leading: const Icon(Icons.calendar_today),
-                  title: Text(
-                    fromDate == null
-                        ? 'من تاريخ: الكل'
-                        : 'من: ${fromDate!.year}/${fromDate!.month}/${fromDate!.day}',
-                  ),
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: fromDate ?? DateTime.now(),
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) {
-                      setStateDialog(() => fromDate = picked);
-                    }
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.event),
-                  title: Text(
-                    toDate == null
-                        ? 'إلى تاريخ: الكل'
-                        : 'إلى: ${toDate!.year}/${toDate!.month}/${toDate!.day}',
-                  ),
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: toDate ?? DateTime.now(),
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) {
-                      setStateDialog(() => toDate = picked);
-                    }
-                  },
-                ),
-                if (fromDate != null || toDate != null)
-                  TextButton.icon(
-                    icon: const Icon(Icons.clear, size: 16),
-                    label: const Text('مسح الفلتر'),
-                    onPressed: () {
-                      setStateDialog(() {
-                        fromDate = null;
-                        toDate = null;
-                      });
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('اختر الفترة (اتركها فارغة للكل)',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  const SizedBox(height: 16),
+                  ListTile(
+                    leading: const Icon(Icons.calendar_today),
+                    title: Text(
+                      fromDate == null
+                          ? 'من تاريخ: الكل'
+                          : 'من: ${fromDate!.year}/${fromDate!.month}/${fromDate!.day}',
+                    ),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: fromDate ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) {
+                        setStateDialog(() => fromDate = picked);
+                      }
                     },
                   ),
-              ],
+                  ListTile(
+                    leading: const Icon(Icons.event),
+                    title: Text(
+                      toDate == null
+                          ? 'إلى تاريخ: الكل'
+                          : 'إلى: ${toDate!.year}/${toDate!.month}/${toDate!.day}',
+                    ),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: toDate ?? DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) {
+                        setStateDialog(() => toDate = picked);
+                      }
+                    },
+                  ),
+                  if (fromDate != null || toDate != null)
+                    TextButton.icon(
+                      icon: const Icon(Icons.clear, size: 16),
+                      label: const Text('مسح الفلتر'),
+                      onPressed: () {
+                        setStateDialog(() {
+                          fromDate = null;
+                          toDate = null;
+                        });
+                      },
+                    ),
+                  const Divider(height: 24),
+                  // اختيار الخط
+                  const Text('نوع الخط:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: 'Tajawal',
+                        label: Text('Tajawal'),
+                        icon: Icon(Icons.text_fields),
+                      ),
+                      ButtonSegment(
+                        value: 'Cairo',
+                        label: Text('Cairo'),
+                        icon: Icon(Icons.text_format),
+                      ),
+                    ],
+                    selected: {selectedFont},
+                    onSelectionChanged: (v) {
+                      setStateDialog(() => selectedFont = v.first);
+                    },
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -475,6 +613,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 onPressed: () => Navigator.pop(ctx, {
                   'from': fromDate,
                   'to': toDate,
+                  'font': selectedFont,
                 }),
                 child: const Text('توليد PDF'),
               ),
@@ -497,6 +636,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         widget.customer,
         fromDate: result['from'],
         toDate: result['to'],
+        fontName: result['font'] ?? 'Tajawal',
       );
 
       if (!mounted) return;
