@@ -17,8 +17,11 @@ class ShareReceiptScreen extends StatefulWidget {
 class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
   final ScreenshotController _controller = ScreenshotController();
   double _balance = 0;
+  List<Transaction> _allTx = [];
   List<Transaction> _tx = [];
   bool _loading = true;
+  DateTime? _fromDate;
+  DateTime? _toDate;
 
   @override
   void initState() {
@@ -29,12 +32,139 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
   Future<void> _load() async {
     final db = DatabaseHelper.instance;
     final bal = await db.customerBalance(widget.customer.id!);
-    final tx = await db.customerTransactions(widget.customer.id!);
+    final allTx = await db.customerTransactions(widget.customer.id!);
     if (!mounted) return;
     setState(() {
       _balance = bal;
-      _tx = tx.take(10).toList();
+      _allTx = allTx;
+      _applyFilter();
       _loading = false;
+    });
+  }
+
+  void _applyFilter() {
+    List<Transaction> filtered = _allTx;
+
+    if (_fromDate != null) {
+      final fromStart = DateTime(
+        _fromDate!.year,
+        _fromDate!.month,
+        _fromDate!.day,
+      );
+      filtered = filtered.where((t) {
+        final d = DateTime.parse(t.createdAt);
+        return !d.isBefore(fromStart);
+      }).toList();
+    }
+
+    if (_toDate != null) {
+      final toEnd = DateTime(
+        _toDate!.year,
+        _toDate!.month,
+        _toDate!.day,
+        23,
+        59,
+        59,
+      );
+      filtered = filtered.where((t) {
+        final d = DateTime.parse(t.createdAt);
+        return !d.isAfter(toEnd);
+      }).toList();
+    }
+
+    _tx = filtered;
+  }
+
+  // ========== نافذة فلترة التاريخ ==========
+  Future<void> _showFilterDialog() async {
+    DateTime? tempFrom = _fromDate;
+    DateTime? tempTo = _toDate;
+
+    final result = await showDialog<Map<String, DateTime?>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateDialog) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Text('فلترة بالتاريخ'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.calendar_today),
+                  title: Text(
+                    tempFrom == null
+                        ? 'من تاريخ: الكل'
+                        : 'من: ${tempFrom!.year}/${tempFrom!.month}/${tempFrom!.day}',
+                  ),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: tempFrom ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) {
+                      setStateDialog(() => tempFrom = picked);
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.event),
+                  title: Text(
+                    tempTo == null
+                        ? 'إلى تاريخ: الكل'
+                        : 'إلى: ${tempTo!.year}/${tempTo!.month}/${tempTo!.day}',
+                  ),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: tempTo ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) {
+                      setStateDialog(() => tempTo = picked);
+                    }
+                  },
+                ),
+                if (tempFrom != null || tempTo != null)
+                  TextButton.icon(
+                    icon: const Icon(Icons.clear, size: 16),
+                    label: const Text('مسح الفلتر'),
+                    onPressed: () {
+                      setStateDialog(() {
+                        tempFrom = null;
+                        tempTo = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, {
+                  'from': tempFrom,
+                  'to': tempTo,
+                }),
+                child: const Text('تطبيق'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      _fromDate = result['from'];
+      _toDate = result['to'];
+      _applyFilter();
     });
   }
 
@@ -76,6 +206,20 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
         appBar: AppBar(
           title: const Text('مشاركة كصورة'),
           actions: [
+            // زر الفلترة (جديد)
+            IconButton(
+              icon: Icon(
+                (_fromDate == null && _toDate == null)
+                    ? Icons.filter_alt_outlined
+                    : Icons.filter_alt,
+                color: (_fromDate == null && _toDate == null)
+                    ? null
+                    : theme.colorScheme.primary,
+              ),
+              tooltip: 'فلترة بالتاريخ',
+              onPressed: _loading ? null : _showFilterDialog,
+            ),
+            // زر المشاركة
             IconButton(
               icon: const Icon(Icons.share),
               tooltip: 'مشاركة',
@@ -89,6 +233,49 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // شريط عرض الفلتر الحالي
+                    if (_fromDate != null || _toDate != null)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.filter_alt,
+                                size: 18,
+                                color: theme.colorScheme.primary),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'الفترة: ${_fromDate != null ? _formatDate(_fromDate!) : "البداية"} - ${_toDate != null ? _formatDate(_toDate!) : "اليوم"}',
+                                style: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () {
+                                setState(() {
+                                  _fromDate = null;
+                                  _toDate = null;
+                                  _applyFilter();
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+
                     Screenshot(
                       controller: _controller,
                       child: _buildReceipt(theme, isDark),
@@ -127,6 +314,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
     const textDark = Color(0xFF1F2937);
     const textGray = Color(0xFF6B7280);
 
+    // حساب الإجماليات من المعاملات المفلترة فقط
     double totalDebt = 0;
     double totalPaid = 0;
     for (final t in _tx) {
@@ -136,6 +324,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
         totalPaid += t.amount;
       }
     }
+    final filteredBalance = totalDebt - totalPaid;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -179,6 +368,25 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                     fontSize: 12,
                   ),
                 ),
+                // عرض الفترة إذا كانت مفلترة
+                if (_fromDate != null || _toDate != null) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'الفترة: ${_fromDate != null ? _formatDate(_fromDate!) : "البداية"} - ${_toDate != null ? _formatDate(_toDate!) : "اليوم"}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -206,16 +414,16 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ),
           const SizedBox(height: 16),
 
-          // الرصيد
+          // الرصيد (المفلتر)
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: _balance > 0
+              color: filteredBalance > 0
                   ? const Color(0xFFFEF2F2)
                   : const Color(0xFFF0FDF4),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: _balance > 0
+                color: filteredBalance > 0
                     ? const Color(0xFFFCA5A5)
                     : const Color(0xFF86EFAC),
                 width: 2,
@@ -224,16 +432,18 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
             child: Column(
               children: [
                 Text(
-                  'الرصيد المتبقي',
+                  (_fromDate != null || _toDate != null)
+                      ? 'الرصيد في الفترة'
+                      : 'الرصيد المتبقي',
                   style: TextStyle(fontSize: 13, color: textGray),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${_balance.toStringAsFixed(0)} ريال',
+                  '${filteredBalance.toStringAsFixed(0)} ريال',
                   style: TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.bold,
-                    color: _balance > 0
+                    color: filteredBalance > 0
                         ? const Color(0xFFB91C1C)
                         : const Color(0xFF15803D),
                   ),
@@ -259,7 +469,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ),
           const SizedBox(height: 16),
 
-          // آخر العمليات
+          // آخر العمليات (مع الأصناف)
           if (_tx.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(12),
@@ -280,7 +490,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  ..._tx.take(5).map((t) {
+                  ..._tx.take(10).map((t) {
                     final isDebt = t.type == 'debt';
                     final isReturn = t.items.startsWith('مرتجع');
                     String prefix;
@@ -291,33 +501,74 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                     } else {
                       prefix = 'سداد';
                     }
+
+                    // استخراج الأصناف بشكل نظيف
+                    final items = t.items.isEmpty
+                        ? ''
+                        : t.items
+                            .replaceFirst(RegExp(r'^مرتجع:?\s*'), '')
+                            .trim();
+
                     return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isReturn
-                                  ? const Color(0xFFF59E0B)
-                                  : (isDebt
-                                      ? const Color(0xFFDC2626)
-                                      : const Color(0xFF16A34A)),
+                          Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isReturn
+                                      ? const Color(0xFFF59E0B)
+                                      : (isDebt
+                                          ? const Color(0xFFDC2626)
+                                          : const Color(0xFF16A34A)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '$prefix - ${t.amount.toStringAsFixed(0)} ريال',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: textDark,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                _formatDateShort(t.createdAt),
+                                style:
+                                    TextStyle(fontSize: 10, color: textGray),
+                              ),
+                            ],
+                          ),
+                          // عرض الأصناف تحت العملية (جديد)
+                          if (items.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  right: 16, top: 2),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.inventory_2_outlined,
+                                      size: 12, color: textGray),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      'الأصناف: $items',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: textGray,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '$prefix - ${t.amount.toStringAsFixed(0)} ريال',
-                              style: TextStyle(fontSize: 12, color: textDark),
-                            ),
-                          ),
-                          Text(
-                            _formatDateShort(t.createdAt),
-                            style: TextStyle(fontSize: 10, color: textGray),
-                          ),
                         ],
                       ),
                     );
