@@ -34,6 +34,7 @@ dependencies:
   google_sign_in: ^6.2.1
   googleapis: ^11.4.0
   googleapis_auth: ^1.4.1
+  extension_google_sign_in_as_googleapis_auth: ^2.0.12
   http: ^1.1.0
 
   # ============ الإشعارات ============
@@ -48,8 +49,17 @@ dependencies:
   flutter_colorpicker: ^1.0.3
   fl_chart: ^0.66.0
 
-  # ============ النسخ الاحتياطي ============
+  # ============ الصلاحيات والملفات ============
+  permission_handler: ^11.3.1
+  file_picker: ^8.0.6
+  package_info_plus: ^8.0.2
+  screenshot: ^3.0.0
 
+  # ============ الزر العائم ============
+  flutter_overlay_window: ^0.4.5
+
+  # ============ المهام الخلفية ============
+  workmanager: ^0.5.2
 
   # ============ الأمان ============
   crypto: ^3.0.3
