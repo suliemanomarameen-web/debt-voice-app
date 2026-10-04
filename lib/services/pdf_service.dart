@@ -21,9 +21,8 @@ class PdfService {
     final db = DatabaseHelper.instance;
     List<Transaction> tx = await db.customerTransactions(customer.id!);
 
-    // ========== فلترة حسب التاريخ (الإصلاح المهم) ==========
+    // ========== فلترة حسب التاريخ ==========
     if (fromDate != null) {
-      // ضبط الوقت إلى بداية اليوم (00:00:00)
       final fromStart = DateTime(fromDate.year, fromDate.month, fromDate.day);
       tx = tx.where((t) {
         final d = DateTime.parse(t.createdAt);
@@ -31,7 +30,6 @@ class PdfService {
       }).toList();
     }
     if (toDate != null) {
-      // ضبط الوقت إلى نهاية اليوم (23:59:59)
       final toEnd = DateTime(
         toDate.year,
         toDate.month,
@@ -220,10 +218,10 @@ class PdfService {
                 width: 0.5,
               ),
               columnWidths: {
-                0: const pw.FixedColumnWidth(70),   // التاريخ
-                1: const pw.FixedColumnWidth(55),   // النوع
-                2: const pw.FixedColumnWidth(70),   // المبلغ
-                3: const pw.FlexColumnWidth(4),     // الأصناف
+                0: const pw.FixedColumnWidth(65),   // التاريخ
+                1: const pw.FixedColumnWidth(50),   // النوع
+                2: const pw.FixedColumnWidth(65),   // المبلغ
+                3: const pw.FixedColumnWidth(170),  // الأصناف (ثابت وأوسع)
               },
               children: [
                 pw.TableRow(
@@ -306,6 +304,7 @@ class PdfService {
     );
   }
 
+  // ============ خلايا الجدول ============
   static pw.Widget _headerCell(String text) {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(6),
@@ -324,12 +323,13 @@ class PdfService {
 
   static pw.Widget _dataCell(String text) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.all(6),
-      child: pw.Align(
-        alignment: pw.Alignment.centerRight,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      child: pw.Directionality(
+        textDirection: pw.TextDirection.rtl,
         child: pw.Text(
           text,
-          style: const pw.TextStyle(fontSize: 11),
+          style: const pw.TextStyle(fontSize: 10),
+          textAlign: pw.TextAlign.right,
         ),
       ),
     );
