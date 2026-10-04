@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
@@ -10,14 +11,36 @@ import '../db/database_helper.dart';
 
 class PdfService {
   /// إنشاء كشف حساب PDF
-  static Future<File> generateStatement(Customer customer) async {
+  /// [fromDate] و [toDate] اختياريان لفلترة المعاملات
+  static Future<File> generateStatement(
+    Customer customer, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
     final db = DatabaseHelper.instance;
-    final tx = await db.customerTransactions(customer.id!);
-    final balance = await db.customerBalance(customer.id!);
+    List<Transaction> tx = await db.customerTransactions(customer.id!);
 
-    // خطوط افتراضية (بدون تحميل من الإنترنت)
-    final fontRegular = pw.Font.helvetica();
-    final fontBold = pw.Font.helveticaBold();
+    // فلترة حسب التاريخ إذا تم تحديده
+    if (fromDate != null) {
+      tx = tx.where((t) {
+        final d = DateTime.parse(t.createdAt);
+        return d.isAfter(fromDate.subtract(const Duration(days: 1)));
+      }).toList();
+    }
+    if (toDate != null) {
+      tx = tx.where((t) {
+        final d = DateTime.parse(t.createdAt);
+        return d.isBefore(toDate.add(const Duration(days: 1)));
+      }).toList();
+    }
+
+    // ========== تحميل الخطوط العربية ==========
+    final fontRegular = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/Cairo-Regular.ttf'),
+    );
+    final fontBold = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/Cairo-Bold.ttf'),
+    );
 
     final doc = pw.Document(
       theme: pw.ThemeData.withFont(
@@ -26,6 +49,7 @@ class PdfService {
       ),
     );
 
+    // حساب الإجماليات
     double totalDebt = 0;
     double totalPaid = 0;
     for (final t in tx) {
@@ -35,6 +59,7 @@ class PdfService {
         totalPaid += t.amount;
       }
     }
+    final balance = totalDebt - totalPaid;
 
     doc.addPage(
       pw.MultiPage(
@@ -73,12 +98,27 @@ class PdfService {
                     ),
                   ],
                 ),
-                pw.Text(
-                  _formatDate(DateTime.now()),
-                  style: const pw.TextStyle(
-                    color: PdfColors.white,
-                    fontSize: 11,
-                  ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text(
+                      _formatDate(DateTime.now()),
+                      style: const pw.TextStyle(
+                        color: PdfColors.white,
+                        fontSize: 11,
+                      ),
+                    ),
+                    if (fromDate != null || toDate != null) ...[
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'الفترة: ${fromDate != null ? _formatDate(fromDate) : "البداية"} - ${toDate != null ? _formatDate(toDate) : "اليوم"}',
+                        style: const pw.TextStyle(
+                          color: PdfColors.white,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
