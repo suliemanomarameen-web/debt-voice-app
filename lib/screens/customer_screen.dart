@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
 import '../services/pdf_service.dart';
+import '../services/whatsapp_service.dart'; // <-- إضافة جديدة
 import 'add_account_screen.dart';
 import 'share_receipt_screen.dart';
 
@@ -55,6 +56,36 @@ class _CustomerScreenState extends State<CustomerScreen> {
       return '$y/$m/$d - $h:$min';
     } catch (_) {
       return iso.length >= 16 ? iso.substring(0, 16) : iso;
+    }
+  }
+
+  // ============ إرسال تذكير واتساب ============
+  Future<void> _sendWhatsAppReminder() async {
+    if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد رقم هاتف لهذا العميل'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await WhatsAppService.sendReminder(
+        phone: widget.customer.phone,
+        customerName: widget.customer.name,
+        balance: _balance,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -334,8 +365,99 @@ class _CustomerScreenState extends State<CustomerScreen> {
     await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
   }
 
-  // ============ PDF ============
+  // ============ PDF مع فلترة التاريخ ============
   Future<void> _exportPdf() async {
+    // 1. عرض نافذة اختيار التاريخ
+    DateTime? fromDate;
+    DateTime? toDate;
+
+    final result = await showDialog<Map<String, DateTime?>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateDialog) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Text('فلترة كشف الحساب'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('اختر الفترة (اتركها فارغة للكل)',
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+                const SizedBox(height: 16),
+                // من تاريخ
+                ListTile(
+                  leading: const Icon(Icons.calendar_today),
+                  title: Text(
+                    fromDate == null
+                        ? 'من تاريخ: الكل'
+                        : 'من: ${fromDate!.year}/${fromDate!.month}/${fromDate!.day}',
+                  ),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: fromDate ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) {
+                      setStateDialog(() => fromDate = picked);
+                    }
+                  },
+                ),
+                // إلى تاريخ
+                ListTile(
+                  leading: const Icon(Icons.event),
+                  title: Text(
+                    toDate == null
+                        ? 'إلى تاريخ: الكل'
+                        : 'إلى: ${toDate!.year}/${toDate!.month}/${toDate!.day}',
+                  ),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: toDate ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) {
+                      setStateDialog(() => toDate = picked);
+                    }
+                  },
+                ),
+                if (fromDate != null || toDate != null)
+                  TextButton.icon(
+                    icon: const Icon(Icons.clear, size: 16),
+                    label: const Text('مسح الفلتر'),
+                    onPressed: () {
+                      setStateDialog(() {
+                        fromDate = null;
+                        toDate = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, {
+                  'from': fromDate,
+                  'to': toDate,
+                }),
+                child: const Text('توليد PDF'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return; // المستخدم ألغى
+
+    // 2. توليد PDF
     try {
       showDialog(
         context: context,
@@ -343,7 +465,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
         builder: (_) => const Center(child: CircularProgressIndicator()),
       );
 
-      final file = await PdfService.generateStatement(widget.customer);
+      final file = await PdfService.generateStatement(
+        widget.customer,
+        fromDate: result['from'],
+        toDate: result['to'],
+      );
 
       if (!mounted) return;
       Navigator.pop(context);
@@ -589,6 +715,13 @@ class _CustomerScreenState extends State<CustomerScreen> {
               icon: const Icon(Icons.picture_as_pdf),
               tooltip: 'كشف حساب PDF',
               onPressed: _exportPdf,
+            ),
+
+            // تذكير واتساب (جديد)
+            IconButton(
+              icon: const Icon(Icons.message, color: Colors.green),
+              tooltip: 'تذكير عبر واتساب',
+              onPressed: _sendWhatsAppReminder,
             ),
 
             // قائمة
