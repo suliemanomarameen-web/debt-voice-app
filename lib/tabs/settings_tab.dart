@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
@@ -32,6 +33,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _autoEnabled = false;
   String _autoFreq = 'daily';
   bool _gdriveSignedIn = false;
+  bool _autoWhatsApp = false; // <-- جديد
 
   @override
   void initState() {
@@ -40,6 +42,16 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadVersion();
     _loadAutoBackup();
     _checkGDrive();
+    _loadAutoWhatsApp(); // <-- جديد
+  }
+
+  // ========== تحميل إعداد الواتساب التلقائي ==========
+  Future<void> _loadAutoWhatsApp() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
+    });
   }
 
   Future<void> _checkGDrive() async {
@@ -265,7 +277,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ⚡ الإصلاح: FileType.any بدلاً من FileType.custom
   Future<void> _pickAndRestore() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -479,6 +490,30 @@ class _SettingsTabState extends State<SettingsTab> {
               icon: const Icon(Icons.security),
               label: const Text('تفعيل كل الأذونات'),
             ),
+          ),
+
+          // ========== الإشعارات والواتساب ==========  ← قسم جديد
+          const _SectionHeader('الإشعارات والواتساب'),
+          SwitchListTile(
+            secondary: const Icon(Icons.message, color: Colors.green),
+            title: const Text('إرسال رسالة واتساب تلقائياً'),
+            subtitle: const Text(
+                'بعد كل عملية جديدة، يفتح واتساب مع رسالة جاهزة للعميل'),
+            value: _autoWhatsApp,
+            onChanged: (v) async {
+              setState(() => _autoWhatsApp = v);
+              final sp = await SharedPreferences.getInstance();
+              await sp.setBool('auto_whatsapp', v);
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(v
+                      ? 'سيتم فتح واتساب بعد كل عملية'
+                      : 'تم إيقاف الإرسال التلقائي'),
+                  backgroundColor: v ? Colors.green : Colors.grey,
+                ),
+              );
+            },
           ),
 
           // ========== الحماية ==========
