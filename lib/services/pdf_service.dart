@@ -218,10 +218,10 @@ class PdfService {
                 width: 0.5,
               ),
               columnWidths: {
-                0: const pw.FixedColumnWidth(65),   // التاريخ
-                1: const pw.FixedColumnWidth(50),   // النوع
-                2: const pw.FixedColumnWidth(65),   // المبلغ
-                3: const pw.FixedColumnWidth(170),  // الأصناف (ثابت وأوسع)
+                0: const pw.FixedColumnWidth(60),   // التاريخ
+                1: const pw.FixedColumnWidth(45),   // النوع
+                2: const pw.FixedColumnWidth(60),   // المبلغ
+                3: const pw.FixedColumnWidth(200),  // الأصناف (أوسع)
               },
               children: [
                 pw.TableRow(
@@ -309,12 +309,15 @@ class PdfService {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(6),
       child: pw.Center(
-        child: pw.Text(
-          text,
-          style: pw.TextStyle(
-            fontWeight: pw.FontWeight.bold,
-            color: PdfColors.white,
-            fontSize: 11,
+        child: pw.Directionality(
+          textDirection: pw.TextDirection.rtl,
+          child: pw.Text(
+            '\u200F$text\u200F',
+            style: pw.TextStyle(
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.white,
+              fontSize: 11,
+            ),
           ),
         ),
       ),
@@ -322,14 +325,18 @@ class PdfService {
   }
 
   static pw.Widget _dataCell(String text) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+    // إضافة علامات RLM قبل وبعد النص لضمان التشكيل الصحيح للحروف العربية
+    // \u200F = Right-to-Left Mark
+    final String safeText = text.isEmpty ? '-' : '\u200F$text\u200F';
+
+    return pw.Container(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      alignment: pw.Alignment.centerRight,
       child: pw.Directionality(
         textDirection: pw.TextDirection.rtl,
         child: pw.Text(
-          text,
+          safeText,
           style: const pw.TextStyle(fontSize: 10),
-          textAlign: pw.TextAlign.right,
         ),
       ),
     );
