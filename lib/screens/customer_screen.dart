@@ -1,12 +1,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
 import '../services/pdf_service.dart';
-import '../services/whatsapp_service.dart'; // <-- إضافة جديدة
+import '../services/whatsapp_service.dart';
 import 'add_account_screen.dart';
 import 'share_receipt_screen.dart';
 
@@ -192,6 +193,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
               onPressed: () async {
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
+
+                // حفظ العملية
                 await db.insertTransaction(Transaction(
                   customerId: widget.customer.id!,
                   amount: amt,
@@ -201,7 +204,36 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       : itemsCtrl.text.trim(),
                   createdAt: DateTime.now().toIso8601String(),
                 ));
+
+                // حساب الرصيد الجديد
+                final newBalance =
+                    await db.customerBalance(widget.customer.id!);
+
                 if (mounted) Navigator.pop(context);
+
+                // إعادة تحميل البيانات
+                await _load();
+
+                // إرسال رسالة واتساب تلقائياً (إذا كانت مفعلة)
+                final sp = await SharedPreferences.getInstance();
+                final autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
+
+                if (autoWhatsApp &&
+                    widget.customer.phone != null &&
+                    widget.customer.phone!.isNotEmpty) {
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  try {
+                    await WhatsAppService.sendTransactionNotification(
+                      phone: widget.customer.phone,
+                      customerName: widget.customer.name,
+                      type: type,
+                      amount: amt,
+                      newBalance: newBalance,
+                    );
+                  } catch (e) {
+                    debugPrint('WhatsApp error: $e');
+                  }
+                }
               },
               child: const Text('حفظ'),
             ),
@@ -367,7 +399,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ PDF مع فلترة التاريخ ============
   Future<void> _exportPdf() async {
-    // 1. عرض نافذة اختيار التاريخ
     DateTime? fromDate;
     DateTime? toDate;
 
@@ -384,7 +415,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 const Text('اختر الفترة (اتركها فارغة للكل)',
                     style: TextStyle(fontSize: 13, color: Colors.grey)),
                 const SizedBox(height: 16),
-                // من تاريخ
                 ListTile(
                   leading: const Icon(Icons.calendar_today),
                   title: Text(
@@ -404,7 +434,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     }
                   },
                 ),
-                // إلى تاريخ
                 ListTile(
                   leading: const Icon(Icons.event),
                   title: Text(
@@ -455,9 +484,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
       ),
     );
 
-    if (result == null) return; // المستخدم ألغى
+    if (result == null) return;
 
-    // 2. توليد PDF
     try {
       showDialog(
         context: context,
@@ -683,7 +711,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         appBar: AppBar(
           title: Text(widget.customer.name),
           actions: [
-            // فلتر
             IconButton(
               icon: Icon(
                 _dateFilter.type == DateFilterType.all
@@ -696,8 +723,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
               tooltip: 'فلترة: ${_dateFilter.label}',
               onPressed: _showDateFilter,
             ),
-
-            // مشاركة كصورة
             IconButton(
               icon: const Icon(Icons.image),
               tooltip: 'مشاركة كصورة',
@@ -709,22 +734,16 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
               ),
             ),
-
-            // PDF
             IconButton(
               icon: const Icon(Icons.picture_as_pdf),
               tooltip: 'كشف حساب PDF',
               onPressed: _exportPdf,
             ),
-
-            // تذكير واتساب (جديد)
             IconButton(
               icon: const Icon(Icons.message, color: Colors.green),
               tooltip: 'تذكير عبر واتساب',
               onPressed: _sendWhatsAppReminder,
             ),
-
-            // قائمة
             PopupMenuButton<String>(
               onSelected: (v) {
                 switch (v) {
