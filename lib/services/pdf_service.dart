@@ -11,7 +11,6 @@ import '../db/database_helper.dart';
 
 class PdfService {
   /// إنشاء كشف حساب PDF
-  /// [fromDate] و [toDate] اختياريان لفلترة المعاملات
   static Future<File> generateStatement(
     Customer customer, {
     DateTime? fromDate,
@@ -20,7 +19,7 @@ class PdfService {
     final db = DatabaseHelper.instance;
     List<Transaction> tx = await db.customerTransactions(customer.id!);
 
-    // فلترة حسب التاريخ إذا تم تحديده
+    // فلترة حسب التاريخ
     if (fromDate != null) {
       tx = tx.where((t) {
         final d = DateTime.parse(t.createdAt);
@@ -34,7 +33,7 @@ class PdfService {
       }).toList();
     }
 
-    // ========== تحميل الخطوط العربية ==========
+    // تحميل الخطوط العربية
     final fontRegular = pw.Font.ttf(
       await rootBundle.load('assets/fonts/Cairo-Regular.ttf'),
     );
@@ -200,44 +199,55 @@ class PdfService {
               ),
             )
           else
-            pw.Table.fromTextArray(
-              headers: ['التاريخ', 'النوع', 'المبلغ', 'الأصناف'],
-              data: tx.map((t) {
-                final isDebt = t.type == 'debt';
-                final isReturn = t.items.startsWith('مرتجع');
-                String typeLabel;
-                if (isReturn) {
-                  typeLabel = 'مرتجع';
-                } else if (isDebt) {
-                  typeLabel = 'دين';
-                } else {
-                  typeLabel = 'سداد';
-                }
-
-                return [
-                  _formatDateShort(t.createdAt),
-                  typeLabel,
-                  '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                  t.items.isEmpty
-                      ? '-'
-                      : t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), ''),
-                ];
-              }).toList(),
-              headerStyle: pw.TextStyle(
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColors.white,
-                fontSize: 11,
-              ),
-              headerDecoration: const pw.BoxDecoration(
-                color: PdfColors.green700,
-              ),
-              cellAlignment: pw.Alignment.centerRight,
-              cellStyle: const pw.TextStyle(fontSize: 10),
-              cellPadding: const pw.EdgeInsets.all(6),
+            pw.Table(
               border: pw.TableBorder.all(
                 color: PdfColors.grey300,
                 width: 0.5,
               ),
+              columnWidths: {
+                0: const pw.FixedColumnWidth(75),   // التاريخ
+                1: const pw.FixedColumnWidth(55),   // النوع
+                2: const pw.FixedColumnWidth(75),   // المبلغ
+                3: const pw.FlexColumnWidth(3),     // الأصناف
+              },
+              children: [
+                pw.TableRow(
+                  decoration: const pw.BoxDecoration(
+                    color: PdfColors.green700,
+                  ),
+                  children: [
+                    _headerCell('التاريخ'),
+                    _headerCell('النوع'),
+                    _headerCell('المبلغ'),
+                    _headerCell('الأصناف'),
+                  ],
+                ),
+                ...tx.map((t) {
+                  final isDebt = t.type == 'debt';
+                  final isReturn = t.items.startsWith('مرتجع');
+                  String typeLabel;
+                  if (isReturn) {
+                    typeLabel = 'مرتجع';
+                  } else if (isDebt) {
+                    typeLabel = 'دين';
+                  } else {
+                    typeLabel = 'سداد';
+                  }
+
+                  final items = t.items.isEmpty
+                      ? '-'
+                      : t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '');
+
+                  return pw.TableRow(
+                    children: [
+                      _dataCell(_formatDateShort(t.createdAt)),
+                      _dataCell(typeLabel),
+                      _dataCell('${t.amount.toStringAsFixed(0)} ${t.currency}'),
+                      _dataCell(items),
+                    ],
+                  );
+                }).toList(),
+              ],
             ),
 
           pw.SizedBox(height: 24),
@@ -275,7 +285,6 @@ class PdfService {
     return file;
   }
 
-  /// مشاركة PDF
   static Future<void> share(File file, String customerName) async {
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/pdf')],
@@ -285,6 +294,35 @@ class PdfService {
   }
 
   // ============ أدوات مساعدة ============
+  static pw.Widget _headerCell(String text) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(6),
+      child: pw.Center(
+        child: pw.Text(
+          text,
+          style: pw.TextStyle(
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.white,
+            fontSize: 11,
+          ),
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _dataCell(String text) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(6),
+      child: pw.Align(
+        alignment: pw.Alignment.centerRight,
+        child: pw.Text(
+          text,
+          style: const pw.TextStyle(fontSize: 10),
+        ),
+      ),
+    );
+  }
+
   static pw.Widget _row(String label, String value) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 3),
