@@ -77,6 +77,8 @@ flutter:
   assets:
     - assets/fonts/Cairo-Regular.ttf
     - assets/fonts/Cairo-Bold.ttf
+    - assets/fonts/Tajawal-Regular.ttf
+    - assets/fonts/Tajawal-Bold.ttf
 
   # ============ الخطوط (Fonts) ============
   fonts:
@@ -84,4 +86,10 @@ flutter:
       fonts:
         - asset: assets/fonts/Cairo-Regular.ttf
         - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700
+
+    - family: Tajawal
+      fonts:
+        - asset: assets/fonts/Tajawal-Regular.ttf
+        - asset: assets/fonts/Tajawal-Bold.ttf
           weight: 700
