@@ -11,35 +11,51 @@ import '../db/database_helper.dart';
 
 class PdfService {
   /// إنشاء كشف حساب PDF
+  /// [fontName] اسم الخط: 'Tajawal' أو 'Cairo'
   static Future<File> generateStatement(
     Customer customer, {
     DateTime? fromDate,
     DateTime? toDate,
+    String fontName = 'Tajawal',
   }) async {
     final db = DatabaseHelper.instance;
     List<Transaction> tx = await db.customerTransactions(customer.id!);
 
-    // فلترة حسب التاريخ
+    // ========== فلترة حسب التاريخ (الإصلاح المهم) ==========
     if (fromDate != null) {
+      // ضبط الوقت إلى بداية اليوم (00:00:00)
+      final fromStart = DateTime(fromDate.year, fromDate.month, fromDate.day);
       tx = tx.where((t) {
         final d = DateTime.parse(t.createdAt);
-        return d.isAfter(fromDate.subtract(const Duration(days: 1)));
+        return !d.isBefore(fromStart);
       }).toList();
     }
     if (toDate != null) {
+      // ضبط الوقت إلى نهاية اليوم (23:59:59)
+      final toEnd = DateTime(
+        toDate.year,
+        toDate.month,
+        toDate.day,
+        23,
+        59,
+        59,
+      );
       tx = tx.where((t) {
         final d = DateTime.parse(t.createdAt);
-        return d.isBefore(toDate.add(const Duration(days: 1)));
+        return !d.isAfter(toEnd);
       }).toList();
     }
 
-    // تحميل الخطوط العربية
-    final fontRegular = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Cairo-Regular.ttf'),
-    );
-    final fontBold = pw.Font.ttf(
-      await rootBundle.load('assets/fonts/Cairo-Bold.ttf'),
-    );
+    // ========== تحميل الخطوط ==========
+    final fontRegularPath = fontName == 'Cairo'
+        ? 'assets/fonts/Cairo-Regular.ttf'
+        : 'assets/fonts/Tajawal-Regular.ttf';
+    final fontBoldPath = fontName == 'Cairo'
+        ? 'assets/fonts/Cairo-Bold.ttf'
+        : 'assets/fonts/Tajawal-Bold.ttf';
+
+    final fontRegular = pw.Font.ttf(await rootBundle.load(fontRegularPath));
+    final fontBold = pw.Font.ttf(await rootBundle.load(fontBoldPath));
 
     final doc = pw.Document(
       theme: pw.ThemeData.withFont(
@@ -48,7 +64,6 @@ class PdfService {
       ),
     );
 
-    // حساب الإجماليات
     double totalDebt = 0;
     double totalPaid = 0;
     for (final t in tx) {
@@ -194,7 +209,7 @@ class PdfService {
               padding: const pw.EdgeInsets.all(20),
               alignment: pw.Alignment.center,
               child: pw.Text(
-                'لا توجد معاملات',
+                'لا توجد معاملات في هذه الفترة',
                 style: const pw.TextStyle(color: PdfColors.grey600),
               ),
             )
@@ -205,10 +220,10 @@ class PdfService {
                 width: 0.5,
               ),
               columnWidths: {
-                0: const pw.FixedColumnWidth(75),   // التاريخ
+                0: const pw.FixedColumnWidth(70),   // التاريخ
                 1: const pw.FixedColumnWidth(55),   // النوع
-                2: const pw.FixedColumnWidth(75),   // المبلغ
-                3: const pw.FlexColumnWidth(3),     // الأصناف
+                2: const pw.FixedColumnWidth(70),   // المبلغ
+                3: const pw.FlexColumnWidth(4),     // الأصناف
               },
               children: [
                 pw.TableRow(
@@ -252,7 +267,6 @@ class PdfService {
 
           pw.SizedBox(height: 24),
 
-          // ========== Footer ==========
           pw.Container(
             padding: const pw.EdgeInsets.all(10),
             decoration: pw.BoxDecoration(
@@ -273,7 +287,6 @@ class PdfService {
       ),
     );
 
-    // ========== حفظ الملف ==========
     final dir = await getApplicationDocumentsDirectory();
     final safeName =
         customer.name.replaceAll(RegExp(r'[^\w\u0600-\u06FF]'), '_');
@@ -293,7 +306,6 @@ class PdfService {
     );
   }
 
-  // ============ أدوات مساعدة ============
   static pw.Widget _headerCell(String text) {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(6),
@@ -317,7 +329,7 @@ class PdfService {
         alignment: pw.Alignment.centerRight,
         child: pw.Text(
           text,
-          style: const pw.TextStyle(fontSize: 10),
+          style: const pw.TextStyle(fontSize: 11),
         ),
       ),
     );
