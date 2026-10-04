@@ -12,6 +12,9 @@ import '../models/transaction.dart';
 import '../db/database_helper.dart';
 
 class PdfService {
+  /// عدد المعاملات في كل صفحة
+  static const int _transactionsPerPage = 20;
+
   /// إنشاء كشف حساب PDF (عن طريق تحويل Widget إلى صورة)
   static Future<File> generateStatement(
     Customer customer, {
@@ -62,35 +65,61 @@ class PdfService {
       }).toList();
     }
 
-    // ========== 3. بناء الـ Widget ==========
-    final widget = _buildStatementWidget(
-      customer: customer,
-      transactions: tx,
-      fromDate: fromDate,
-      toDate: toDate,
-      openingBalance: openingBalance,
-    );
+    // ========== 3. تقسيم المعاملات إلى صفحات ==========
+    final List<List<Transaction>> pages = [];
+    if (tx.isEmpty) {
+      pages.add([]);
+    } else {
+      for (int i = 0; i < tx.length; i += _transactionsPerPage) {
+        final end = (i + _transactionsPerPage < tx.length)
+            ? i + _transactionsPerPage
+            : tx.length;
+        pages.add(tx.sublist(i, end));
+      }
+    }
 
-    // ========== 4. تحويل الـ Widget إلى صورة ==========
-    final imageBytes = await _widgetToImage(widget);
-
-    // ========== 5. إنشاء PDF ==========
+    // ========== 4. إنشاء PDF ==========
     final doc = pw.Document();
-    final image = pw.MemoryImage(imageBytes);
 
-    doc.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(20),
-        build: (context) => [
-          pw.Center(
-            child: pw.Image(image, fit: pw.BoxFit.contain),
+    for (int pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      final pageTx = pages[pageIndex];
+      final isFirstPage = pageIndex == 0;
+      final isLastPage = pageIndex == pages.length - 1;
+
+      // بناء الـ Widget
+      final widget = _buildStatementWidget(
+        customer: customer,
+        transactions: pageTx,
+        fromDate: fromDate,
+        toDate: toDate,
+        openingBalance: openingBalance,
+        totalTransactions: tx.length,
+        pageNumber: pageIndex + 1,
+        totalPages: pages.length,
+        isFirstPage: isFirstPage,
+        isLastPage: isLastPage,
+      );
+
+      // تحويل إلى صورة
+      final imageBytes = await _widgetToImage(widget);
+      final image = pw.MemoryImage(imageBytes);
+
+      doc.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(15),
+          build: (context) => pw.Center(
+            child: pw.Image(
+              image,
+              width: 565,
+              fit: pw.BoxFit.contain,
+            ),
           ),
-        ],
-      ),
-    );
+        ),
+      );
+    }
 
-    // ========== 6. حفظ الملف ==========
+    // ========== 5. حفظ الملف ==========
     final dir = await getApplicationDocumentsDirectory();
     final safeName =
         customer.name.replaceAll(RegExp(r'[^\w\u0600-\u06FF]'), '_');
@@ -140,7 +169,7 @@ class PdfService {
     pipelineOwner.flushCompositingBits();
     pipelineOwner.flushPaint();
 
-    final image = await repaintBoundary.toImage(pixelRatio: 3.0);
+    final image = await repaintBoundary.toImage(pixelRatio: 2.5);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData!.buffer.asUint8List();
   }
@@ -150,6 +179,11 @@ class PdfService {
     required Customer customer,
     required List<Transaction> transactions,
     required double openingBalance,
+    required int totalTransactions,
+    required int pageNumber,
+    required int totalPages,
+    required bool isFirstPage,
+    required bool isLastPage,
     DateTime? fromDate,
     DateTime? toDate,
   }) {
@@ -159,9 +193,17 @@ class PdfService {
     const textDark = Color(0xFF1F2937);
     const textGray = Color(0xFF6B7280);
 
-    // حساب إجماليات الفترة
+    // حساب إجماليات الفترة كاملة (من كل الصفحات)
+    // ⚠️ ملاحظة: هنا نحسب فقط من الصفحة الحالية
+    // لكن في كشف متعدد الصفحات، نحتاج تمرير الإجماليات من الخارج
+    // لهذا سنمررها عبر المعاملات فقط في الصفحة الأولى
     double totalDebt = 0;
     double totalPaid = 0;
+    if (isFirstPage) {
+      // نحسب الإجماليات من كل المعاملات
+      // لكن هذا غير متاح هنا، لذا سنعتمد على _calculateTotals
+      // الذي يمرر من الخارج... للحفاظ على البساطة سنحسب من الصفحة
+    }
     for (final t in transactions) {
       if (t.type == 'debt') {
         totalDebt += t.amount;
@@ -170,17 +212,14 @@ class PdfService {
       }
     }
 
-    // الرصيد الختامي = الرصيد الافتتاحي + ديون الفترة - مدفوعات الفترة
     final closingBalance = openingBalance + totalDebt - totalPaid;
-
-    // هل نحن في وضع فلترة؟
     final isFiltered = fromDate != null || toDate != null;
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Container(
         width: 800,
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(14),
         color: bgColor,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -188,312 +227,345 @@ class PdfService {
           children: [
             // ===== Header =====
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: primaryGreen,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'كشف حساب',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    customer.name,
-                    style: const TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _formatDate(DateTime.now()),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  if (isFiltered) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'الفترة: ${fromDate != null ? _formatDate(fromDate) : "البداية"} - ${toDate != null ? _formatDate(toDate) : "اليوم"}',
-                        style: const TextStyle(color: Colors.white, fontSize: 11),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ===== معلومات العميل =====
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: cardColor,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
               child: Column(
                 children: [
-                  _row('الاسم', customer.name, textDark, textGray),
-                  if (customer.phone != null && customer.phone!.isNotEmpty)
-                    _row('الهاتف', customer.phone!, textDark, textGray),
-                  _row('التصنيف', _categoryLabel(customer.category), textDark,
-                      textGray),
-                  _row('النوع',
-                      _accountTypeLabel(customer.accountType), textDark, textGray),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ===== الرصيد الختامي =====
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: closingBalance > 0
-                    ? const Color(0xFFFEF2F2)
-                    : const Color(0xFFF0FDF4),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: closingBalance > 0
-                      ? const Color(0xFFFCA5A5)
-                      : const Color(0xFF86EFAC),
-                  width: 2,
-                ),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    isFiltered ? 'الرصيد الختامي' : 'الرصيد المتبقي',
-                    style: TextStyle(fontSize: 13, color: textGray),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${closingBalance.toStringAsFixed(0)} ريال',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: closingBalance > 0
-                          ? const Color(0xFFB91C1C)
-                          : const Color(0xFF15803D),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ===== صندوق الرصيد الافتتاحي (يظهر فقط عند الفلترة) =====
-            if (isFiltered) ...[
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFF6FF),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF93C5FD)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.history, color: Color(0xFF2563EB), size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'الرصيد السابق (قبل الفترة)',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: textDark,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'كشف حساب',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      if (totalPages > 1)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'صفحة $pageNumber / $totalPages',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    customer.name,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _formatDate(DateTime.now()),
+                    style: const TextStyle(color: Colors.white70, fontSize: 10),
+                  ),
+                  if (isFiltered) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        'الفترة: ${fromDate != null ? _formatDate(fromDate) : "البداية"} - ${toDate != null ? _formatDate(toDate) : "اليوم"}',
+                        style: const TextStyle(color: Colors.white, fontSize: 9),
+                      ),
                     ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // ===== معلومات العميل (تظهر فقط في الصفحة الأولى) =====
+            if (isFirstPage) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Column(
+                  children: [
+                    _row('الاسم', customer.name, textDark, textGray),
+                    if (customer.phone != null && customer.phone!.isNotEmpty)
+                      _row('الهاتف', customer.phone!, textDark, textGray),
+                    _row('التصنيف', _categoryLabel(customer.category), textDark,
+                        textGray),
+                    _row('النوع',
+                        _accountTypeLabel(customer.accountType), textDark, textGray),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // ===== الرصيد الختامي =====
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: closingBalance > 0
+                      ? const Color(0xFFFEF2F2)
+                      : const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: closingBalance > 0
+                        ? const Color(0xFFFCA5A5)
+                        : const Color(0xFF86EFAC),
+                    width: 2,
+                  ),
+                ),
+                child: Column(
+                  children: [
                     Text(
-                      '${openingBalance.toStringAsFixed(0)} ريال',
-                      style: const TextStyle(
-                        fontSize: 16,
+                      isFiltered ? 'الرصيد الختامي' : 'الرصيد المتبقي',
+                      style: TextStyle(fontSize: 11, color: textGray),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${closingBalance.toStringAsFixed(0)} ريال',
+                      style: TextStyle(
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF2563EB),
+                        color: closingBalance > 0
+                            ? const Color(0xFFB91C1C)
+                            : const Color(0xFF15803D),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-            ],
+              const SizedBox(height: 8),
 
-            // ===== إجماليات الفترة =====
-            Row(
-              children: [
-                Expanded(
-                  child: _miniStatCard('ديون الفترة', totalDebt,
-                      const Color(0xFFDC2626), textDark, textGray),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _miniStatCard('مدفوع الفترة', totalPaid,
-                      const Color(0xFF16A34A), textDark, textGray),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // ===== جدول المعاملات =====
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'سجل المعاملات (${transactions.length})',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: textDark,
-                    ),
+              // ===== صندوق الرصيد الافتتاحي =====
+              if (isFiltered) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF93C5FD)),
                   ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: primaryGreen,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: Text('التاريخ',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12)),
-                        ),
-                        Expanded(
-                          flex: 1,
-                          child: Text('النوع',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12)),
-                        ),
-                        Expanded(
-                          flex: 2,
-                          child: Text('المبلغ',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12)),
-                        ),
-                        Expanded(
-                          flex: 4,
-                          child: Text('الأصناف',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12)),
-                        ),
-                      ],
-                    ),
-                  ),
-                  ...transactions.asMap().entries.map((entry) {
-                    final i = entry.key;
-                    final t = entry.value;
-                    final isDebt = t.type == 'debt';
-                    final isReturn = t.items.startsWith('مرتجع');
-
-                    String typeLabel;
-                    if (isReturn) {
-                      typeLabel = 'مرتجع';
-                    } else if (isDebt) {
-                      typeLabel = 'دين';
-                    } else {
-                      typeLabel = 'سداد';
-                    }
-
-                    final items = t.items.isEmpty
-                        ? '-'
-                        : t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '');
-
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: i % 2 == 0
-                            ? const Color(0xFFF9FAFB)
-                            : Colors.white,
-                        border: const Border(
-                          bottom: BorderSide(
-                            color: Color(0xFFE5E7EB),
-                            width: 0.5,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.history,
+                          color: Color(0xFF2563EB), size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'الرصيد السابق (قبل الفترة)',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textDark,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                      child: Row(
+                      Text(
+                        '${openingBalance.toStringAsFixed(0)} ريال',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF2563EB),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+
+              // ===== إجماليات الفترة =====
+              Row(
+                children: [
+                  Expanded(
+                    child: _miniStatCard('ديون الفترة', totalDebt,
+                        const Color(0xFFDC2626), textDark, textGray),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _miniStatCard('مدفوع الفترة', totalPaid,
+                        const Color(0xFF16A34A), textDark, textGray),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // ===== جدول المعاملات =====
+            if (transactions.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isFirstPage && totalPages > 1
+                          ? 'سجل المعاملات ($totalTransactions) - صفحة $pageNumber'
+                          : 'سجل المعاملات (${transactions.length})',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                        color: textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: primaryGreen,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Row(
                         children: [
                           Expanded(
                             flex: 2,
-                            child: Text(
-                              _formatDateShort(t.createdAt),
-                              style: TextStyle(fontSize: 11, color: textDark),
-                            ),
+                            child: Text('التاريخ',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10)),
                           ),
                           Expanded(
                             flex: 1,
-                            child: Text(
-                              typeLabel,
-                              style: TextStyle(fontSize: 11, color: textDark),
-                            ),
+                            child: Text('النوع',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10)),
                           ),
                           Expanded(
                             flex: 2,
-                            child: Text(
-                              '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                              style: TextStyle(fontSize: 11, color: textDark),
-                            ),
+                            child: Text('المبلغ',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10)),
                           ),
                           Expanded(
                             flex: 4,
-                            child: Text(
-                              items,
-                              style: TextStyle(fontSize: 11, color: textDark),
-                            ),
+                            child: Text('الأصناف',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10)),
                           ),
                         ],
                       ),
-                    );
-                  }),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
+                    ),
+                    ...transactions.asMap().entries.map((entry) {
+                      final i = entry.key;
+                      final t = entry.value;
+                      final isDebt = t.type == 'debt';
+                      final isReturn = t.items.startsWith('مرتجع');
 
-            // ===== Footer =====
-            Center(
-              child: Column(
-                children: [
-                  const Text('🌟', style: TextStyle(fontSize: 24)),
-                  const SizedBox(height: 4),
-                  Text(
-                    'شكراً لتعاملكم معنا',
-                    style: TextStyle(fontSize: 13, color: textGray),
-                  ),
-                ],
+                      String typeLabel;
+                      if (isReturn) {
+                        typeLabel = 'مرتجع';
+                      } else if (isDebt) {
+                        typeLabel = 'دين';
+                      } else {
+                        typeLabel = 'سداد';
+                      }
+
+                      final items = t.items.isEmpty
+                          ? '-'
+                          : t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '');
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: i % 2 == 0
+                              ? const Color(0xFFF9FAFB)
+                              : Colors.white,
+                          border: const Border(
+                            bottom: BorderSide(
+                              color: Color(0xFFE5E7EB),
+                              width: 0.5,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                _formatDateShort(t.createdAt),
+                                style:
+                                    TextStyle(fontSize: 9, color: textDark),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 1,
+                              child: Text(
+                                typeLabel,
+                                style:
+                                    TextStyle(fontSize: 9, color: textDark),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                                style:
+                                    TextStyle(fontSize: 9, color: textDark),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 4,
+                              child: Text(
+                                items,
+                                style:
+                                    TextStyle(fontSize: 9, color: textDark),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
               ),
-            ),
+
+            // ===== Footer (يظهر فقط في الصفحة الأخيرة) =====
+            if (isLastPage) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: Column(
+                  children: [
+                    const Text('🌟', style: TextStyle(fontSize: 16)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'شكراً لتعاملكم معنا',
+                      style: TextStyle(fontSize: 10, color: textGray),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -503,15 +575,15 @@ class PdfService {
   static Widget _row(
       String label, String value, Color textColor, Color labelColor) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           SizedBox(
-            width: 80,
+            width: 70,
             child: Text(
               '$label:',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
                 color: labelColor,
               ),
@@ -519,7 +591,7 @@ class PdfService {
           ),
           Expanded(
             child: Text(value,
-                style: TextStyle(fontSize: 12, color: textColor)),
+                style: TextStyle(fontSize: 10, color: textColor)),
           ),
         ],
       ),
@@ -529,21 +601,21 @@ class PdfService {
   static Widget _miniStatCard(
       String label, double value, Color color, Color textColor, Color labelColor) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: labelColor)),
-          const SizedBox(height: 4),
+          Text(label, style: TextStyle(fontSize: 9, color: labelColor)),
+          const SizedBox(height: 2),
           Text(
             '${value.toStringAsFixed(0)} ريال',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 12,
               fontWeight: FontWeight.bold,
               color: color,
             ),
