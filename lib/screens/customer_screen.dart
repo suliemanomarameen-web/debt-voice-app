@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
 import '../services/pdf_service.dart';
@@ -195,8 +196,17 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
+                // 🔢 توليد الرمز
+                String? code;
+                try {
+                  code = await CodeService.generateCode(type);
+                } catch (_) {
+                  code = null;
+                }
+
                 await db.insertTransaction(Transaction(
                   customerId: widget.customer.id!,
+                  code: code,
                   amount: amt,
                   type: type == 'return' ? 'payment' : type,
                   items: type == 'return'
@@ -211,6 +221,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 if (mounted) Navigator.pop(context);
                 await _load();
 
+                // إشعار واتساب تلقائي (إذا مفعّل)
                 final sp = await SharedPreferences.getInstance();
                 final autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
 
@@ -263,6 +274,32 @@ class _CustomerScreenState extends State<CustomerScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (t.code != null && t.code!.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.qr_code,
+                          size: 16, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      Text(
+                        'الرمز: ${t.code}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               TextField(
                 controller: amountCtrl,
                 keyboardType: TextInputType.number,
@@ -287,6 +324,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 await db.updateTransaction(Transaction(
                   id: t.id,
                   customerId: t.customerId,
+                  code: t.code,
                   amount: amt,
                   currency: t.currency,
                   type: t.type,
@@ -322,6 +360,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
           ),
           content: Text(
             'سيتم حذف هذه العملية نهائياً:\n\n'
+            '${t.code != null ? 'الرمز: ${t.code}\n' : ''}'
             'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
             'المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}\n'
             '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}'
@@ -356,7 +395,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ قائمة العمليات (مع أيقونات واتساب/مشاركة/طباعة) ============
+  // ============ قائمة العمليات ============
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
@@ -366,11 +405,37 @@ class _CustomerScreenState extends State<CustomerScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // رأس القائمة
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    if (t.code != null && t.code!.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.qr_code,
+                                size: 14, color: Colors.blue),
+                            const SizedBox(width: 6),
+                            Text(
+                              t.code!,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       '${t.amount.toStringAsFixed(0)} ${t.currency}',
                       style: const TextStyle(
@@ -440,7 +505,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
 السلام عليكم ${widget.customer.name}،
 تم تسجيل العملية التالية:
 
-النوع: $typeLabel
+${t.code != null ? 'الرمز: ${t.code}\n' : ''}النوع: $typeLabel
 المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}
 ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_formatDateTime(t.createdAt)}
 
@@ -458,7 +523,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 title: const Text('طباعة / حفظ PDF للعملية'),
                 onTap: () async {
                   Navigator.pop(context);
-                  // إنشاء PDF للعملية الواحدة
                   try {
                     final file = await PdfService.generateStatement(
                       widget.customer,
@@ -478,7 +542,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
               const Divider(height: 1),
 
-              // تعديل
               ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('تعديل'),
@@ -488,7 +551,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 },
               ),
 
-              // حذف
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('حذف', style: TextStyle(color: Colors.red)),
@@ -579,7 +641,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       },
                     ),
                   const Divider(height: 24),
-                  // اختيار الخط
                   const Text('نوع الخط:',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
@@ -988,43 +1049,79 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         final isDebt = t.type == 'debt';
                         final isReturn = t.items.startsWith('مرتجع');
 
-                        return ListTile(
-                          leading: Icon(
-                            isReturn
-                                ? Icons.keyboard_return
-                                : (isDebt
-                                    ? Icons.arrow_upward
-                                    : Icons.arrow_downward),
-                            color: isReturn
-                                ? Colors.orange
-                                : (isDebt
-                                    ? (isDark
-                                        ? Colors.red.shade300
-                                        : theme.colorScheme.error)
-                                    : (isDark
-                                        ? Colors.green.shade300
-                                        : theme.colorScheme.primary)),
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          child: ListTile(
+                            leading: Icon(
+                              isReturn
+                                  ? Icons.keyboard_return
+                                  : (isDebt
+                                      ? Icons.arrow_upward
+                                      : Icons.arrow_downward),
+                              color: isReturn
+                                  ? Colors.orange
+                                  : (isDebt
+                                      ? (isDark
+                                          ? Colors.red.shade300
+                                          : theme.colorScheme.error)
+                                      : (isDark
+                                          ? Colors.green.shade300
+                                          : theme.colorScheme.primary)),
+                            ),
+                            title: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                // عرض الرمز
+                                if (t.code != null && t.code!.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color:
+                                            Colors.blue.withOpacity(0.4),
+                                        width: 0.5,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      t.code!,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (t.items.isNotEmpty)
+                                  Text(t.items,
+                                      style: const TextStyle(fontSize: 13)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatDateTime(t.createdAt),
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme
+                                          .colorScheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                            onLongPress: () => _showTransactionMenu(t),
+                            onTap: () => _showTransactionMenu(t),
                           ),
-                          title: Text(
-                              '${t.amount.toStringAsFixed(0)} ${t.currency}'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (t.items.isNotEmpty)
-                                Text(t.items,
-                                    style: const TextStyle(fontSize: 13)),
-                              const SizedBox(height: 2),
-                              Text(
-                                _formatDateTime(t.createdAt),
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color:
-                                        theme.colorScheme.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                          onLongPress: () => _showTransactionMenu(t),
-                          onTap: () => _showTransactionMenu(t),
                         );
                       },
                     ),
