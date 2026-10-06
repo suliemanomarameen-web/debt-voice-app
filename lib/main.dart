@@ -6,6 +6,7 @@ import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
 import 'services/auto_backup_service.dart';
+import 'services/cloud_backup_service.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -16,6 +17,7 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/reminder_service.dart';
 import 'services/tts_service.dart';
+import 'services/code_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
@@ -38,11 +40,14 @@ void main() async {
   final theme = ThemeService();
   await theme.load();
 
-  // 🔄 النسخ الاحتياطي التلقائي المحلي
+  // 🔄 النسخ الاحتياطي المحلي
   await AutoBackupService.init();
 
   // ☁️ المزامنة الثنائية مع Google Drive
   await SyncService.init();
+
+  // ☁️ النسخ الاحتياطي التلقائي على Google Drive
+  await CloudBackupService.init();
 
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
@@ -171,8 +176,17 @@ Future<void> _saveTransactionFor(
     Customer customer, dynamic parsed, DatabaseHelper db) async {
   final storedType = (parsed.intent == 'return') ? 'payment' : parsed.intent;
 
+  // 🔢 توليد رمز العملية
+  String? code;
+  try {
+    code = await CodeService.generateCode(parsed.intent);
+  } catch (_) {
+    code = null;
+  }
+
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
+    code: code,
     amount: parsed.amount,
     currency: parsed.currency,
     type: storedType,
@@ -199,6 +213,7 @@ Future<void> _saveTransactionFor(
 
   final detail = StringBuffer();
   detail.write('${customer.name}\n');
+  if (code != null) detail.write('الرمز: $code\n');
   detail.write('المبلغ: ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}');
   if (parsed.items.isNotEmpty) {
     detail.write('\nالأصناف: ${parsed.items}');
