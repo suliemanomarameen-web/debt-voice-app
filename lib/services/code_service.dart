@@ -8,7 +8,7 @@ class CodeService {
   static const String _keyPaymentPrefix = 'code_payment_prefix';
   static const String _keyReturnPrefix = 'code_return_prefix';
   static const String _keyDigits = 'code_digits';
-  static const String _keyMode = 'code_mode'; // 'sequential' أو 'random'
+  static const String _keyMode = 'code_mode';
   static const String _keyEnabled = 'code_enabled';
 
   // ========== القيم الافتراضية ==========
@@ -84,14 +84,16 @@ class CodeService {
   static Future<String> _getPrefixForType(String type) async {
     if (type == 'payment') return getPaymentPrefix();
     if (type == 'return') return getReturnPrefix();
-    return getDebtPrefix(); // debt
+    return getDebtPrefix();
+  }
+
+  /// جلب البادئة الحالية لنوع معين (للعامة)
+  static Future<String> getPrefixForType(String type) async {
+    return _getPrefixForType(type);
   }
 
   // ========== توليد رمز جديد ==========
-  /// يولّد رمزاً فريداً للعملية حسب الإعدادات
-  /// مثال: D-0001 أو P-482917
   static Future<String?> generateCode(String type) async {
-    // إذا كانت الميزة معطلة، لا نولّد رمزاً
     final enabled = await isEnabled();
     if (!enabled) return null;
 
@@ -99,16 +101,12 @@ class CodeService {
     final digits = await getDigits();
     final mode = await getMode();
 
-    // ⚠️ ملاحظة: نوع 'return' يُخزّن في DB كـ 'payment'
-    // لكن نستخدم البادئة الخاصة به إذا كان 'return'
-    final codeType = type; // نحتفظ بالنوع الأصلي لجدول used_codes
-
     final db = DatabaseHelper.instance;
 
     if (mode == 'random') {
-      return _generateRandom(db, prefix, digits, codeType);
+      return _generateRandom(db, prefix, digits, type);
     } else {
-      return _generateSequential(db, prefix, digits, codeType);
+      return _generateSequential(db, prefix, digits, type);
     }
   }
 
@@ -119,11 +117,11 @@ class CodeService {
     int digits,
     String type,
   ) async {
-    // جلب أعلى رقم تسلسلي مستخدم لهذا النوع (حسب البادئة الحالية)
-    final maxSeq = await db.getMaxSequence(type);
+    // نستخدم النوع المخزّن (payment للـ return)
+    final storageType = (type == 'return') ? 'payment' : type;
+    final maxSeq = await db.getMaxSequence(storageType);
 
-    // البحث عن أول رقم غير مستخدم بدءاً من maxSeq+1
-    final maxAttempts = pow(10, digits).toInt(); // الحد الأقصى للأرقام
+    final maxAttempts = pow(10, digits).toInt();
     int nextSeq = maxSeq + 1;
 
     for (int i = 0; i < maxAttempts; i++) {
@@ -137,8 +135,6 @@ class CodeService {
       }
     }
 
-    // إذا وصلنا هنا، فالمساحة ممتلئة
-    // نعيد null مع رسالة تحذير
     return null;
   }
 
@@ -150,12 +146,11 @@ class CodeService {
     String type,
   ) async {
     final random = Random.secure();
-    final maxAttempts = 100; // محاولات البحث عن رقم فريد
+    final maxAttempts = 100;
 
     for (int i = 0; i < maxAttempts; i++) {
-      // توليد رقم عشوائي بعدد الأرقام المطلوب
-      final minValue = pow(10, digits - 1).toInt(); // 1000 لـ 4 أرقام
-      final maxValue = pow(10, digits).toInt() - 1; // 9999 لـ 4 أرقام
+      final minValue = pow(10, digits - 1).toInt();
+      final maxValue = pow(10, digits).toInt() - 1;
       final number = minValue + random.nextInt(maxValue - minValue + 1);
 
       final code = _format(prefix, number, digits);
@@ -165,31 +160,79 @@ class CodeService {
       }
     }
 
-    // إذا فشل بعد كل المحاولات
     return null;
   }
 
-  /// تنسيق الرمز: PREFIX-NUMBER (مع padding)
+  /// تنسيق الرمز: PREFIX-NUMBER
   static String _format(String prefix, int number, int digits) {
     final paddedNumber = number.toString().padLeft(digits, '0');
     return '$prefix-$paddedNumber';
   }
 
-  // ========== إحصائيات (للعرض) ==========
-  /// عدد العمليات المتوقع حسب عدد الأرقام
+  // ============================================================
+  // ============ تحديث رموز العمليات القديمة ====================
+  // ============================================================
+
+  /// تحديث رموز العمليات القديمة عند تغيير البادئة
+  /// [type]: 'debt', 'payment', أو 'return'
+  /// [newPrefix]: البادئة الجديدة
+  /// يعيد: عدد العمليات المُحدَّثة
+  static Future<int> updateOldCodes({
+    required String type,
+    required String newPrefix,
+  }) async {
+    final db = DatabaseHelper.instance;
+
+    // جلب البادئة الحالية المخزنة
+    final oldPrefix = await _getPrefixForType(type);
+
+    if (oldPrefix == newPrefix) return 0;
+    if (oldPrefix.isEmpty || newPrefix.isEmpty) return 0;
+
+    // النوع المخزّن في DB
+    final storageType = (type == 'return') ? 'payment' : type;
+
+    // استدعاء دالة التحديث في DB
+    final count = await db.updateCodesPrefix(
+      oldPrefix: oldPrefix,
+      newPrefix: newPrefix,
+    );
+
+    return count;
+  }
+
+  /// جلب عدد الرموز القديمة لنوع معين (لعرضه في الإعدادات)
+  static Future<int> getOldCodesCount(String type) async {
+    final db = DatabaseHelper.instance;
+    final prefix = await _getPrefixForType(type);
+    if (prefix.isEmpty) return 0;
+
+    final allCodes = await db.allTransactionsRaw();
+    int count = 0;
+    for (final t in allCodes) {
+      final code = t['code'] as String?;
+      if (code != null && code.startsWith('$prefix-')) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // ========== إحصائيات ==========
   static int getMaxPossible(int digits) {
-    // 10^digits - 10^(digits-1) = عدد الأرقام المتاحة
-    // مثال: 4 أرقام → 9000 رقم (1000-9999)
     return pow(10, digits).toInt() - pow(10, digits - 1).toInt();
   }
 
-  /// وصف طريقة التوليد
   static String describeMode(String mode) {
     return mode == 'random' ? 'عشوائي' : 'مرتب (تسلسلي)';
   }
 
-  /// وصف عدد الأرقام
   static String describeDigits(int digits) {
     return '$digits أرقام';
+  }
+
+  /// فحص الرموز المستخدمة (للعرض)
+  static Future<Map<String, int>> getStats() async {
+    return DatabaseHelper.instance.getCodesStats();
   }
 }
