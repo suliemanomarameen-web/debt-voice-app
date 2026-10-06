@@ -8,6 +8,8 @@ import '../db/database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
 import '../services/backup_service.dart';
+import '../services/cloud_backup_service.dart';
+import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
 import '../services/overlay_service.dart';
@@ -33,7 +35,20 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _autoEnabled = false;
   String _autoFreq = 'daily';
   bool _gdriveSignedIn = false;
-  bool _autoWhatsApp = false; // <-- جديد
+  bool _autoWhatsApp = false;
+
+  // ===== إعدادات الرموز =====
+  bool _codeEnabled = true;
+  String _debtPrefix = 'D';
+  String _paymentPrefix = 'P';
+  String _returnPrefix = 'R';
+  int _codeDigits = 4;
+  String _codeMode = 'sequential'; // 'sequential' أو 'random'
+
+  // ===== إعدادات النسخ السحابي =====
+  bool _cloudBackupEnabled = false;
+  BackupFrequency _cloudFrequency = BackupFrequency.daily;
+  int _cloudMaxBackups = 10;
 
   @override
   void initState() {
@@ -42,15 +57,47 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadVersion();
     _loadAutoBackup();
     _checkGDrive();
-    _loadAutoWhatsApp(); // <-- جديد
+    _loadAutoWhatsApp();
+    _loadCodeSettings();
+    _loadCloudBackupSettings();
   }
 
-  // ========== تحميل إعداد الواتساب التلقائي ==========
+  // ========== تحميل الإعدادات ==========
   Future<void> _loadAutoWhatsApp() async {
     final sp = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
       _autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
+    });
+  }
+
+  Future<void> _loadCodeSettings() async {
+    final enabled = await CodeService.isEnabled();
+    final d = await CodeService.getDebtPrefix();
+    final p = await CodeService.getPaymentPrefix();
+    final r = await CodeService.getReturnPrefix();
+    final digits = await CodeService.getDigits();
+    final mode = await CodeService.getMode();
+    if (!mounted) return;
+    setState(() {
+      _codeEnabled = enabled;
+      _debtPrefix = d;
+      _paymentPrefix = p;
+      _returnPrefix = r;
+      _codeDigits = digits;
+      _codeMode = mode;
+    });
+  }
+
+  Future<void> _loadCloudBackupSettings() async {
+    final enabled = await CloudBackupService.isEnabled();
+    final freq = await CloudBackupService.getFrequency();
+    final max = await CloudBackupService.getMaxBackups();
+    if (!mounted) return;
+    setState(() {
+      _cloudBackupEnabled = enabled;
+      _cloudFrequency = freq;
+      _cloudMaxBackups = max;
     });
   }
 
@@ -386,7 +433,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== النسخ التلقائي ==============
+  // ============== النسخ التلقائي المحلي ==============
   Future<void> _toggleAutoBackup(bool v) async {
     await AutoBackupService.setEnabled(v);
     if (!mounted) return;
@@ -456,6 +503,375 @@ class _SettingsTabState extends State<SettingsTab> {
         f;
   }
 
+  // ============== النسخ السحابي ==============
+  Future<void> _toggleCloudBackup(bool v) async {
+    // إذا كان التفعيل ولم يكن مسجل دخول → نسجل
+    if (v && !GDriveService.isSignedIn) {
+      final err = await GDriveService.signInWithError();
+      if (err != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('يجب تسجيل الدخول: $err')),
+        );
+        return;
+      }
+    }
+
+    await CloudBackupService.setEnabled(v);
+    if (!mounted) return;
+    setState(() => _cloudBackupEnabled = v);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(v
+            ? 'تم تفعيل النسخ السحابي التلقائي'
+            : 'تم إيقاف النسخ السحابي'),
+        backgroundColor: v ? Colors.green : Colors.grey,
+      ),
+    );
+  }
+
+  Future<void> _changeCloudFrequency() async {
+    final result = await showDialog<BackupFrequency>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('تكرار النسخ السحابي'),
+          children: BackupFrequency.values.map((f) {
+            final selected = _cloudFrequency == f;
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, f),
+              child: Row(
+                children: [
+                  if (selected)
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  Text(CloudBackupService.frequencyLabel(f)),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+    if (result == null) return;
+    await CloudBackupService.setFrequency(result);
+    if (!mounted) return;
+    setState(() => _cloudFrequency = result);
+  }
+
+  Future<void> _changeCloudMaxBackups() async {
+    final ctrl = TextEditingController(
+      text: _cloudMaxBackups < 0 ? '' : _cloudMaxBackups.toString(),
+    );
+    bool notLimited = _cloudMaxBackups < 0;
+
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('عدد النسخ المحفوظة'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('غير نهائي'),
+                  subtitle: const Text('احتفظ بكل النسخ بدون حذف'),
+                  value: notLimited,
+                  onChanged: (v) => setSt(() => notLimited = v),
+                ),
+                if (!notLimited)
+                  TextField(
+                    controller: ctrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'عدد النسخ',
+                      border: OutlineInputBorder(),
+                      hintText: 'مثال: 10',
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (notLimited) {
+                    Navigator.pop(ctx, -1);
+                  } else {
+                    final n = int.tryParse(ctrl.text.trim());
+                    if (n == null || n < 1) {
+                      return;
+                    }
+                    Navigator.pop(ctx, n);
+                  }
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await CloudBackupService.setMaxBackups(result);
+    if (!mounted) return;
+    setState(() => _cloudMaxBackups = result);
+  }
+
+  Future<void> _runCloudBackupNow() async {
+    if (!GDriveService.isSignedIn) {
+      final err = await GDriveService.signInWithError();
+      if (err != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err)),
+        );
+        return;
+      }
+    }
+
+    setState(() => _backupBusy = true);
+    await CloudBackupService.runNow();
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم تشغيل النسخ السحابي'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  String _cloudFreqLabel(BackupFrequency f) {
+    return CloudBackupService.frequencyLabel(f);
+  }
+
+  // ============== إعدادات الرموز ==============
+  Future<void> _toggleCodeEnabled(bool v) async {
+    await CodeService.setEnabled(v);
+    if (!mounted) return;
+    setState(() => _codeEnabled = v);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(v
+            ? 'تم تفعيل رموز العمليات'
+            : 'تم تعطيل رموز العمليات'),
+        backgroundColor: v ? Colors.green : Colors.grey,
+      ),
+    );
+  }
+
+  Future<void> _editPrefix(String type) async {
+    String current;
+    String label;
+    if (type == 'debt') {
+      current = _debtPrefix;
+      label = 'رمز الدين';
+    } else if (type == 'payment') {
+      current = _paymentPrefix;
+      label = 'رمز السداد';
+    } else {
+      current = _returnPrefix;
+      label = 'رمز المرتجع';
+    }
+
+    final ctrl = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(label),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                maxLength: 3,
+                textAlign: TextAlign.center,
+                textCapitalization: TextCapitalization.characters,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                ),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: 'مثال: D',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'حرف أو رمز قصير (1-3 أحرف)',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final v = ctrl.text.trim();
+                if (v.isEmpty) return;
+                Navigator.pop(ctx, v);
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    if (type == 'debt') {
+      await CodeService.setDebtPrefix(result);
+      if (mounted) setState(() => _debtPrefix = result.toUpperCase());
+    } else if (type == 'payment') {
+      await CodeService.setPaymentPrefix(result);
+      if (mounted) setState(() => _paymentPrefix = result.toUpperCase());
+    } else {
+      await CodeService.setReturnPrefix(result);
+      if (mounted) setState(() => _returnPrefix = result.toUpperCase());
+    }
+  }
+
+  Future<void> _changeDigits() async {
+    final result = await showDialog<int>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('عدد الأرقام في الرمز'),
+          children: [4, 6, 8].map((d) {
+            final max = CodeService.getMaxPossible(d);
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, d),
+              child: Row(
+                children: [
+                  if (_codeDigits == d)
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('$d أرقام',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold)),
+                        Text(
+                          'يسمح بـ ${_formatNumber(max)} عملية',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await CodeService.setDigits(result);
+    if (!mounted) return;
+    setState(() => _codeDigits = result);
+  }
+
+  Future<void> _changeCodeMode() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('طريقة توليد الرمز'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'sequential'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'sequential')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('مرتب (تسلسلي)',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('D-0001, D-0002, D-0003...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'random'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'random')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('عشوائي',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('D-4821, D-1938, D-7305...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await CodeService.setMode(result);
+    if (!mounted) return;
+    setState(() => _codeMode = result);
+  }
+
+  String _formatNumber(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
@@ -492,7 +908,7 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // ========== الإشعارات والواتساب ==========  ← قسم جديد
+          // ========== الإشعارات والواتساب ==========
           const _SectionHeader('الإشعارات والواتساب'),
           SwitchListTile(
             secondary: const Icon(Icons.message, color: Colors.green),
@@ -515,6 +931,156 @@ class _SettingsTabState extends State<SettingsTab> {
               );
             },
           ),
+
+          // ========== رموز العمليات ==========
+          const _SectionHeader('رموز العمليات'),
+          SwitchListTile(
+            secondary: const Icon(Icons.qr_code, color: Colors.blue),
+            title: const Text('تفعيل رموز العمليات'),
+            subtitle: const Text(
+                'إعطاء رمز فريد لكل عملية (مثل D-0001، P-0002)'),
+            value: _codeEnabled,
+            onChanged: _toggleCodeEnabled,
+          ),
+          if (_codeEnabled) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.arrow_upward, color: Colors.red),
+              title: const Text('رمز الدين'),
+              trailing: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _debtPrefix,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+              onTap: () => _editPrefix('debt'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.payments, color: Colors.green),
+              title: const Text('رمز السداد'),
+              trailing: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _paymentPrefix,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.green,
+                  ),
+                ),
+              ),
+              onTap: () => _editPrefix('payment'),
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.keyboard_return, color: Colors.orange),
+              title: const Text('رمز المرتجع'),
+              trailing: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _returnPrefix,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.orange,
+                  ),
+                ),
+              ),
+              onTap: () => _editPrefix('return'),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.numbers, color: Colors.purple),
+              title: const Text('عدد الأرقام'),
+              subtitle: Text('يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$_codeDigits',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward_ios, size: 16),
+                ],
+              ),
+              onTap: _changeDigits,
+            ),
+            ListTile(
+              leading: const Icon(Icons.shuffle, color: Colors.indigo),
+              title: const Text('طريقة التوليد'),
+              subtitle: Text(CodeService.describeMode(_codeMode)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _changeCodeMode,
+            ),
+            // ===== معاينة =====
+            Container(
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.mode == ThemeMode.dark
+                    ? Colors.blue.shade900.withOpacity(0.3)
+                    : Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.blue.withOpacity(0.4),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.preview, size: 18, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'معاينة',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _previewChip('$_debtPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                          Colors.red),
+                      _previewChip('$_paymentPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                          Colors.green),
+                      _previewChip('$_returnPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                          Colors.orange),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
 
           // ========== الحماية ==========
           const _SectionHeader('الحماية'),
@@ -551,8 +1117,8 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== النسخ الاحتياطي ==========
-          const _SectionHeader('النسخ الاحتياطي'),
+          // ========== النسخ الاحتياطي المحلي ==========
+          const _SectionHeader('النسخ الاحتياطي المحلي'),
           ListTile(
             leading: _backupBusy
                 ? const SizedBox(
@@ -581,17 +1147,17 @@ class _SettingsTabState extends State<SettingsTab> {
 
           const Divider(height: 24),
 
-          // ========== النسخ التلقائي ==========
+          // ========== النسخ التلقائي المحلي ==========
           SwitchListTile(
             secondary: const Icon(Icons.schedule, color: Colors.purple),
-            title: const Text('النسخ التلقائي'),
+            title: const Text('النسخ التلقائي المحلي'),
             subtitle: Text(_autoEnabled
                 ? 'النسخ كل ${_freqLabel(_autoFreq)}'
-                : 'نسخ احتياطي في الخلفية'),
+                : 'نسخ احتياطي في الخلفية (محلي)'),
             value: _autoEnabled,
             onChanged: _toggleAutoBackup,
           ),
-          if (_autoEnabled)
+          if (_autoEnabled) ...[
             ListTile(
               leading: const Icon(Icons.repeat),
               title: const Text('تكرار النسخ'),
@@ -599,7 +1165,6 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeFreq,
             ),
-          if (_autoEnabled)
             ListTile(
               leading: const Icon(Icons.play_arrow, color: Colors.green),
               title: const Text('تشغيل نسخة الآن'),
@@ -617,9 +1182,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 );
               },
             ),
+          ],
 
-          // ========== Google Drive ==========
-          const _SectionHeader('Google Drive'),
+          // ========== النسخ السحابي ==========
+          const _SectionHeader('النسخ السحابي (Google Drive)'),
+
+          // حالة الحساب
           ListTile(
             leading: Icon(
               Icons.cloud,
@@ -628,7 +1196,7 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('النسخ الاحتياطي على Drive'),
             subtitle: Text(_gdriveSignedIn
                 ? 'متصل: ${GDriveService.userEmail ?? ""}'
-                : 'ارفع واستعد من Google Drive'),
+                : 'لم يتم تسجيل الدخول'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () async {
               await Navigator.push(
@@ -638,6 +1206,47 @@ class _SettingsTabState extends State<SettingsTab> {
               _checkGDrive();
             },
           ),
+
+          // تفعيل/تعطيل النسخ السحابي التلقائي
+          SwitchListTile(
+            secondary:
+                const Icon(Icons.cloud_upload, color: Colors.deepPurple),
+            title: const Text('النسخ السحابي التلقائي'),
+            subtitle: Text(_cloudBackupEnabled
+                ? 'يتم رفع نسخة ${_cloudFreqLabel(_cloudFrequency)}'
+                : 'رفع نسخة احتياطية تلقائياً إلى Drive'),
+            value: _cloudBackupEnabled,
+            onChanged: _toggleCloudBackup,
+          ),
+
+          if (_cloudBackupEnabled) ...[
+            ListTile(
+              leading: const Icon(Icons.schedule, color: Colors.deepPurple),
+              title: const Text('تكرار الرفع'),
+              subtitle:
+                  Text(_cloudFreqLabel(_cloudFrequency)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _changeCloudFrequency,
+            ),
+            ListTile(
+              leading: const Icon(Icons.storage, color: Colors.indigo),
+              title: const Text('عدد النسخ المحفوظة'),
+              subtitle: Text(
+                _cloudMaxBackups < 0
+                    ? 'غير نهائي'
+                    : 'آخر $_cloudMaxBackups نسخة',
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _changeCloudMaxBackups,
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.play_circle, color: Colors.deepPurple),
+              title: const Text('رفع نسخة الآن'),
+              subtitle: const Text('تشغيل النسخ السحابي يدوياً'),
+              onTap: _backupBusy ? null : _runCloudBackupNow,
+            ),
+          ],
 
           // ========== الزر العائم ==========
           const _SectionHeader('الزر العائم'),
@@ -780,6 +1389,26 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 24),
         ],
+      ),
+    );
+  }
+
+  Widget _previewChip(String code, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
+      ),
+      child: Text(
+        code,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color,
+          fontFamily: 'monospace',
+        ),
       ),
     );
   }
