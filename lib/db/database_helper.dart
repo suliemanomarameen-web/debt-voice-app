@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 4, // رُفع من 3 إلى 4
+      version: 4,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -53,7 +53,6 @@ class DatabaseHelper {
         FOREIGN KEY(customer_id) REFERENCES customers(id)
       )
     ''');
-    // جدول تتبع الأرقام المستخدمة (لضمان عدم التكرار)
     await db.execute('''
       CREATE TABLE used_codes(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,9 +80,7 @@ class DatabaseHelper {
     }
     if (oldV < 4) {
       try {
-        // إضافة عمود code للجدول transactions
         await db.execute("ALTER TABLE transactions ADD COLUMN code TEXT");
-        // إنشاء جدول used_codes
         await db.execute('''
           CREATE TABLE IF NOT EXISTS used_codes(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +93,6 @@ class DatabaseHelper {
     }
   }
 
-  /// إشعار بأن البيانات تغيرت (للمزامنة التلقائية)
   void _notifyChanged() {
     try {
       onDataChanged?.call();
@@ -111,7 +107,6 @@ class DatabaseHelper {
     return id;
   }
 
-  /// إدراج زبون من المزامنة (بدون إشعار)
   Future<int> insertCustomerRaw(Map<String, dynamic> data) async {
     final db = await database;
     return db.insert('customers', data);
@@ -162,7 +157,6 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  /// البحث عن زبون بنفس الاسم وتاريخ الإنشاء (للمزامنة)
   Future<int?> findCustomerIdByNameAndDate(
       String name, String createdAt) async {
     final db = await database;
@@ -178,7 +172,6 @@ class DatabaseHelper {
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
     final id = await db.insert('transactions', t.toMap());
-    // سجل الرمز في used_codes إذا كان موجوداً
     if (t.code != null && t.code!.isNotEmpty) {
       try {
         await db.insert('used_codes', {
@@ -186,19 +179,15 @@ class DatabaseHelper {
           'type': t.type,
           'created_at': t.createdAt,
         });
-      } catch (_) {
-        // الرمز موجود مسبقاً - تجاهل
-      }
+      } catch (_) {}
     }
     _notifyChanged();
     return id;
   }
 
-  /// إدراج معاملة من المزامنة (بدون إشعار)
   Future<int> insertTransactionRaw(Map<String, dynamic> data) async {
     final db = await database;
     final id = await db.insert('transactions', data);
-    // سجل الرمز
     final code = data['code'] as String?;
     if (code != null && code.isNotEmpty) {
       try {
@@ -267,7 +256,6 @@ class DatabaseHelper {
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
   }
 
-  /// البحث عن معاملة موجودة بنفس البيانات (لتفادي التكرار في المزامنة)
   Future<bool> transactionExists({
     required int customerId,
     required double amount,
@@ -282,9 +270,8 @@ class DatabaseHelper {
     return r.isNotEmpty;
   }
 
-  // ============ إدارة الرموز (used_codes) ============
+  // ============ إدارة الرموز ============
 
-  /// التحقق من وجود رمز مسبقاً
   Future<bool> codeExists(String code) async {
     final db = await database;
     final r = await db.query('used_codes',
@@ -292,7 +279,6 @@ class DatabaseHelper {
     return r.isNotEmpty;
   }
 
-  /// إضافة رمز إلى قائمة المستخدمة
   Future<void> addUsedCode({
     required String code,
     required String type,
@@ -307,16 +293,13 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
-  /// جلب أعلى رقم تسلسلي لنوع معين (للتوليد المرتب)
   Future<int> getMaxSequence(String type) async {
     final db = await database;
-    // جلب كل الأكواد من النوع المطلوب
     final r = await db.query('used_codes',
         where: 'type = ?', whereArgs: [type], columns: ['code']);
     int maxSeq = 0;
     for (final row in r) {
       final code = row['code'] as String? ?? '';
-      // الرمز مثلاً: D-0001 → نستخرج 1
       final parts = code.split('-');
       if (parts.length >= 2) {
         final numPart = int.tryParse(parts.sublist(1).join('-'));
@@ -326,6 +309,93 @@ class DatabaseHelper {
       }
     }
     return maxSeq;
+  }
+
+  /// ============ تحديث رموز العمليات القديمة ============
+  /// يُحدّث بادئة كل الرموز القديمة من oldPrefix إلى newPrefix
+  /// مثال: R-0001 → S-0001
+  /// يُحدّث أيضاً جدول used_codes
+  /// يعيد عدد العمليات المُحدَّثة
+  Future<int> updateCodesPrefix({
+    required String oldPrefix,
+    required String newPrefix,
+  }) async {
+    if (oldPrefix.isEmpty || newPrefix.isEmpty) return 0;
+    if (oldPrefix == newPrefix) return 0;
+
+    final db = await database;
+    int updatedCount = 0;
+
+    try {
+      // 1. جلب كل المعاملات التي رمزها يبدأ بالبادئة القديمة
+      final transactions = await db.query(
+        'transactions',
+        where: 'code LIKE ?',
+        whereArgs: ['$oldPrefix-%'],
+      );
+
+      for (final row in transactions) {
+        final oldCode = row['code'] as String?;
+        if (oldCode == null || oldCode.isEmpty) continue;
+
+        // استبدال البادئة فقط مع الحفاظ على الرقم
+        // مثال: R-0001 → S-0001
+        final newCode = newPrefix + oldCode.substring(oldPrefix.length);
+
+        // التحقق من عدم وجود تصادم
+        final exists = await db.query(
+          'transactions',
+          where: 'code = ? AND id != ?',
+          whereArgs: [newCode, row['id']],
+          limit: 1,
+        );
+        if (exists.isNotEmpty) {
+          // يوجد تصادم - نضيف لاحقة عشوائية
+          continue;
+        }
+
+        // تحديث المعاملة
+        await db.update(
+          'transactions',
+          {'code': newCode},
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        updatedCount++;
+
+        // تحديث جدول used_codes
+        try {
+          await db.delete('used_codes',
+              where: 'code = ?', whereArgs: [oldCode]);
+          await db.insert('used_codes', {
+            'code': newCode,
+            'type': row['type'] ?? 'debt',
+            'created_at':
+                row['created_at'] ?? DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+      }
+
+      debugPrint('✅ Updated $updatedCount transaction codes: $oldPrefix → $newPrefix');
+    } catch (e) {
+      debugPrint('❌ updateCodesPrefix error: $e');
+    }
+
+    _notifyChanged();
+    return updatedCount;
+  }
+
+  /// إحصائيات الرموز (للعرض)
+  Future<Map<String, int>> getCodesStats() async {
+    final db = await database;
+    final all = await db.query('used_codes', columns: ['type']);
+
+    final stats = <String, int>{'debt': 0, 'payment': 0, 'return': 0};
+    for (final row in all) {
+      final t = row['type'] as String? ?? 'debt';
+      stats[t] = (stats[t] ?? 0) + 1;
+    }
+    return stats;
   }
 
   // ============ أدوات للمزامنة ============
@@ -351,4 +421,21 @@ class DatabaseHelper {
     final db = await database;
     return db.query('used_codes');
   }
+
+  // ============ جلب كل العمليات (لعرضها) ============
+  Future<List<Map<String, dynamic>>> getAllTransactionsWithCustomer() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT t.*, c.name AS customer_name, c.phone AS customer_phone
+      FROM transactions t
+      LEFT JOIN customers c ON t.customer_id = c.id
+      ORDER BY t.created_at DESC
+    ''');
+  }
+}
+
+// للطباعة في debugPrint
+void debugPrint(String msg) {
+  // ignore: avoid_print
+  print(msg);
 }
