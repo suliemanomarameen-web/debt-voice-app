@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' hide Transaction;
 import '../models/customer.dart';
@@ -312,10 +313,6 @@ class DatabaseHelper {
   }
 
   /// ============ تحديث رموز العمليات القديمة ============
-  /// يُحدّث بادئة كل الرموز القديمة من oldPrefix إلى newPrefix
-  /// مثال: R-0001 → S-0001
-  /// يُحدّث أيضاً جدول used_codes
-  /// يعيد عدد العمليات المُحدَّثة
   Future<int> updateCodesPrefix({
     required String oldPrefix,
     required String newPrefix,
@@ -327,7 +324,6 @@ class DatabaseHelper {
     int updatedCount = 0;
 
     try {
-      // 1. جلب كل المعاملات التي رمزها يبدأ بالبادئة القديمة
       final transactions = await db.query(
         'transactions',
         where: 'code LIKE ?',
@@ -338,23 +334,16 @@ class DatabaseHelper {
         final oldCode = row['code'] as String?;
         if (oldCode == null || oldCode.isEmpty) continue;
 
-        // استبدال البادئة فقط مع الحفاظ على الرقم
-        // مثال: R-0001 → S-0001
         final newCode = newPrefix + oldCode.substring(oldPrefix.length);
 
-        // التحقق من عدم وجود تصادم
         final exists = await db.query(
           'transactions',
           where: 'code = ? AND id != ?',
           whereArgs: [newCode, row['id']],
           limit: 1,
         );
-        if (exists.isNotEmpty) {
-          // يوجد تصادم - نضيف لاحقة عشوائية
-          continue;
-        }
+        if (exists.isNotEmpty) continue;
 
-        // تحديث المعاملة
         await db.update(
           'transactions',
           {'code': newCode},
@@ -363,7 +352,6 @@ class DatabaseHelper {
         );
         updatedCount++;
 
-        // تحديث جدول used_codes
         try {
           await db.delete('used_codes',
               where: 'code = ?', whereArgs: [oldCode]);
@@ -376,7 +364,8 @@ class DatabaseHelper {
         } catch (_) {}
       }
 
-      debugPrint('✅ Updated $updatedCount transaction codes: $oldPrefix → $newPrefix');
+      debugPrint(
+          '✅ Updated $updatedCount transaction codes: $oldPrefix → $newPrefix');
     } catch (e) {
       debugPrint('❌ updateCodesPrefix error: $e');
     }
@@ -422,7 +411,6 @@ class DatabaseHelper {
     return db.query('used_codes');
   }
 
-  // ============ جلب كل العمليات (لعرضها) ============
   Future<List<Map<String, dynamic>>> getAllTransactionsWithCustomer() async {
     final db = await database;
     return db.rawQuery('''
@@ -432,10 +420,4 @@ class DatabaseHelper {
       ORDER BY t.created_at DESC
     ''');
   }
-}
-
-// للطباعة في debugPrint
-void debugPrint(String msg) {
-  // ignore: avoid_print
-  print(msg);
 }
