@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 3,
+      version: 4, // رُفع من 3 إلى 4
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -44,12 +44,22 @@ class DatabaseHelper {
       CREATE TABLE transactions(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER NOT NULL,
+        code TEXT UNIQUE,
         amount REAL NOT NULL,
         currency TEXT DEFAULT 'YER',
         type TEXT NOT NULL,
         items TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(customer_id) REFERENCES customers(id)
+      )
+    ''');
+    // جدول تتبع الأرقام المستخدمة (لضمان عدم التكرار)
+    await db.execute('''
+      CREATE TABLE used_codes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        type TEXT NOT NULL,
+        created_at TEXT NOT NULL
       )
     ''');
   }
@@ -69,6 +79,21 @@ class DatabaseHelper {
             "ALTER TABLE customers ADD COLUMN category TEXT DEFAULT 'normal'");
       } catch (_) {}
     }
+    if (oldV < 4) {
+      try {
+        // إضافة عمود code للجدول transactions
+        await db.execute("ALTER TABLE transactions ADD COLUMN code TEXT");
+        // إنشاء جدول used_codes
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS used_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            type TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        ''');
+      } catch (_) {}
+    }
   }
 
   /// إشعار بأن البيانات تغيرت (للمزامنة التلقائية)
@@ -86,7 +111,7 @@ class DatabaseHelper {
     return id;
   }
 
-  /// إدراج زبون من المزامنة (بدون إشعار - لتجنب infinite loop)
+  /// إدراج زبون من المزامنة (بدون إشعار)
   Future<int> insertCustomerRaw(Map<String, dynamic> data) async {
     final db = await database;
     return db.insert('customers', data);
@@ -137,10 +162,34 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
+  /// البحث عن زبون بنفس الاسم وتاريخ الإنشاء (للمزامنة)
+  Future<int?> findCustomerIdByNameAndDate(
+      String name, String createdAt) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'name = ? AND created_at = ?',
+        whereArgs: [name, createdAt],
+        limit: 1);
+    if (r.isEmpty) return null;
+    return r.first['id'] as int?;
+  }
+
   // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
     final id = await db.insert('transactions', t.toMap());
+    // سجل الرمز في used_codes إذا كان موجوداً
+    if (t.code != null && t.code!.isNotEmpty) {
+      try {
+        await db.insert('used_codes', {
+          'code': t.code,
+          'type': t.type,
+          'created_at': t.createdAt,
+        });
+      } catch (_) {
+        // الرمز موجود مسبقاً - تجاهل
+      }
+    }
     _notifyChanged();
     return id;
   }
@@ -148,7 +197,19 @@ class DatabaseHelper {
   /// إدراج معاملة من المزامنة (بدون إشعار)
   Future<int> insertTransactionRaw(Map<String, dynamic> data) async {
     final db = await database;
-    return db.insert('transactions', data);
+    final id = await db.insert('transactions', data);
+    // سجل الرمز
+    final code = data['code'] as String?;
+    if (code != null && code.isNotEmpty) {
+      try {
+        await db.insert('used_codes', {
+          'code': code,
+          'type': data['type'] ?? 'debt',
+          'created_at': data['created_at'] ?? DateTime.now().toIso8601String(),
+        });
+      } catch (_) {}
+    }
+    return id;
   }
 
   Future<int> updateTransaction(Transaction t) async {
@@ -206,7 +267,7 @@ class DatabaseHelper {
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
   }
 
-  /// البحث عن معاملة موجودة بنفس البيانات (لتفادي التكرار أثناء المزامنة)
+  /// البحث عن معاملة موجودة بنفس البيانات (لتفادي التكرار في المزامنة)
   Future<bool> transactionExists({
     required int customerId,
     required double amount,
@@ -221,35 +282,73 @@ class DatabaseHelper {
     return r.isNotEmpty;
   }
 
-  /// البحث عن زبون بنفس الاسم ونفس تاريخ الإنشاء
-  Future<int?> findCustomerIdByNameAndDate(
-      String name, String createdAt) async {
+  // ============ إدارة الرموز (used_codes) ============
+
+  /// التحقق من وجود رمز مسبقاً
+  Future<bool> codeExists(String code) async {
     final db = await database;
-    final r = await db.query('customers',
-        where: 'name = ? AND created_at = ?',
-        whereArgs: [name, createdAt],
-        limit: 1);
-    if (r.isEmpty) return null;
-    return r.first['id'] as int?;
+    final r = await db.query('used_codes',
+        where: 'code = ?', whereArgs: [code], limit: 1);
+    return r.isNotEmpty;
   }
 
-  /// إفراغ كل البيانات (للاستعادة الكاملة)
+  /// إضافة رمز إلى قائمة المستخدمة
+  Future<void> addUsedCode({
+    required String code,
+    required String type,
+  }) async {
+    final db = await database;
+    try {
+      await db.insert('used_codes', {
+        'code': code,
+        'type': type,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+  }
+
+  /// جلب أعلى رقم تسلسلي لنوع معين (للتوليد المرتب)
+  Future<int> getMaxSequence(String type) async {
+    final db = await database;
+    // جلب كل الأكواد من النوع المطلوب
+    final r = await db.query('used_codes',
+        where: 'type = ?', whereArgs: [type], columns: ['code']);
+    int maxSeq = 0;
+    for (final row in r) {
+      final code = row['code'] as String? ?? '';
+      // الرمز مثلاً: D-0001 → نستخرج 1
+      final parts = code.split('-');
+      if (parts.length >= 2) {
+        final numPart = int.tryParse(parts.sublist(1).join('-'));
+        if (numPart != null && numPart > maxSeq) {
+          maxSeq = numPart;
+        }
+      }
+    }
+    return maxSeq;
+  }
+
+  // ============ أدوات للمزامنة ============
   Future<void> clearAll() async {
     final db = await database;
     await db.delete('transactions');
     await db.delete('customers');
+    await db.delete('used_codes');
     _notifyChanged();
   }
 
-  /// جلب كل المعاملات (للتصدير)
   Future<List<Map<String, dynamic>>> allTransactionsRaw() async {
     final db = await database;
     return db.query('transactions');
   }
 
-  /// جلب كل الزبائن (للتصدير)
   Future<List<Map<String, dynamic>>> allCustomersRaw() async {
     final db = await database;
     return db.query('customers');
+  }
+
+  Future<List<Map<String, dynamic>>> allUsedCodesRaw() async {
+    final db = await database;
+    return db.query('used_codes');
   }
 }
