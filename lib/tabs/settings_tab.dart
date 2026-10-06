@@ -43,7 +43,12 @@ class _SettingsTabState extends State<SettingsTab> {
   String _paymentPrefix = 'P';
   String _returnPrefix = 'R';
   int _codeDigits = 4;
-  String _codeMode = 'sequential'; // 'sequential' أو 'random'
+  String _codeMode = 'sequential';
+
+  // ===== إعدادات PDF =====
+  bool _pdfShowCodes = true;
+  bool _pdfHideCategory = false;
+  bool _pdfHideAccountType = false;
 
   // ===== إعدادات النسخ السحابي =====
   bool _cloudBackupEnabled = false;
@@ -60,6 +65,7 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadAutoWhatsApp();
     _loadCodeSettings();
     _loadCloudBackupSettings();
+    _loadPdfSettings();
   }
 
   // ========== تحميل الإعدادات ==========
@@ -68,6 +74,16 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     setState(() {
       _autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
+    });
+  }
+
+  Future<void> _loadPdfSettings() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _pdfShowCodes = sp.getBool('pdf_show_codes') ?? true;
+      _pdfHideCategory = sp.getBool('pdf_hide_category') ?? false;
+      _pdfHideAccountType = sp.getBool('pdf_hide_account_type') ?? false;
     });
   }
 
@@ -505,7 +521,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
   // ============== النسخ السحابي ==============
   Future<void> _toggleCloudBackup(bool v) async {
-    // إذا كان التفعيل ولم يكن مسجل دخول → نسجل
     if (v && !GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) {
@@ -609,9 +624,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     Navigator.pop(ctx, -1);
                   } else {
                     final n = int.tryParse(ctrl.text.trim());
-                    if (n == null || n < 1) {
-                      return;
-                    }
+                    if (n == null || n < 1) return;
                     Navigator.pop(ctx, n);
                   }
                 },
@@ -654,10 +667,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  String _cloudFreqLabel(BackupFrequency f) {
-    return CloudBackupService.frequencyLabel(f);
-  }
-
   // ============== إعدادات الرموز ==============
   Future<void> _toggleCodeEnabled(bool v) async {
     await CodeService.setEnabled(v);
@@ -665,9 +674,7 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _codeEnabled = v);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(v
-            ? 'تم تفعيل رموز العمليات'
-            : 'تم تعطيل رموز العمليات'),
+        content: Text(v ? 'تم تفعيل رموز العمليات' : 'تم تعطيل رموز العمليات'),
         backgroundColor: v ? Colors.green : Colors.grey,
       ),
     );
@@ -739,16 +746,84 @@ class _SettingsTabState extends State<SettingsTab> {
     );
 
     if (result == null) return;
+    final newPrefix = result.toUpperCase();
+    final oldPrefix = current;
 
-    if (type == 'debt') {
-      await CodeService.setDebtPrefix(result);
-      if (mounted) setState(() => _debtPrefix = result.toUpperCase());
-    } else if (type == 'payment') {
-      await CodeService.setPaymentPrefix(result);
-      if (mounted) setState(() => _paymentPrefix = result.toUpperCase());
+    // إذا تغيّر الرمز فعلاً - اسأل عن تحديث الرموز القديمة
+    if (newPrefix != oldPrefix && mounted) {
+      final updateOld = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.update, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('تحديث الرموز القديمة؟'),
+              ],
+            ),
+            content: Text(
+              'لقد غيّرت الرمز من "$oldPrefix" إلى "$newPrefix".\n\n'
+              'هل تريد تحديث رموز العمليات القديمة أيضاً؟\n\n'
+              'مثال: $oldPrefix-0001 → $newPrefix-0001\n\n'
+              '⚠️ إذا اخترت "لا"، ستحتفظ العمليات القديمة برموزها الحالية.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('لا، اتركها'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('نعم، حدّثها'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      // حفظ الإعداد الجديد
+      if (type == 'debt') {
+        await CodeService.setDebtPrefix(newPrefix);
+        if (mounted) setState(() => _debtPrefix = newPrefix);
+      } else if (type == 'payment') {
+        await CodeService.setPaymentPrefix(newPrefix);
+        if (mounted) setState(() => _paymentPrefix = newPrefix);
+      } else {
+        await CodeService.setReturnPrefix(newPrefix);
+        if (mounted) setState(() => _returnPrefix = newPrefix);
+      }
+
+      // تحديث الرموز القديمة إذا طلب المستخدم
+      if (updateOld == true && mounted) {
+        setState(() => _backupBusy = true);
+        final count = await CodeService.updateOldCodes(
+          type: type,
+          newPrefix: newPrefix,
+        );
+        if (!mounted) return;
+        setState(() => _backupBusy = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم تحديث $count عملية'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } else {
-      await CodeService.setReturnPrefix(result);
-      if (mounted) setState(() => _returnPrefix = result.toUpperCase());
+      // لم يتغير الرمز - احفظ فقط
+      if (type == 'debt') {
+        await CodeService.setDebtPrefix(newPrefix);
+        if (mounted) setState(() => _debtPrefix = newPrefix);
+      } else if (type == 'payment') {
+        await CodeService.setPaymentPrefix(newPrefix);
+        if (mounted) setState(() => _paymentPrefix = newPrefix);
+      } else {
+        await CodeService.setReturnPrefix(newPrefix);
+        if (mounted) setState(() => _returnPrefix = newPrefix);
+      }
     }
   }
 
@@ -775,8 +850,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('$d أرقام',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold)),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
                         Text(
                           'يسمح بـ ${_formatNumber(max)} عملية',
                           style: const TextStyle(
@@ -872,6 +947,18 @@ class _SettingsTabState extends State<SettingsTab> {
     return '$n';
   }
 
+  // ============== إعدادات PDF ==============
+  Future<void> _togglePdfSetting(String key, bool v) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(key, v);
+    if (!mounted) return;
+    setState(() {
+      if (key == 'pdf_show_codes') _pdfShowCodes = v;
+      if (key == 'pdf_hide_category') _pdfHideCategory = v;
+      if (key == 'pdf_hide_account_type') _pdfHideAccountType = v;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
@@ -920,15 +1007,6 @@ class _SettingsTabState extends State<SettingsTab> {
               setState(() => _autoWhatsApp = v);
               final sp = await SharedPreferences.getInstance();
               await sp.setBool('auto_whatsapp', v);
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(v
-                      ? 'سيتم فتح واتساب بعد كل عملية'
-                      : 'تم إيقاف الإرسال التلقائي'),
-                  backgroundColor: v ? Colors.green : Colors.grey,
-                ),
-              );
             },
           ),
 
@@ -1012,7 +1090,8 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               leading: const Icon(Icons.numbers, color: Colors.purple),
               title: const Text('عدد الأرقام'),
-              subtitle: Text('يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
+              subtitle: Text(
+                  'يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1035,27 +1114,25 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCodeMode,
             ),
-            // ===== معاينة =====
+            // معاينة
             Container(
               margin: const EdgeInsets.all(12),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: theme.mode == ThemeMode.dark
+                color: isDark
                     ? Colors.blue.shade900.withOpacity(0.3)
                     : Colors.blue.shade50,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.blue.withOpacity(0.4),
-                ),
+                border: Border.all(color: Colors.blue.withOpacity(0.4)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    children: [
-                      const Icon(Icons.preview, size: 18, color: Colors.blue),
-                      const SizedBox(width: 6),
-                      const Text(
+                    children: const [
+                      Icon(Icons.preview, size: 18, color: Colors.blue),
+                      SizedBox(width: 6),
+                      Text(
                         'معاينة',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -1069,11 +1146,14 @@ class _SettingsTabState extends State<SettingsTab> {
                     spacing: 8,
                     runSpacing: 6,
                     children: [
-                      _previewChip('$_debtPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                      _previewChip(
+                          '$_debtPrefix-${'1'.padLeft(_codeDigits, '0')}',
                           Colors.red),
-                      _previewChip('$_paymentPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                      _previewChip(
+                          '$_paymentPrefix-${'1'.padLeft(_codeDigits, '0')}',
                           Colors.green),
-                      _previewChip('$_returnPrefix-${'1'.padLeft(_codeDigits, '0')}',
+                      _previewChip(
+                          '$_returnPrefix-${'1'.padLeft(_codeDigits, '0')}',
                           Colors.orange),
                     ],
                   ),
@@ -1081,6 +1161,31 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
             ),
           ],
+
+          // ========== إعدادات كشف الحساب (PDF) ==========
+          const _SectionHeader('إعدادات كشف الحساب (PDF)'),
+          SwitchListTile(
+            secondary: const Icon(Icons.qr_code, color: Colors.blue),
+            title: const Text('إظهار رموز العمليات'),
+            subtitle: const Text('إظهار عمود الرمز في جدول كشف الحساب'),
+            value: _pdfShowCodes,
+            onChanged: (v) => _togglePdfSetting('pdf_show_codes', v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.star, color: Colors.amber),
+            title: const Text('إخفاء التصنيف'),
+            subtitle: const Text('إخفاء "عادي / VIP / جديد..." من كشف الحساب'),
+            value: _pdfHideCategory,
+            onChanged: (v) => _togglePdfSetting('pdf_hide_category', v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.person, color: Colors.teal),
+            title: const Text('إخفاء نوع الحساب'),
+            subtitle:
+                const Text('إخفاء "عميل / مورد / أخرى" من كشف الحساب'),
+            value: _pdfHideAccountType,
+            onChanged: (v) => _togglePdfSetting('pdf_hide_account_type', v),
+          ),
 
           // ========== الحماية ==========
           const _SectionHeader('الحماية'),
@@ -1186,14 +1291,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
           // ========== النسخ السحابي ==========
           const _SectionHeader('النسخ السحابي (Google Drive)'),
-
-          // حالة الحساب
           ListTile(
             leading: Icon(
               Icons.cloud,
               color: _gdriveSignedIn ? Colors.green : Colors.blue,
             ),
-            title: const Text('النسخ الاحتياطي على Drive'),
+            title: const Text('حالة الحساب'),
             subtitle: Text(_gdriveSignedIn
                 ? 'متصل: ${GDriveService.userEmail ?? ""}'
                 : 'لم يتم تسجيل الدخول'),
@@ -1206,25 +1309,21 @@ class _SettingsTabState extends State<SettingsTab> {
               _checkGDrive();
             },
           ),
-
-          // تفعيل/تعطيل النسخ السحابي التلقائي
           SwitchListTile(
             secondary:
                 const Icon(Icons.cloud_upload, color: Colors.deepPurple),
             title: const Text('النسخ السحابي التلقائي'),
             subtitle: Text(_cloudBackupEnabled
-                ? 'يتم رفع نسخة ${_cloudFreqLabel(_cloudFrequency)}'
+                ? 'يتم رفع نسخة ${CloudBackupService.frequencyLabel(_cloudFrequency)}'
                 : 'رفع نسخة احتياطية تلقائياً إلى Drive'),
             value: _cloudBackupEnabled,
             onChanged: _toggleCloudBackup,
           ),
-
           if (_cloudBackupEnabled) ...[
             ListTile(
               leading: const Icon(Icons.schedule, color: Colors.deepPurple),
               title: const Text('تكرار الرفع'),
-              subtitle:
-                  Text(_cloudFreqLabel(_cloudFrequency)),
+              subtitle: Text(CloudBackupService.frequencyLabel(_cloudFrequency)),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCloudFrequency,
             ),
