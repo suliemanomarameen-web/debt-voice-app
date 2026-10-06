@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/gdrive_service.dart';
 import '../services/backup_service.dart';
 import '../services/sync_service.dart';
+import '../services/cloud_backup_service.dart';
 
 class GDriveScreen extends StatefulWidget {
   const GDriveScreen({super.key});
@@ -21,11 +22,17 @@ class _GDriveScreenState extends State<GDriveScreen> {
   SyncStatus _syncStatus = SyncStatus.idle;
   bool _hasPending = false;
 
+  // ===== معلومات النسخ السحابي =====
+  bool _cloudBackupEnabled = false;
+  BackupFrequency _cloudFrequency = BackupFrequency.daily;
+  int _cloudMaxBackups = 10;
+  DateTime? _lastCloudBackup;
+
   @override
   void initState() {
     super.initState();
     _init();
-    // الاستماع لتغييرات حالة المزامنة
+    // الاستماع لحالة المزامنة
     SyncService.statusStream.listen((s) {
       if (mounted) setState(() => _syncStatus = s);
     });
@@ -35,6 +42,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
     setState(() => _busy = true);
     await GDriveService.trySilentSignIn();
     await _refreshSyncInfo();
+    await _refreshCloudInfo();
     await _refreshList();
     if (mounted) setState(() => _busy = false);
   }
@@ -50,6 +58,20 @@ class _GDriveScreenState extends State<GDriveScreen> {
       _lastUpload = lastUpload;
       _lastDownload = lastDownload;
       _hasPending = pending;
+    });
+  }
+
+  Future<void> _refreshCloudInfo() async {
+    final enabled = await CloudBackupService.isEnabled();
+    final freq = await CloudBackupService.getFrequency();
+    final max = await CloudBackupService.getMaxBackups();
+    final lastBackup = await CloudBackupService.getLastBackupTime();
+    if (!mounted) return;
+    setState(() {
+      _cloudBackupEnabled = enabled;
+      _cloudFrequency = freq;
+      _cloudMaxBackups = max;
+      _lastCloudBackup = lastBackup;
     });
   }
 
@@ -80,6 +102,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
     if (err == null) {
       await _refreshList();
       await _refreshSyncInfo();
+      await _refreshCloudInfo();
     }
   }
 
@@ -94,11 +117,12 @@ class _GDriveScreenState extends State<GDriveScreen> {
       _lastSync = null;
       _lastUpload = null;
       _lastDownload = null;
+      _lastCloudBackup = null;
     });
   }
 
   // ============================================================
-  // ============ المزامنة الثنائية (جديد) ====================
+  // ============ المزامنة الثنائية ============================
   // ============================================================
   Future<void> _syncNow() async {
     setState(() {
@@ -118,7 +142,6 @@ class _GDriveScreenState extends State<GDriveScreen> {
       });
       await _refreshSyncInfo();
 
-      // إذا كان هناك تعارض، أظهر إشعاراً
       if (result.hasConflict && mounted) {
         _showConflictDialog();
       }
@@ -159,7 +182,41 @@ class _GDriveScreenState extends State<GDriveScreen> {
   }
 
   // ============================================================
-  // ============ النسخ الاحتياطي (الوظائف القديمة) ============
+  // ============ النسخ السحابي ============================
+  // ============================================================
+  Future<void> _runCloudBackupNow() async {
+    setState(() {
+      _busy = true;
+      _status = 'جاري النسخ السحابي...';
+    });
+
+    await CloudBackupService.runNow();
+    await _refreshCloudInfo();
+    await _refreshList();
+
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _status = '✅ تم النسخ السحابي';
+    });
+  }
+
+  Future<void> _toggleCloudBackup(bool v) async {
+    await CloudBackupService.setEnabled(v);
+    await _refreshCloudInfo();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(v
+            ? 'تم تفعيل النسخ السحابي التلقائي'
+            : 'تم إيقاف النسخ السحابي'),
+        backgroundColor: v ? Colors.green : Colors.grey,
+      ),
+    );
+  }
+
+  // ============================================================
+  // ============ النسخ الاحتياطي اليدوي ============================
   // ============================================================
   Future<void> _upload() async {
     setState(() {
@@ -318,7 +375,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
     }
   }
 
-  Color _syncStatusColor(SyncStatus s, ThemeData theme) {
+  Color _syncStatusColor(SyncStatus s) {
     switch (s) {
       case SyncStatus.idle:
         return Colors.green;
@@ -331,6 +388,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
       case SyncStatus.error:
         return Colors.red;
     }
+  }
+
+  String _cloudFreqLabel(BackupFrequency f) {
+    return CloudBackupService.frequencyLabel(f);
   }
 
   String _fmtDate(String iso) {
@@ -424,7 +485,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
               const SizedBox(height: 16),
 
-              // ========== الأزرار ==========
+              // ========== زر تسجيل الدخول ==========
               if (!signedIn)
                 FilledButton.icon(
                   onPressed: _busy ? null : _signIn,
@@ -435,9 +496,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                   ),
                 ),
 
-              // ============================================================
-              // ============ قسم المزامنة (جديد) ==========================
-              // ============================================================
+              // ========== محتوى المسجل ==========
               if (signedIn) ...[
                 // ===== بطاقة المزامنة =====
                 Card(
@@ -471,16 +530,15 @@ class _GDriveScreenState extends State<GDriveScreen> {
                               ),
                             ),
                             const Spacer(),
-                            // مؤشر الحالة
                             Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: _syncStatusColor(_syncStatus, theme)
+                                color: _syncStatusColor(_syncStatus)
                                     .withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(20),
                                 border: Border.all(
-                                  color: _syncStatusColor(_syncStatus, theme),
+                                  color: _syncStatusColor(_syncStatus),
                                 ),
                               ),
                               child: Row(
@@ -488,7 +546,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                 children: [
                                   if (_syncStatus == SyncStatus.syncing ||
                                       _syncStatus == SyncStatus.uploading ||
-                                      _syncStatus == SyncStatus.downloading)
+                                      _syncStatus ==
+                                          SyncStatus.downloading)
                                     const SizedBox(
                                       width: 12,
                                       height: 12,
@@ -499,8 +558,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                     Icon(
                                       Icons.circle,
                                       size: 10,
-                                      color: _syncStatusColor(
-                                          _syncStatus, theme),
+                                      color: _syncStatusColor(_syncStatus),
                                     ),
                                   const SizedBox(width: 4),
                                   Text(
@@ -508,8 +566,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
-                                      color: _syncStatusColor(
-                                          _syncStatus, theme),
+                                      color: _syncStatusColor(_syncStatus),
                                     ),
                                   ),
                                 ],
@@ -521,7 +578,6 @@ class _GDriveScreenState extends State<GDriveScreen> {
                         const Divider(height: 1),
                         const SizedBox(height: 12),
 
-                        // ===== معلومات التوقيت =====
                         _infoRow(
                           Icons.sync,
                           'آخر مزامنة',
@@ -575,7 +631,6 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
                         const SizedBox(height: 14),
 
-                        // ===== زر المزامنة اليدوية =====
                         FilledButton.icon(
                           onPressed: _busy ? null : _syncNow,
                           icon: const Icon(Icons.sync),
@@ -593,11 +648,105 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
                 const SizedBox(height: 16),
 
-                // ===== الأزرار القديمة (رفع/تحديث) =====
+                // ===== بطاقة النسخ السحابي =====
+                Card(
+                  elevation: 3,
+                  color: isDark
+                      ? Colors.deepPurple.shade900.withOpacity(0.25)
+                      : Colors.deepPurple.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.cloud_upload,
+                              color: isDark
+                                  ? Colors.deepPurple.shade200
+                                  : Colors.deepPurple.shade700,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'النسخ السحابي التلقائي',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: isDark
+                                      ? Colors.deepPurple.shade100
+                                      : Colors.deepPurple.shade900,
+                                ),
+                              ),
+                            ),
+                            Switch(
+                              value: _cloudBackupEnabled,
+                              onChanged: _busy ? null : _toggleCloudBackup,
+                              activeColor: Colors.deepPurple,
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 20),
+
+                        if (_cloudBackupEnabled) ...[
+                          _infoRow(
+                            Icons.schedule,
+                            'التكرار',
+                            _cloudFreqLabel(_cloudFrequency),
+                            onCard,
+                          ),
+                          const SizedBox(height: 6),
+                          _infoRow(
+                            Icons.storage,
+                            'عدد النسخ المحفوظة',
+                            _cloudMaxBackups < 0
+                                ? 'غير نهائي'
+                                : 'آخر $_cloudMaxBackups نسخة',
+                            onCard,
+                          ),
+                          const SizedBox(height: 6),
+                          _infoRow(
+                            Icons.history,
+                            'آخر نسخة سحابية',
+                            _fmtRelative(_lastCloudBackup),
+                            onCard,
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            onPressed: _busy ? null : _runCloudBackupNow,
+                            icon: const Icon(Icons.cloud_upload),
+                            label: const Text('رفع نسخة الآن'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 44),
+                              backgroundColor: Colors.deepPurple,
+                            ),
+                          ),
+                        ] else ...[
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              'عند التفعيل، يتم رفع نسخة احتياطية تلقائياً إلى Drive حسب التكرار المحدد في الإعدادات.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: onCard.withOpacity(0.7),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ===== الأزرار اليدوية =====
                 FilledButton.icon(
                   onPressed: _busy ? null : _upload,
-                  icon: const Icon(Icons.cloud_upload),
-                  label: const Text('رفع نسخة احتياطية منفصلة'),
+                  icon: const Icon(Icons.backup),
+                  label: const Text('إنشاء نسخة منفصلة الآن'),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size(double.infinity, 48),
                   ),
@@ -606,7 +755,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _refreshList,
                   icon: const Icon(Icons.refresh),
-                  label: const Text('تحديث القائمة'),
+                  label: const Text('تحديث قائمة النسخ'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 48),
                   ),
@@ -644,8 +793,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                         const SizedBox(
                           width: 20,
                           height: 20,
-                          child:
-                              CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       else
                         Icon(
@@ -695,12 +843,11 @@ class _GDriveScreenState extends State<GDriveScreen> {
                 Row(
                   children: [
                     Icon(Icons.folder,
-                        color: isDark
-                            ? Colors.blue.shade300
-                            : Colors.blue),
+                        color:
+                            isDark ? Colors.blue.shade300 : Colors.blue),
                     const SizedBox(width: 8),
                     Text(
-                      'النسخ المنفصلة على Drive (${_backups.length})',
+                      'النسخ المحفوظة على Drive (${_backups.length})',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
@@ -719,8 +866,8 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                 : Colors.blue),
                         title: Text(
                           b['name'] ?? '',
-                          style: TextStyle(
-                              fontSize: 13, color: onCard),
+                          style:
+                              TextStyle(fontSize: 13, color: onCard),
                         ),
                         subtitle: Text(
                           _fmtDate(b['created']),
@@ -769,8 +916,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                               : Colors.grey.shade400),
                       const SizedBox(height: 12),
                       Text('لا توجد نسخ منفصلة',
-                          style:
-                              TextStyle(color: onCard, fontSize: 14)),
+                          style: TextStyle(color: onCard, fontSize: 14)),
                       const SizedBox(height: 6),
                       Text(
                         'المزامنة التلقائية تعمل في الخلفية',
@@ -784,7 +930,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                 ),
               ],
 
-              // ========== تلميحات ==========
+              // ========== التلميحات ==========
               const SizedBox(height: 24),
               Card(
                 color: isDark
@@ -803,7 +949,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                   : Colors.blue.shade700),
                           const SizedBox(width: 8),
                           Text(
-                            'كيف تعمل المزامنة؟',
+                            'كيف يعمل؟',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: isDark
@@ -815,13 +961,18 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '1. سجّل الدخول بحساب Google\n'
-                        '2. عندما تضيف أي عملية، تُرفع تلقائياً بعد 5 ثوانٍ\n'
-                        '3. عند فتح التطبيق على الجهاز الآخر، تُنزَّل التحديثات\n'
-                        '4. كل 5 دقائق مزامنة تلقائية في الخلفية\n'
-                        '5. يمكنك المزامنة يدوياً في أي وقت',
+                        '🔄 المزامنة الثنائية:\n'
+                        '  • عند إضافة عملية → يُرفع تلقائياً بعد 5 ثوانٍ\n'
+                        '  • عند فتح التطبيق → تُنزَّل التحديثات تلقائياً\n'
+                        '  • كل 5 دقائق مزامنة دورية في الخلفية\n\n'
+                        '☁️ النسخ السحابي:\n'
+                        '  • رفع نسخة احتياطية منفصلة حسب التكرار المحدد\n'
+                        '  • يحفظ عدد محدد من النسخ أو غير نهائي\n\n'
+                        '📱 النسخ المنفصلة:\n'
+                        '  • تُنشأ يدوياً لاستعادة إصدارات محددة',
                         style: TextStyle(
                           fontSize: 12,
+                          height: 1.5,
                           color: isDark
                               ? Colors.blue.shade100
                               : Colors.blue.shade900,
