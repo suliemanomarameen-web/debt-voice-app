@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'debts_tab.dart';
 import 'customers_tab.dart';
+import 'transactions_tab.dart';
 import 'settings_tab.dart';
 
 class TabsScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class _TabsScreenState extends State<TabsScreen> {
   final _tabs = const [
     DebtsTab(),
     CustomersTab(),
+    TransactionsTab(),
     SettingsTab(),
   ];
 
@@ -37,6 +39,11 @@ class _TabsScreenState extends State<TabsScreen> {
               icon: Icon(Icons.people_outline),
               selectedIcon: Icon(Icons.people),
               label: 'الحسابات',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              selectedIcon: Icon(Icons.receipt_long),
+              label: 'العمليات',
             ),
             NavigationDestination(
               icon: Icon(Icons.settings_outlined),
