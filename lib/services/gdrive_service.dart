@@ -16,6 +16,9 @@ class GDriveService {
     'https://www.googleapis.com/auth/drive.file',
   ];
 
+  /// اسم ملف المزامنة الموحد (يُستخدم للمزامنة الثنائية)
+  static const String _syncFileName = 'debt_sync_data.json';
+
   static GoogleSignIn? _googleSignIn;
   static GoogleSignInAccount? _currentUser;
   static drive.DriveApi? _driveApi;
@@ -32,7 +35,6 @@ class GDriveService {
   }
 
   // ========== تسجيل الدخول مع كشف الأخطاء ==========
-  /// يعيد: null إذا نجح، أو نص الخطأ
   static Future<String?> signInWithError() async {
     try {
       debugPrint('🔵 [GDrive] Starting sign in...');
@@ -103,7 +105,15 @@ class GDriveService {
     }
   }
 
-  // ========== رفع نسخة احتياطية ==========
+  /// تأكد من تسجيل الدخول (يحاول silent ثم interactive)
+  static Future<bool> ensureSignedIn() async {
+    if (_driveApi != null) return true;
+    if (await trySilentSignIn()) return true;
+    final err = await signInWithError();
+    return err == null;
+  }
+
+  // ========== رفع نسخة احتياطية (الوظيفة القديمة) ==========
   static Future<Map<String, dynamic>> uploadBackup() async {
     try {
       if (_driveApi == null) {
@@ -257,6 +267,128 @@ class GDriveService {
       return true;
     } catch (e) {
       debugPrint('❌ Delete error: $e');
+      return false;
+    }
+  }
+
+  // ============================================================
+  // ============= دوال المزامنة الثنائية (جديدة) =============
+  // ============================================================
+
+  /// الحصول على معرف ملف المزامنة (إن وُجد)
+  static Future<String?> getSyncFileId() async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      final result = await _driveApi!.files.list(
+        q: "name = '$_syncFileName' and trashed = false",
+        $fields: 'files(id,name,modifiedTime)',
+      );
+
+      if (result.files != null && result.files!.isNotEmpty) {
+        return result.files!.first.id;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ getSyncFileId error: $e');
+      return null;
+    }
+  }
+
+  /// الحصول على وقت آخر تعديل لملف المزامنة
+  static Future<DateTime?> getSyncFileModifiedTime() async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      final result = await _driveApi!.files.list(
+        q: "name = '$_syncFileName' and trashed = false",
+        $fields: 'files(id,modifiedTime)',
+      );
+
+      if (result.files != null && result.files!.isNotEmpty) {
+        final modified = result.files!.first.modifiedTime;
+        return modified;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ getSyncFileModifiedTime error: $e');
+      return null;
+    }
+  }
+
+  /// تحميل ملف المزامنة من Drive
+  /// يعيد: Map يحتوي على البيانات، أو null إذا لم يوجد
+  static Future<Map<String, dynamic>?> downloadSyncFile() async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      final fileId = await getSyncFileId();
+      if (fileId == null) return null;
+
+      final media = await _driveApi!.files.get(
+        fileId,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
+
+      final chunks = <int>[];
+      await for (final chunk in media.stream) {
+        chunks.addAll(chunk);
+      }
+
+      final content = utf8.decode(chunks);
+      final data = jsonDecode(content) as Map<String, dynamic>;
+      debugPrint('✅ Sync file downloaded');
+      return data;
+    } catch (e) {
+      debugPrint('❌ downloadSyncFile error: $e');
+      return null;
+    }
+  }
+
+  /// رفع ملف المزامنة إلى Drive (إنشاء أو تحديث)
+  static Future<bool> uploadSyncFile(Map<String, dynamic> data) async {
+    try {
+      if (!await ensureSignedIn()) return false;
+
+      final jsonStr = jsonEncode(data);
+      final bytes = utf8.encode(jsonStr);
+
+      // البحث عن ملف موجود
+      final existingId = await getSyncFileId();
+
+      if (existingId != null) {
+        // تحديث الملف الموجود
+        final driveFile = drive.File();
+        final media = drive.Media(
+          Stream.value(bytes),
+          bytes.length,
+        );
+        await _driveApi!.files.update(
+          driveFile,
+          existingId,
+          uploadMedia: media,
+        );
+        debugPrint('✅ Sync file updated');
+      } else {
+        // إنشاء ملف جديد
+        final driveFile = drive.File()
+          ..name = _syncFileName
+          ..mimeType = 'application/json';
+
+        final media = drive.Media(
+          Stream.value(bytes),
+          bytes.length,
+        );
+
+        await _driveApi!.files.create(
+          driveFile,
+          uploadMedia: media,
+        );
+        debugPrint('✅ Sync file created');
+      }
+      return true;
+    } catch (e) {
+      debugPrint('❌ uploadSyncFile error: $e');
       return false;
     }
   }
