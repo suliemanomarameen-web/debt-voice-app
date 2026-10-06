@@ -37,23 +37,15 @@ class SyncResult {
 class SyncConflict {
   final DateTime localTime;
   final DateTime cloudTime;
-  final int localCustomers;
-  final int localTransactions;
-  final int cloudCustomers;
-  final int cloudTransactions;
 
   SyncConflict({
     required this.localTime,
     required this.cloudTime,
-    required this.localCustomers,
-    required this.localTransactions,
-    required this.cloudCustomers,
-    required this.cloudTransactions,
   });
 }
 
 class SyncService {
-  // ========== المفاتيح في SharedPreferences ==========
+  // ========== المفاتيح ==========
   static const String _keyLastSyncTime = 'sync_last_time';
   static const String _keyLastUpload = 'sync_last_upload';
   static const String _keyLastDownload = 'sync_last_download';
@@ -77,12 +69,11 @@ class SyncService {
   static SyncConflict? get lastConflict => _lastConflict;
 
   // ========== التهيئة ==========
-  /// يُستدعى من main.dart عند بدء التطبيق
   static Future<void> init() async {
     // ربط callback التغييرات في قاعدة البيانات
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
 
-    // مزامنة أولية (بعد تأخير بسيط)
+    // مزامنة أولية بعد 3 ثوانٍ
     Future.delayed(const Duration(seconds: 3), () {
       initialSync();
     });
@@ -97,14 +88,12 @@ class SyncService {
     debugPrint('✅ [Sync] Initialized');
   }
 
-  /// إيقاف المزامنة (عند الخروج)
   static void dispose() {
     _debounceTimer?.cancel();
     _periodicTimer?.cancel();
     _statusController.close();
   }
 
-  // ========== الإشعارات ==========
   static void _setStatus(SyncStatus s) {
     _status = s;
     if (!_statusController.isClosed) {
@@ -114,7 +103,6 @@ class SyncService {
 
   // ========== عند تغيير البيانات محلياً ==========
   static void _onLocalDataChanged() {
-    // حفظ وقت آخر تغيير محلي
     _saveLastLocalChange(DateTime.now());
     _saveHasPendingChanges(true);
 
@@ -125,8 +113,7 @@ class SyncService {
     });
   }
 
-  // ========== مزامنة صامتة (تلقائية) ==========
-  /// لا تُظهر رسائل، تُنفَّذ في الخلفية
+  // ========== مزامنة صامتة ==========
   static Future<void> silentSync() async {
     if (_isSyncing) return;
     if (!GDriveService.isSignedIn) return;
@@ -141,10 +128,9 @@ class SyncService {
     }
   }
 
-  // ========== مزامنة أولية (عند بدء التطبيق) ==========
+  // ========== مزامنة أولية ==========
   static Future<SyncResult> initialSync() async {
     if (!GDriveService.isSignedIn) {
-      // محاولة silent sign-in
       await GDriveService.trySilentSignIn();
     }
 
@@ -206,27 +192,27 @@ class SyncService {
         );
       }
 
-      // 5. إذا كان هناك تعارض (كلاهما تغير)
+      // 5. تعارض؟
       final conflict = hasLocalChanges && hasCloudChanges;
 
       int addedCustomers = 0;
       int addedTransactions = 0;
 
+      // 6. نزّل ودمج
       if (hasCloudChanges && cloudData != null) {
-        // نزّل ودمج
         if (!silent) _setStatus(SyncStatus.downloading);
         final result = await _mergeCloudData(cloudData);
         addedCustomers = result['customers'] ?? 0;
         addedTransactions = result['transactions'] ?? 0;
       }
 
-      // 6. ارفع الحالة الحالية إلى Drive (سواء كان هناك تغيير محلي أو بعد الدمج)
+      // 7. ارفع الحالة الحالية
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
         await _uploadCurrentState();
       }
 
-      // 7. تحديث آخر مزامنة
+      // 8. تحديث وقت المزامنة
       final now = DateTime.now();
       await prefs.setString(_keyLastSyncTime, now.toIso8601String());
       await prefs.setString(_keyLastUpload, now.toIso8601String());
@@ -235,15 +221,11 @@ class SyncService {
       }
       await _saveHasPendingChanges(false);
 
-      // 8. إذا كان هناك تعارض، نخزنه
+      // 9. حفظ التعارض إن وجد
       if (conflict) {
         _lastConflict = SyncConflict(
           localTime: lastLocal ?? DateTime.now(),
           cloudTime: cloudModified ?? DateTime.now(),
-          localCustomers: 0,
-          localTransactions: 0,
-          cloudCustomers: 0,
-          cloudTransactions: 0,
         );
       }
 
@@ -269,7 +251,7 @@ class SyncService {
     }
   }
 
-  // ========== دمج البيانات السحابية مع المحلية ==========
+  // ========== دمج البيانات السحابية ==========
   static Future<Map<String, int>> _mergeCloudData(
       Map<String, dynamic> cloudData) async {
     final db = DatabaseHelper.instance;
@@ -279,9 +261,22 @@ class SyncService {
     try {
       final customers = (cloudData['customers'] as List?) ?? [];
       final transactions = (cloudData['transactions'] as List?) ?? [];
+      final usedCodes = (cloudData['used_codes'] as List?) ?? [];
 
-      // ===== دمج الزبائن =====
-      // خريطة: cloudId → localId
+      // ===== 1. دمج الرموز المستخدمة أولاً =====
+      // (لتجنب تكرار الأرقام عند إضافة عمليات جديدة)
+      for (final uc in usedCodes) {
+        final code = uc['code'] as String?;
+        final type = uc['type'] as String?;
+        if (code == null || type == null) continue;
+
+        final exists = await db.codeExists(code);
+        if (!exists) {
+          await db.addUsedCode(code: code, type: type);
+        }
+      }
+
+      // ===== 2. دمج الزبائن =====
       final Map<int, int> idMap = {};
 
       for (final c in customers) {
@@ -291,14 +286,12 @@ class SyncService {
         final name = c['name'] as String? ?? '';
         final createdAt = c['created_at'] as String? ?? '';
 
-        // ابحث عن زبون بنفس الاسم والتاريخ
         final existingId =
             await db.findCustomerIdByNameAndDate(name, createdAt);
 
         if (existingId != null) {
           idMap[cloudId] = existingId;
         } else {
-          // أضف زبون جديد (بدون id من السحابة لتفادي التعارض)
           final newMap = Map<String, dynamic>.from(c);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -307,7 +300,7 @@ class SyncService {
         }
       }
 
-      // ===== دمج المعاملات =====
+      // ===== 3. دمج المعاملات =====
       for (final t in transactions) {
         final cloudCustomerId = t['customer_id'] as int?;
         if (cloudCustomerId == null) continue;
@@ -319,7 +312,6 @@ class SyncService {
         final type = t['type'] as String? ?? 'debt';
         final createdAt = t['created_at'] as String? ?? '';
 
-        // تحقق من وجود المعاملة
         final exists = await db.transactionExists(
           customerId: localCustomerId,
           amount: amount,
@@ -348,19 +340,21 @@ class SyncService {
     };
   }
 
-  // ========== رفع الحالة الحالية إلى Drive ==========
+  // ========== رفع الحالة الحالية ==========
   static Future<bool> _uploadCurrentState() async {
     try {
       final db = DatabaseHelper.instance;
       final customers = await db.allCustomersRaw();
       final transactions = await db.allTransactionsRaw();
+      final usedCodes = await db.allUsedCodesRaw();
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 1,
+        'version': 2, // رُفع من 1 إلى 2 (لوجود used_codes)
         'created_at': DateTime.now().toIso8601String(),
         'customers': customers,
         'transactions': transactions,
+        'used_codes': usedCodes,
       };
 
       return await GDriveService.uploadSyncFile(data);
@@ -370,7 +364,7 @@ class SyncService {
     }
   }
 
-  // ========== أدوات مساعدة ==========
+  // ========== أدوات ==========
   static Future<void> _saveLastLocalChange(DateTime dt) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastLocalChange, dt.toIso8601String());
@@ -381,28 +375,24 @@ class SyncService {
     await prefs.setBool(_keyHasPendingChanges, has);
   }
 
-  /// جلب آخر وقت مزامنة
   static Future<DateTime?> getLastSyncTime() async {
     final prefs = await SharedPreferences.getInstance();
     final s = prefs.getString(_keyLastSyncTime);
     return s != null ? DateTime.parse(s) : null;
   }
 
-  /// جلب آخر وقت رفع
   static Future<DateTime?> getLastUploadTime() async {
     final prefs = await SharedPreferences.getInstance();
     final s = prefs.getString(_keyLastUpload);
     return s != null ? DateTime.parse(s) : null;
   }
 
-  /// جلب آخر وقت تنزيل
   static Future<DateTime?> getLastDownloadTime() async {
     final prefs = await SharedPreferences.getInstance();
     final s = prefs.getString(_keyLastDownload);
     return s != null ? DateTime.parse(s) : null;
   }
 
-  /// هل هناك تغييرات معلقة لم تُرفع بعد؟
   static Future<bool> hasPendingChanges() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyHasPendingChanges) ?? false;
