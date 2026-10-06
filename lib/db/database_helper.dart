@@ -8,6 +8,9 @@ class DatabaseHelper {
   static Database? _db;
   DatabaseHelper._init();
 
+  /// يُستدعى بعد أي تعديل في البيانات (للمزامنة)
+  static void Function()? onDataChanged;
+
   Future<Database> get database async {
     if (_db != null) return _db!;
     _db = await _initDB('debt_book.db');
@@ -68,23 +71,42 @@ class DatabaseHelper {
     }
   }
 
+  /// إشعار بأن البيانات تغيرت (للمزامنة التلقائية)
+  void _notifyChanged() {
+    try {
+      onDataChanged?.call();
+    } catch (_) {}
+  }
+
   // ============ الزبائن ============
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
-    return db.insert('customers', c.toMap());
+    final id = await db.insert('customers', c.toMap());
+    _notifyChanged();
+    return id;
+  }
+
+  /// إدراج زبون من المزامنة (بدون إشعار - لتجنب infinite loop)
+  Future<int> insertCustomerRaw(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('customers', data);
   }
 
   Future<int> updateCustomer(Customer c) async {
     final db = await database;
-    return db.update('customers', c.toMap(),
+    final r = await db.update('customers', c.toMap(),
         where: 'id = ?', whereArgs: [c.id]);
+    _notifyChanged();
+    return r;
   }
 
   Future<int> deleteCustomer(int id) async {
     final db = await database;
     await db.delete('transactions',
         where: 'customer_id = ?', whereArgs: [id]);
-    return db.delete('customers', where: 'id = ?', whereArgs: [id]);
+    final r = await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged();
+    return r;
   }
 
   Future<List<Customer>> allCustomers() async {
@@ -118,18 +140,30 @@ class DatabaseHelper {
   // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
-    return db.insert('transactions', t.toMap());
+    final id = await db.insert('transactions', t.toMap());
+    _notifyChanged();
+    return id;
+  }
+
+  /// إدراج معاملة من المزامنة (بدون إشعار)
+  Future<int> insertTransactionRaw(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('transactions', data);
   }
 
   Future<int> updateTransaction(Transaction t) async {
     final db = await database;
-    return db.update('transactions', t.toMap(),
+    final r = await db.update('transactions', t.toMap(),
         where: 'id = ?', whereArgs: [t.id]);
+    _notifyChanged();
+    return r;
   }
 
   Future<int> deleteTransaction(int id) async {
     final db = await database;
-    return db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+    final r = await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+    _notifyChanged();
+    return r;
   }
 
   Future<Transaction?> getTransaction(int id) async {
@@ -170,5 +204,52 @@ class DatabaseHelper {
     ''');
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
+  }
+
+  /// البحث عن معاملة موجودة بنفس البيانات (لتفادي التكرار أثناء المزامنة)
+  Future<bool> transactionExists({
+    required int customerId,
+    required double amount,
+    required String type,
+    required String createdAt,
+  }) async {
+    final db = await database;
+    final r = await db.query('transactions',
+        where: 'customer_id = ? AND amount = ? AND type = ? AND created_at = ?',
+        whereArgs: [customerId, amount, type, createdAt],
+        limit: 1);
+    return r.isNotEmpty;
+  }
+
+  /// البحث عن زبون بنفس الاسم ونفس تاريخ الإنشاء
+  Future<int?> findCustomerIdByNameAndDate(
+      String name, String createdAt) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'name = ? AND created_at = ?',
+        whereArgs: [name, createdAt],
+        limit: 1);
+    if (r.isEmpty) return null;
+    return r.first['id'] as int?;
+  }
+
+  /// إفراغ كل البيانات (للاستعادة الكاملة)
+  Future<void> clearAll() async {
+    final db = await database;
+    await db.delete('transactions');
+    await db.delete('customers');
+    _notifyChanged();
+  }
+
+  /// جلب كل المعاملات (للتصدير)
+  Future<List<Map<String, dynamic>>> allTransactionsRaw() async {
+    final db = await database;
+    return db.query('transactions');
+  }
+
+  /// جلب كل الزبائن (للتصدير)
+  Future<List<Map<String, dynamic>>> allCustomersRaw() async {
+    final db = await database;
+    return db.query('customers');
   }
 }
