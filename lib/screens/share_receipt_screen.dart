@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../db/database_helper.dart';
@@ -23,10 +24,26 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
   DateTime? _fromDate;
   DateTime? _toDate;
 
+  // ===== إعدادات العرض =====
+  bool _hideCategory = false;
+  bool _hideAccountType = false;
+  bool _showCodes = true;
+
   @override
   void initState() {
     super.initState();
+    _loadPrefs();
     _load();
+  }
+
+  Future<void> _loadPrefs() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _hideCategory = sp.getBool('pdf_hide_category') ?? false;
+      _hideAccountType = sp.getBool('pdf_hide_account_type') ?? false;
+      _showCodes = sp.getBool('pdf_show_codes') ?? true;
+    });
   }
 
   Future<void> _load() async {
@@ -206,7 +223,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
         appBar: AppBar(
           title: const Text('مشاركة كصورة'),
           actions: [
-            // زر الفلترة (جديد)
             IconButton(
               icon: Icon(
                 (_fromDate == null && _toDate == null)
@@ -219,7 +235,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
               tooltip: 'فلترة بالتاريخ',
               onPressed: _loading ? null : _showFilterDialog,
             ),
-            // زر المشاركة
             IconButton(
               icon: const Icon(Icons.share),
               tooltip: 'مشاركة',
@@ -233,7 +248,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    // شريط عرض الفلتر الحالي
                     if (_fromDate != null || _toDate != null)
                       Container(
                         width: double.infinity,
@@ -247,8 +261,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                         child: Row(
                           children: [
                             Icon(Icons.filter_alt,
-                                size: 18,
-                                color: theme.colorScheme.primary),
+                                size: 18, color: theme.colorScheme.primary),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
@@ -275,7 +288,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                           ],
                         ),
                       ),
-
                     Screenshot(
                       controller: _controller,
                       child: _buildReceipt(theme, isDark),
@@ -314,7 +326,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
     const textDark = Color(0xFF1F2937);
     const textGray = Color(0xFF6B7280);
 
-    // حساب الإجماليات من المعاملات المفلترة فقط
     double totalDebt = 0;
     double totalPaid = 0;
     for (final t in _tx) {
@@ -335,7 +346,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
+          // ===== Header =====
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -368,7 +379,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                     fontSize: 12,
                   ),
                 ),
-                // عرض الفترة إذا كانت مفلترة
                 if (_fromDate != null || _toDate != null) ...[
                   const SizedBox(height: 6),
                   Container(
@@ -392,7 +402,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ),
           const SizedBox(height: 16),
 
-          // معلومات
+          // ===== معلومات العميل =====
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -404,17 +414,21 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
               children: [
                 _receiptRow('الهاتف',
                     widget.customer.phone ?? 'غير محدد', textDark, textGray),
-                _receiptRow('التصنيف',
-                    _categoryLabel(widget.customer.category), textDark, textGray),
-                _receiptRow('النوع',
-                    _accountTypeLabel(widget.customer.accountType),
-                    textDark, textGray),
+                // إخفاء التصنيف
+                if (!_hideCategory)
+                  _receiptRow('التصنيف',
+                      _categoryLabel(widget.customer.category), textDark, textGray),
+                // إخفاء نوع الحساب
+                if (!_hideAccountType)
+                  _receiptRow('النوع',
+                      _accountTypeLabel(widget.customer.accountType),
+                      textDark, textGray),
               ],
             ),
           ),
           const SizedBox(height: 16),
 
-          // الرصيد (المفلتر)
+          // ===== الرصيد =====
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -453,7 +467,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ),
           const SizedBox(height: 16),
 
-          // إجماليات
+          // ===== الإجماليات =====
           Row(
             children: [
               Expanded(
@@ -469,7 +483,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ),
           const SizedBox(height: 16),
 
-          // آخر العمليات (مع الأصناف)
+          // ===== آخر العمليات =====
           if (_tx.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(12),
@@ -502,7 +516,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                       prefix = 'سداد';
                     }
 
-                    // استخراج الأصناف بشكل نظيف
                     final items = t.items.isEmpty
                         ? ''
                         : t.items
@@ -539,6 +552,31 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                                   ),
                                 ),
                               ),
+                              // عرض الرمز
+                              if (_showCodes &&
+                                  t.code != null &&
+                                  t.code!.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEFF6FF),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: const Color(0xFF93C5FD),
+                                      width: 0.5,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    t.code!,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF2563EB),
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(width: 6),
                               Text(
                                 _formatDateShort(t.createdAt),
                                 style:
@@ -546,19 +584,24 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                               ),
                             ],
                           ),
-                          // عرض الأصناف تحت العملية (جديد)
+                          // الأصناف / البيان
                           if (items.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(
                                   right: 16, top: 2),
                               child: Row(
                                 children: [
-                                  Icon(Icons.inventory_2_outlined,
-                                      size: 12, color: textGray),
+                                  Icon(
+                                    isReturn || isDebt
+                                        ? Icons.inventory_2_outlined
+                                        : Icons.description_outlined,
+                                    size: 12,
+                                    color: textGray,
+                                  ),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
-                                      'الأصناف: $items',
+                                      items,
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: textGray,
@@ -579,7 +622,7 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
           ],
           const SizedBox(height: 16),
 
-          // Footer
+          // ===== Footer =====
           Center(
             child: Column(
               children: [
@@ -615,7 +658,8 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
             ),
           ),
           Expanded(
-            child: Text(value, style: TextStyle(fontSize: 12, color: textColor)),
+            child: Text(value,
+                style: TextStyle(fontSize: 12, color: textColor)),
           ),
         ],
       ),
