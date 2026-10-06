@@ -12,6 +12,7 @@ import 'services/permission_service.dart';
 import 'services/speech_service.dart';
 import 'services/parser_service.dart';
 import 'services/query_service.dart';
+import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/reminder_service.dart';
 import 'services/tts_service.dart';
@@ -37,8 +38,11 @@ void main() async {
   final theme = ThemeService();
   await theme.load();
 
-  // 🔄 النسخ الاحتياطي التلقائي
+  // 🔄 النسخ الاحتياطي التلقائي المحلي
   await AutoBackupService.init();
+
+  // ☁️ المزامنة الثنائية مع Google Drive
+  await SyncService.init();
 
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
