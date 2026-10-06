@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/gdrive_service.dart';
 import '../services/backup_service.dart';
+import '../services/sync_service.dart';
 
 class GDriveScreen extends StatefulWidget {
   const GDriveScreen({super.key});
@@ -13,17 +14,43 @@ class _GDriveScreenState extends State<GDriveScreen> {
   String _status = '';
   List<Map<String, dynamic>> _backups = [];
 
+  // ===== معلومات المزامنة =====
+  DateTime? _lastSync;
+  DateTime? _lastUpload;
+  DateTime? _lastDownload;
+  SyncStatus _syncStatus = SyncStatus.idle;
+  bool _hasPending = false;
+
   @override
   void initState() {
     super.initState();
     _init();
+    // الاستماع لتغييرات حالة المزامنة
+    SyncService.statusStream.listen((s) {
+      if (mounted) setState(() => _syncStatus = s);
+    });
   }
 
   Future<void> _init() async {
     setState(() => _busy = true);
     await GDriveService.trySilentSignIn();
+    await _refreshSyncInfo();
     await _refreshList();
     if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _refreshSyncInfo() async {
+    final lastSync = await SyncService.getLastSyncTime();
+    final lastUpload = await SyncService.getLastUploadTime();
+    final lastDownload = await SyncService.getLastDownloadTime();
+    final pending = await SyncService.hasPendingChanges();
+    if (!mounted) return;
+    setState(() {
+      _lastSync = lastSync;
+      _lastUpload = lastUpload;
+      _lastDownload = lastDownload;
+      _hasPending = pending;
+    });
   }
 
   Future<void> _refreshList() async {
@@ -50,7 +77,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
       _status = err == null ? '✅ تم تسجيل الدخول' : '❌ $err';
     });
 
-    if (err == null) await _refreshList();
+    if (err == null) {
+      await _refreshList();
+      await _refreshSyncInfo();
+    }
   }
 
   Future<void> _signOut() async {
@@ -61,9 +91,76 @@ class _GDriveScreenState extends State<GDriveScreen> {
     setState(() {
       _backups = [];
       _status = 'تم تسجيل الخروج';
+      _lastSync = null;
+      _lastUpload = null;
+      _lastDownload = null;
     });
   }
 
+  // ============================================================
+  // ============ المزامنة الثنائية (جديد) ====================
+  // ============================================================
+  Future<void> _syncNow() async {
+    setState(() {
+      _busy = true;
+      _status = 'جاري المزامنة...';
+    });
+
+    final result = await SyncService.manualSync();
+
+    if (!mounted) return;
+
+    if (result.success) {
+      setState(() {
+        _status = '✅ ${result.message}\n'
+            '${result.customersAdded > 0 ? "حسابات جديدة: ${result.customersAdded}\n" : ""}'
+            '${result.transactionsAdded > 0 ? "عمليات جديدة: ${result.transactionsAdded}" : ""}';
+      });
+      await _refreshSyncInfo();
+
+      // إذا كان هناك تعارض، أظهر إشعاراً
+      if (result.hasConflict && mounted) {
+        _showConflictDialog();
+      }
+    } else {
+      setState(() => _status = '❌ ${result.message}');
+    }
+
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _showConflictDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('تعارض في المزامنة'),
+            ],
+          ),
+          content: const Text(
+            'تم اكتشاف تعارض بين هذا الجهاز والنسخة السحابية.\n\n'
+            'تم دمج البيانات تلقائياً (لم تُفقد أي عملية).\n\n'
+            'البيانات الموجودة على السحابة تم تحديثها الآن بأحدث نسخة.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('تم'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // ============ النسخ الاحتياطي (الوظائف القديمة) ============
+  // ============================================================
   Future<void> _upload() async {
     setState(() {
       _busy = true;
@@ -186,6 +283,67 @@ class _GDriveScreenState extends State<GDriveScreen> {
     return r ?? false;
   }
 
+  // ========== أدوات مساعدة ==========
+  String _fmtDateTime(DateTime? dt) {
+    if (dt == null) return 'لم تحدث بعد';
+    final local = dt.toLocal();
+    return '${local.year}/${local.month.toString().padLeft(2, '0')}/${local.day.toString().padLeft(2, '0')} - '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _fmtRelative(DateTime? dt) {
+    if (dt == null) return 'أبداً';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'قبل ${diff.inSeconds} ثانية';
+    if (diff.inMinutes < 60) return 'قبل ${diff.inMinutes} دقيقة';
+    if (diff.inHours < 24) return 'قبل ${diff.inHours} ساعة';
+    if (diff.inDays < 30) return 'قبل ${diff.inDays} يوم';
+    return _fmtDateTime(dt);
+  }
+
+  String _syncStatusLabel(SyncStatus s) {
+    switch (s) {
+      case SyncStatus.idle:
+        return 'جاهز';
+      case SyncStatus.uploading:
+        return 'جاري الرفع...';
+      case SyncStatus.downloading:
+        return 'جاري التنزيل...';
+      case SyncStatus.syncing:
+        return 'جاري المزامنة...';
+      case SyncStatus.conflict:
+        return '⚠️ تعارض';
+      case SyncStatus.error:
+        return '❌ خطأ';
+    }
+  }
+
+  Color _syncStatusColor(SyncStatus s, ThemeData theme) {
+    switch (s) {
+      case SyncStatus.idle:
+        return Colors.green;
+      case SyncStatus.uploading:
+      case SyncStatus.downloading:
+      case SyncStatus.syncing:
+        return Colors.blue;
+      case SyncStatus.conflict:
+        return Colors.orange;
+      case SyncStatus.error:
+        return Colors.red;
+    }
+  }
+
+  String _fmtDate(String iso) {
+    if (iso.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} - '
+          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -277,22 +435,180 @@ class _GDriveScreenState extends State<GDriveScreen> {
                   ),
                 ),
 
+              // ============================================================
+              // ============ قسم المزامنة (جديد) ==========================
+              // ============================================================
               if (signedIn) ...[
+                // ===== بطاقة المزامنة =====
+                Card(
+                  elevation: 3,
+                  color: isDark
+                      ? Colors.blue.shade900.withOpacity(0.25)
+                      : Colors.blue.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.sync,
+                              color: isDark
+                                  ? Colors.blue.shade300
+                                  : Colors.blue.shade700,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'المزامنة الثنائية',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: isDark
+                                    ? Colors.blue.shade100
+                                    : Colors.blue.shade900,
+                              ),
+                            ),
+                            const Spacer(),
+                            // مؤشر الحالة
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _syncStatusColor(_syncStatus, theme)
+                                    .withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: _syncStatusColor(_syncStatus, theme),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (_syncStatus == SyncStatus.syncing ||
+                                      _syncStatus == SyncStatus.uploading ||
+                                      _syncStatus == SyncStatus.downloading)
+                                    const SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  else
+                                    Icon(
+                                      Icons.circle,
+                                      size: 10,
+                                      color: _syncStatusColor(
+                                          _syncStatus, theme),
+                                    ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _syncStatusLabel(_syncStatus),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: _syncStatusColor(
+                                          _syncStatus, theme),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Divider(height: 1),
+                        const SizedBox(height: 12),
+
+                        // ===== معلومات التوقيت =====
+                        _infoRow(
+                          Icons.sync,
+                          'آخر مزامنة',
+                          _fmtRelative(_lastSync),
+                          onCard,
+                        ),
+                        const SizedBox(height: 6),
+                        _infoRow(
+                          Icons.cloud_upload,
+                          'آخر رفع',
+                          _fmtRelative(_lastUpload),
+                          onCard,
+                        ),
+                        const SizedBox(height: 6),
+                        _infoRow(
+                          Icons.cloud_download,
+                          'آخر تنزيل',
+                          _fmtRelative(_lastDownload),
+                          onCard,
+                        ),
+
+                        if (_hasPending) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: Colors.orange.withOpacity(0.5)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.pending_actions,
+                                    size: 16, color: Colors.orange.shade800),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'هناك تغييرات لم تُزامن بعد',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.orange.shade900,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+
+                        const SizedBox(height: 14),
+
+                        // ===== زر المزامنة اليدوية =====
+                        FilledButton.icon(
+                          onPressed: _busy ? null : _syncNow,
+                          icon: const Icon(Icons.sync),
+                          label: const Text('مزامنة الآن'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 48),
+                            backgroundColor:
+                                isDark ? Colors.blue.shade700 : Colors.blue,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // ===== الأزرار القديمة (رفع/تحديث) =====
                 FilledButton.icon(
                   onPressed: _busy ? null : _upload,
                   icon: const Icon(Icons.cloud_upload),
-                  label: const Text('رفع نسخة احتياطية الآن'),
+                  label: const Text('رفع نسخة احتياطية منفصلة'),
                   style: FilledButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
+                    minimumSize: const Size(double.infinity, 48),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _refreshList,
                   icon: const Icon(Icons.refresh),
                   label: const Text('تحديث القائمة'),
                   style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
+                    minimumSize: const Size(double.infinity, 48),
                   ),
                 ),
               ],
@@ -384,10 +700,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
                             : Colors.blue),
                     const SizedBox(width: 8),
                     Text(
-                      'النسخ على Drive (${_backups.length})',
+                      'النسخ المنفصلة على Drive (${_backups.length})',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 15,
                         color: onCard,
                       ),
                     ),
@@ -442,22 +758,22 @@ class _GDriveScreenState extends State<GDriveScreen> {
 
               // ========== حالة فارغة ==========
               if (signedIn && _backups.isEmpty && !_busy) ...[
-                const SizedBox(height: 50),
+                const SizedBox(height: 30),
                 Center(
                   child: Column(
                     children: [
                       Icon(Icons.cloud_queue,
-                          size: 80,
+                          size: 60,
                           color: isDark
                               ? Colors.grey.shade600
                               : Colors.grey.shade400),
-                      const SizedBox(height: 16),
-                      Text('لا توجد نسخ على Drive',
+                      const SizedBox(height: 12),
+                      Text('لا توجد نسخ منفصلة',
                           style:
-                              TextStyle(color: onCard, fontSize: 16)),
-                      const SizedBox(height: 8),
+                              TextStyle(color: onCard, fontSize: 14)),
+                      const SizedBox(height: 6),
                       Text(
-                        'اضغط "رفع نسخة احتياطية الآن" للبدء',
+                        'المزامنة التلقائية تعمل في الخلفية',
                         style: TextStyle(
                           color: onCard.withOpacity(0.7),
                           fontSize: 12,
@@ -487,7 +803,7 @@ class _GDriveScreenState extends State<GDriveScreen> {
                                   : Colors.blue.shade700),
                           const SizedBox(width: 8),
                           Text(
-                            'كيف يعمل؟',
+                            'كيف تعمل المزامنة؟',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: isDark
@@ -500,8 +816,10 @@ class _GDriveScreenState extends State<GDriveScreen> {
                       const SizedBox(height: 8),
                       Text(
                         '1. سجّل الدخول بحساب Google\n'
-                        '2. ارفع نسخة احتياطية → تُحفظ في Drive\n'
-                        '3. من أي جهاز آخر: سجّل الدخول → حمّل → استعد',
+                        '2. عندما تضيف أي عملية، تُرفع تلقائياً بعد 5 ثوانٍ\n'
+                        '3. عند فتح التطبيق على الجهاز الآخر، تُنزَّل التحديثات\n'
+                        '4. كل 5 دقائق مزامنة تلقائية في الخلفية\n'
+                        '5. يمكنك المزامنة يدوياً في أي وقت',
                         style: TextStyle(
                           fontSize: 12,
                           color: isDark
@@ -520,14 +838,31 @@ class _GDriveScreenState extends State<GDriveScreen> {
     );
   }
 
-  String _fmtDate(String iso) {
-    if (iso.isEmpty) return '';
-    try {
-      final dt = DateTime.parse(iso).toLocal();
-      return '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} - '
-          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return iso;
-    }
+  Widget _infoRow(
+      IconData icon, String label, String value, Color onCard) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: onCard.withOpacity(0.6)),
+        const SizedBox(width: 6),
+        Text(
+          '$label:',
+          style: TextStyle(
+            fontSize: 12,
+            color: onCard.withOpacity(0.7),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: onCard,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
