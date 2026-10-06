@@ -10,6 +10,16 @@ import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
 
+/// نوع فلتر أعلى المدينين
+enum DebtorFilter {
+  all,
+  today,
+  week,
+  month,
+  year,
+  custom,
+}
+
 class DebtsTab extends StatefulWidget {
   const DebtsTab({super.key});
   @override
@@ -23,6 +33,12 @@ class _DebtsTabState extends State<DebtsTab> {
   List<MapEntry<Customer, Transaction>> _recent = [];
   DateFilter _dateFilter = DateFilter();
 
+  // ===== فلتر أعلى المدينين =====
+  DebtorFilter _debtorFilter = DebtorFilter.all;
+  DateTime? _debtorFrom;
+  DateTime? _debtorTo;
+  bool _showTopDebtors = true;
+
   // ===== حالة المزامنة =====
   SyncStatus _syncStatus = SyncStatus.idle;
   DateTime? _lastSync;
@@ -31,6 +47,7 @@ class _DebtsTabState extends State<DebtsTab> {
   @override
   void initState() {
     super.initState();
+    _loadPrefs();
     _refresh();
     _loadSyncInfo();
     _statusSub = SyncService.statusStream.listen((s) {
@@ -42,6 +59,10 @@ class _DebtsTabState extends State<DebtsTab> {
   void dispose() {
     _statusSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadPrefs() async {
+    // لا يوجد حفظ دائم لفلتر المدينين حالياً
   }
 
   Future<void> _loadSyncInfo() async {
@@ -74,17 +95,176 @@ class _DebtsTabState extends State<DebtsTab> {
     return _formatDateTime(dt.toIso8601String());
   }
 
+  // ============ الفلتر على أعلى المدينين ============
+  DateTime? _getDebtorFrom() {
+    final now = DateTime.now();
+    switch (_debtorFilter) {
+      case DebtorFilter.all:
+        return null;
+      case DebtorFilter.today:
+        return DateTime(now.year, now.month, now.day);
+      case DebtorFilter.week:
+        return now.subtract(const Duration(days: 7));
+      case DebtorFilter.month:
+        return DateTime(now.year, now.month - 1, now.day);
+      case DebtorFilter.year:
+        return DateTime(now.year - 1, now.month, now.day);
+      case DebtorFilter.custom:
+        return _debtorFrom;
+    }
+  }
+
+  DateTime? _getDebtorTo() {
+    switch (_debtorFilter) {
+      case DebtorFilter.today:
+        final now = DateTime.now();
+        return DateTime(now.year, now.month, now.day, 23, 59, 59);
+      case DebtorFilter.custom:
+        if (_debtorTo == null) return null;
+        return DateTime(
+          _debtorTo!.year,
+          _debtorTo!.month,
+          _debtorTo!.day,
+          23,
+          59,
+          59,
+        );
+      default:
+        return null;
+    }
+  }
+
+  String _debtorFilterLabel() {
+    switch (_debtorFilter) {
+      case DebtorFilter.all:
+        return 'الكل';
+      case DebtorFilter.today:
+        return 'اليوم';
+      case DebtorFilter.week:
+        return 'آخر 7 أيام';
+      case DebtorFilter.month:
+        return 'آخر 30 يوم';
+      case DebtorFilter.year:
+        return 'آخر سنة';
+      case DebtorFilter.custom:
+        if (_debtorFrom != null && _debtorTo != null) {
+          return '${_debtorFrom!.year}/${_debtorFrom!.month}/${_debtorFrom!.day} - ${_debtorTo!.year}/${_debtorTo!.month}/${_debtorTo!.day}';
+        }
+        return 'تاريخ مخصص';
+    }
+  }
+
+  Future<void> _setDebtorFilter(DebtorFilter f) async {
+    if (f == DebtorFilter.custom) {
+      final range = await showDateRangePicker(
+        context: context,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+        initialDateRange: (_debtorFrom != null && _debtorTo != null)
+            ? DateTimeRange(start: _debtorFrom!, end: _debtorTo!)
+            : null,
+        locale: const Locale('ar'),
+        builder: (context, child) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: child!,
+        ),
+      );
+      if (range == null) return;
+      setState(() {
+        _debtorFilter = DebtorFilter.custom;
+        _debtorFrom = range.start;
+        _debtorTo = range.end;
+      });
+      await _refresh();
+      return;
+    }
+    setState(() {
+      _debtorFilter = f;
+      _debtorFrom = null;
+      _debtorTo = null;
+    });
+    await _refresh();
+  }
+
+  Future<void> _showDebtorFilterSheet() async {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'فلترة أعلى المدينين',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              _debtorTile(DebtorFilter.all, Icons.all_inclusive, 'الكل'),
+              _debtorTile(DebtorFilter.today, Icons.today, 'اليوم'),
+              _debtorTile(DebtorFilter.week, Icons.date_range, 'آخر 7 أيام'),
+              _debtorTile(
+                  DebtorFilter.month, Icons.calendar_month, 'آخر 30 يوم'),
+              _debtorTile(
+                  DebtorFilter.year, Icons.calendar_today, 'آخر سنة'),
+              _debtorTile(
+                  DebtorFilter.custom, Icons.event, 'تحديد تاريخ'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _debtorTile(DebtorFilter f, IconData icon, String label) {
+    final selected = _debtorFilter == f;
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(label),
+      trailing: selected ? const Icon(Icons.check, color: Colors.green) : null,
+      onTap: () {
+        Navigator.pop(context);
+        _setDebtorFilter(f);
+      },
+    );
+  }
+
+  // ============ تحديث البيانات ============
   Future<void> _refresh() async {
     final t = await db.totalDebts();
     final all = await db.allCustomers();
 
+    // ===== فلتر أعلى المدينين =====
+    final debtorFrom = _getDebtorFrom();
+    final debtorTo = _getDebtorTo();
+
     final withBalance = <MapEntry<Customer, double>>[];
     for (final c in all) {
-      final bal = await db.customerBalance(c.id!);
-      if (bal > 0) withBalance.add(MapEntry(c, bal));
+      final tx = await db.customerTransactions(c.id!);
+
+      double balance = 0;
+      for (final t in tx) {
+        final tDate = DateTime.tryParse(t.createdAt);
+        if (tDate == null) continue;
+
+        // تطبيق فلتر التاريخ
+        if (debtorFrom != null && tDate.isBefore(debtorFrom)) continue;
+        if (debtorTo != null && tDate.isAfter(debtorTo)) continue;
+
+        if (t.type == 'debt') {
+          balance += t.amount;
+        } else {
+          balance -= t.amount;
+        }
+      }
+
+      if (balance > 0) withBalance.add(MapEntry(c, balance));
     }
     withBalance.sort((a, b) => b.value.compareTo(a.value));
 
+    // ===== آخر العمليات =====
     final recent = <MapEntry<Customer, Transaction>>[];
     for (final c in all) {
       final tx = await db.customerTransactions(c.id!);
@@ -132,7 +312,7 @@ class _DebtsTabState extends State<DebtsTab> {
   }
 
   // ============================================================
-  // ============ نافذة عملية جديدة (موحدة) ====================
+  // ============ نافذة عملية جديدة ============================
   // ============================================================
   Future<void> _addTransactionQuick() async {
     final all = await db.allCustomers();
@@ -147,12 +327,11 @@ class _DebtsTabState extends State<DebtsTab> {
       return;
     }
 
-    // ===== متغيرات النافذة =====
     String type = 'debt';
     Customer? selectedCustomer;
     final amountCtrl = TextEditingController();
     final itemsCtrl = TextEditingController();
-    final noteCtrl = TextEditingController(); // للبيان في السداد
+    final noteCtrl = TextEditingController();
     final searchCtrl = TextEditingController();
     List<Customer> filtered = List.from(all);
 
@@ -190,18 +369,15 @@ class _DebtsTabState extends State<DebtsTab> {
                       segments: const [
                         ButtonSegment(
                           value: 'debt',
-                          label: Text('دين'),
-                          icon: Icon(Icons.arrow_upward, size: 16),
+                          label: _SegmentLabel('دين', Icons.arrow_upward),
                         ),
                         ButtonSegment(
                           value: 'payment',
-                          label: Text('سداد'),
-                          icon: Icon(Icons.payments, size: 16),
+                          label: _SegmentLabel('سداد', Icons.payments),
                         ),
                         ButtonSegment(
                           value: 'return',
-                          label: Text('مرتجع'),
-                          icon: Icon(Icons.keyboard_return, size: 16),
+                          label: _SegmentLabel('مرتجع', Icons.keyboard_return),
                         ),
                       ],
                       selected: {type},
@@ -223,7 +399,6 @@ class _DebtsTabState extends State<DebtsTab> {
                     ),
                     const SizedBox(height: 6),
 
-                    // عرض العميل المختار
                     if (selectedCustomer != null)
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -263,7 +438,6 @@ class _DebtsTabState extends State<DebtsTab> {
                         ),
                       ),
 
-                    // حقل البحث
                     if (selectedCustomer == null) ...[
                       const SizedBox(height: 8),
                       TextField(
@@ -287,7 +461,6 @@ class _DebtsTabState extends State<DebtsTab> {
                         },
                       ),
                       const SizedBox(height: 8),
-                      // قائمة العملاء
                       Container(
                         constraints: const BoxConstraints(maxHeight: 180),
                         decoration: BoxDecoration(
@@ -328,8 +501,8 @@ class _DebtsTabState extends State<DebtsTab> {
                                             c.phone!.isNotEmpty
                                         ? Text(
                                             c.phone!,
-                                            style:
-                                                const TextStyle(fontSize: 11),
+                                            style: const TextStyle(
+                                                fontSize: 11),
                                           )
                                         : null,
                                     onTap: () {
@@ -370,10 +543,8 @@ class _DebtsTabState extends State<DebtsTab> {
                       ),
                     ),
 
-                    // ===== 4. الحقل الإضافي حسب النوع =====
+                    // ===== 4. الحقل الإضافي =====
                     const SizedBox(height: 16),
-
-                    // إذا "سداد" → البيان
                     if (type == 'payment') ...[
                       const Text(
                         'البيان:',
@@ -398,8 +569,6 @@ class _DebtsTabState extends State<DebtsTab> {
                         ),
                       ),
                     ],
-
-                    // إذا "دين" أو "مرتجع" → الأصناف
                     if (type != 'payment') ...[
                       const Text(
                         'الأصناف:',
@@ -436,7 +605,6 @@ class _DebtsTabState extends State<DebtsTab> {
               ),
               FilledButton.icon(
                 onPressed: () async {
-                  // تحقق من العميل
                   if (selectedCustomer == null) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
                       const SnackBar(
@@ -448,7 +616,6 @@ class _DebtsTabState extends State<DebtsTab> {
                     return;
                   }
 
-                  // تحقق من المبلغ
                   final amt = double.tryParse(amountCtrl.text);
                   if (amt == null || amt <= 0) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
@@ -461,7 +628,6 @@ class _DebtsTabState extends State<DebtsTab> {
                     return;
                   }
 
-                  // توليد الرمز
                   String? code;
                   try {
                     code = await CodeService.generateCode(type);
@@ -469,10 +635,9 @@ class _DebtsTabState extends State<DebtsTab> {
                     code = null;
                   }
 
-                  // تحديد محتوى الحقل الإضافي
                   String extraText;
                   if (type == 'payment') {
-                    extraText = noteCtrl.text.trim(); // البيان
+                    extraText = noteCtrl.text.trim();
                   } else if (type == 'return') {
                     extraText = itemsCtrl.text.trim().isEmpty
                         ? 'مرتجع'
@@ -481,7 +646,6 @@ class _DebtsTabState extends State<DebtsTab> {
                     extraText = itemsCtrl.text.trim();
                   }
 
-                  // حفظ العملية
                   await db.insertTransaction(Transaction(
                     customerId: selectedCustomer!.id!,
                     code: code,
@@ -492,11 +656,8 @@ class _DebtsTabState extends State<DebtsTab> {
                   ));
 
                   if (!dialogContext.mounted) return;
-
-                  // إغلاق النافذة
                   Navigator.pop(dialogContext);
 
-                  // إشعار النجاح
                   final typeLabel = {
                     'debt': 'دين',
                     'payment': 'سداد',
@@ -523,7 +684,6 @@ class _DebtsTabState extends State<DebtsTab> {
       ),
     );
 
-    // تحديث البيانات
     await _refresh();
   }
 
@@ -683,6 +843,129 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
+  // ============ قسم أعلى المدينين ============
+  Widget _buildTopDebtorsSection(ThemeData theme) {
+    if (_topDebtors.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        // شريط العنوان مع الفلتر والتحكم
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              // إخفاء/إظهار
+              IconButton(
+                icon: Icon(
+                  _showTopDebtors ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                ),
+                tooltip: _showTopDebtors ? 'إخفاء' : 'إظهار',
+                onPressed: () {
+                  setState(() => _showTopDebtors = !_showTopDebtors);
+                },
+              ),
+              Expanded(
+                child: Text(
+                  'أعلى المدينين (${_topDebtors.length})',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+              ),
+              // فلتر
+              TextButton.icon(
+                onPressed: _showDebtorFilterSheet,
+                icon: Icon(
+                  _debtorFilter == DebtorFilter.all
+                      ? Icons.filter_alt_outlined
+                      : Icons.filter_alt,
+                  size: 16,
+                  color: _debtorFilter == DebtorFilter.all
+                      ? null
+                      : theme.colorScheme.primary,
+                ),
+                label: Text(
+                  _debtorFilterLabel(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _debtorFilter == DebtorFilter.all
+                        ? null
+                        : theme.colorScheme.primary,
+                    fontWeight: _debtorFilter == DebtorFilter.all
+                        ? FontWeight.normal
+                        : FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_showTopDebtors) ...[
+          const SizedBox(height: 8),
+          ..._topDebtors.map((c) => Card(
+                margin:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                child: ListTile(
+                  dense: true,
+                  leading: CircleAvatar(
+                    backgroundColor: theme.colorScheme.primary,
+                    child: Text(c.name.characters.first,
+                        style: const TextStyle(color: Colors.white)),
+                  ),
+                  title: Text(c.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  trailing: FutureBuilder<double>(
+                    future: _computeFilteredBalance(c.id!),
+                    builder: (_, snap) => Text(
+                      '${(snap.data ?? 0).toStringAsFixed(0)} ريال',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  onTap: () async {
+                    await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => CustomerScreen(customer: c)));
+                    _refresh();
+                  },
+                ),
+              )),
+          const SizedBox(height: 20),
+        ],
+      ],
+    );
+  }
+
+  /// حساب رصيد المدين في الفترة المحددة
+  Future<double> _computeFilteredBalance(int customerId) async {
+    final tx = await db.customerTransactions(customerId);
+    final from = _getDebtorFrom();
+    final to = _getDebtorTo();
+
+    double balance = 0;
+    for (final t in tx) {
+      final tDate = DateTime.tryParse(t.createdAt);
+      if (tDate == null) continue;
+      if (from != null && tDate.isBefore(from)) continue;
+      if (to != null && tDate.isAfter(to)) continue;
+
+      if (t.type == 'debt') {
+        balance += t.amount;
+      } else {
+        balance -= t.amount;
+      }
+    }
+    return balance;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -710,20 +993,7 @@ class _DebtsTabState extends State<DebtsTab> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          FloatingActionButton(
-            heroTag: 'voice_debts',
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const VoiceScreen()),
-              );
-              _refresh();
-            },
-            backgroundColor: Colors.deepOrange,
-            tooltip: 'تسجيل صوتي',
-            child: const Icon(Icons.mic, color: Colors.white),
-          ),
-          const SizedBox(height: 12),
+          // ===== الصف الثاني: الأزرار الأساسية =====
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -738,15 +1008,29 @@ class _DebtsTabState extends State<DebtsTab> {
                   _refresh();
                 },
                 icon: const Icon(Icons.person_add),
-                label: const Text('حساب جديد'),
+                label: const Text('حساب'),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               FloatingActionButton.extended(
                 heroTag: 'add_transaction',
                 onPressed: _addTransactionQuick,
                 icon: const Icon(Icons.add_card),
-                label: const Text('عملية جديدة'),
+                label: const Text('عملية'),
                 backgroundColor: Colors.teal,
+              ),
+              const SizedBox(width: 10),
+              FloatingActionButton(
+                heroTag: 'voice_debts',
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const VoiceScreen()),
+                  );
+                  _refresh();
+                },
+                backgroundColor: Colors.deepOrange,
+                tooltip: 'تسجيل صوتي',
+                child: const Icon(Icons.mic, color: Colors.white),
               ),
             ],
           ),
@@ -815,43 +1099,11 @@ class _DebtsTabState extends State<DebtsTab> {
               ),
             ],
             const SizedBox(height: 20),
-            if (_topDebtors.isNotEmpty) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Text('أعلى المدينين',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 8),
-              ..._topDebtors.map((c) => Card(
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: theme.colorScheme.primary,
-                        child: Text(c.name.characters.first,
-                            style: const TextStyle(color: Colors.white)),
-                      ),
-                      title: Text(c.name),
-                      trailing: FutureBuilder<double>(
-                        future: db.customerBalance(c.id!),
-                        builder: (_, snap) => Text(
-                          '${(snap.data ?? 0).toStringAsFixed(0)} ريال',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.error,
-                          ),
-                        ),
-                      ),
-                      onTap: () async {
-                        await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => CustomerScreen(customer: c)));
-                        _refresh();
-                      },
-                    ),
-                  )),
-              const SizedBox(height: 20),
-            ],
+
+            // ===== أعلى المدينين =====
+            _buildTopDebtorsSection(theme),
+
+            // ===== آخر العمليات =====
             if (_recent.isNotEmpty) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
@@ -866,6 +1118,8 @@ class _DebtsTabState extends State<DebtsTab> {
                 final isDebt = t.type == 'debt';
                 final isReturn = t.items.startsWith('مرتجع');
                 return Card(
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
                   child: ListTile(
                     leading: Icon(
                       isReturn
@@ -950,7 +1204,7 @@ class _DebtsTabState extends State<DebtsTab> {
                               color: theme.disabledColor, fontSize: 16)),
                       const SizedBox(height: 8),
                       const Text(
-                        'اضغط "عملية جديدة" أو "حساب جديد" للبدء',
+                        'اضغط "عملية" أو "حساب" للبدء',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
@@ -959,6 +1213,28 @@ class _DebtsTabState extends State<DebtsTab> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// ويدجت صغير لعرض كلمة فوق وأيقونة تحت في SegmentedButton
+class _SegmentLabel extends StatelessWidget {
+  final String text;
+  final IconData icon;
+  const _SegmentLabel(this.text, this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text, style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 2),
+          Icon(icon, size: 16),
+        ],
       ),
     );
   }
