@@ -3,7 +3,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 
 class CodeService {
-  // ========== مفاتيح الإعدادات ==========
   static const String _keyDebtPrefix = 'code_debt_prefix';
   static const String _keyPaymentPrefix = 'code_payment_prefix';
   static const String _keyReturnPrefix = 'code_return_prefix';
@@ -11,7 +10,6 @@ class CodeService {
   static const String _keyMode = 'code_mode';
   static const String _keyEnabled = 'code_enabled';
 
-  // ========== القيم الافتراضية ==========
   static const String _defaultDebtPrefix = 'D';
   static const String _defaultPaymentPrefix = 'P';
   static const String _defaultReturnPrefix = 'R';
@@ -80,142 +78,121 @@ class CodeService {
     await sp.setBool(_keyEnabled, v);
   }
 
-  // ========== الحصول على بادئة النوع ==========
+  // ========== تطبيع النوع ==========
+  static String normalizeType(String type) {
+    final t = type.toLowerCase().trim();
+    if (t == 'return' || t.contains('مرتجع')) return 'return';
+    if (t == 'payment' || t.contains('سداد') || t.contains('pay')) {
+      return 'payment';
+    }
+    return 'debt';
+  }
+
+  // ========== بادئة النوع ==========
   static Future<String> _getPrefixForType(String type) async {
-    if (type == 'payment') return getPaymentPrefix();
-    if (type == 'return') return getReturnPrefix();
+    final n = normalizeType(type);
+    if (n == 'payment') return getPaymentPrefix();
+    if (n == 'return') return getReturnPrefix();
     return getDebtPrefix();
   }
 
-  /// جلب البادئة الحالية لنوع معين (للعامة)
   static Future<String> getPrefixForType(String type) async {
     return _getPrefixForType(type);
   }
 
-  // ========== توليد رمز جديد ==========
+  // ========== توليد رمز ==========
   static Future<String?> generateCode(String type) async {
     final enabled = await isEnabled();
     if (!enabled) return null;
 
-    final prefix = await _getPrefixForType(type);
+    final normalized = normalizeType(type);
+    final prefix = await _getPrefixForType(normalized);
     final digits = await getDigits();
     final mode = await getMode();
 
     final db = DatabaseHelper.instance;
 
-    if (mode == 'random') {
-      return _generateRandom(db, prefix, digits, type);
-    } else {
-      return _generateSequential(db, prefix, digits, type);
+    try {
+      if (mode == 'random') {
+        return await _generateRandom(db, prefix, digits);
+      }
+      return await _generateSequential(db, prefix, digits);
+    } catch (e) {
+      // fallback
+      final r = Random().nextInt(pow(10, digits).toInt());
+      return '$prefix-${r.toString().padLeft(digits, '0')}';
     }
   }
 
-  /// توليد مرتب (تسلسلي)
   static Future<String?> _generateSequential(
     DatabaseHelper db,
     String prefix,
     int digits,
-    String type,
   ) async {
-    // نستخدم النوع المخزّن (payment للـ return)
-    final storageType = (type == 'return') ? 'payment' : type;
-    final maxSeq = await db.getMaxSequence(storageType);
-
+    final maxSeq = await _getMaxSequenceByPrefix(db, prefix);
     final maxAttempts = pow(10, digits).toInt();
     int nextSeq = maxSeq + 1;
+    if (nextSeq < 1) nextSeq = 1;
 
     for (int i = 0; i < maxAttempts; i++) {
       final candidate = nextSeq + i;
       if (candidate > maxAttempts) break;
-
       final code = _format(prefix, candidate, digits);
       final exists = await db.codeExists(code);
-      if (!exists) {
-        return code;
-      }
+      if (!exists) return code;
     }
-
     return null;
   }
 
-  /// توليد عشوائي
   static Future<String?> _generateRandom(
     DatabaseHelper db,
     String prefix,
     int digits,
-    String type,
   ) async {
     final random = Random.secure();
-    final maxAttempts = 100;
-
-    for (int i = 0; i < maxAttempts; i++) {
+    for (int i = 0; i < 100; i++) {
       final minValue = pow(10, digits - 1).toInt();
       final maxValue = pow(10, digits).toInt() - 1;
       final number = minValue + random.nextInt(maxValue - minValue + 1);
-
       final code = _format(prefix, number, digits);
       final exists = await db.codeExists(code);
-      if (!exists) {
-        return code;
-      }
+      if (!exists) return code;
     }
-
     return null;
   }
 
-  /// تنسيق الرمز: PREFIX-NUMBER
-  static String _format(String prefix, int number, int digits) {
-    final paddedNumber = number.toString().padLeft(digits, '0');
-    return '$prefix-$paddedNumber';
+  static Future<int> _getMaxSequenceByPrefix(
+      DatabaseHelper db, String prefix) async {
+    final allCodes = await db.allUsedCodesRaw();
+    int maxSeq = 0;
+    for (final row in allCodes) {
+      final code = row['code'] as String? ?? '';
+      if (!code.startsWith('$prefix-')) continue;
+      final parts = code.split('-');
+      if (parts.length >= 2) {
+        final numPart = int.tryParse(parts.sublist(1).join('-'));
+        if (numPart != null && numPart > maxSeq) maxSeq = numPart;
+      }
+    }
+    return maxSeq;
   }
 
-  // ============================================================
-  // ============ تحديث رموز العمليات القديمة ====================
-  // ============================================================
+  static String _format(String prefix, int number, int digits) {
+    return '$prefix-${number.toString().padLeft(digits, '0')}';
+  }
 
-  /// تحديث رموز العمليات القديمة عند تغيير البادئة
-  /// [type]: 'debt', 'payment', أو 'return'
-  /// [newPrefix]: البادئة الجديدة
-  /// يعيد: عدد العمليات المُحدَّثة
+  // ========== تحديث رموز العمليات القديمة ==========
   static Future<int> updateOldCodes({
-    required String type,
+    required String oldPrefix,
     required String newPrefix,
   }) async {
-    final db = DatabaseHelper.instance;
-
-    // جلب البادئة الحالية المخزنة
-    final oldPrefix = await _getPrefixForType(type);
-
-    if (oldPrefix == newPrefix) return 0;
     if (oldPrefix.isEmpty || newPrefix.isEmpty) return 0;
-
-    // النوع المخزّن في DB
-    final storageType = (type == 'return') ? 'payment' : type;
-
-    // استدعاء دالة التحديث في DB
-    final count = await db.updateCodesPrefix(
+    if (oldPrefix == newPrefix) return 0;
+    final db = DatabaseHelper.instance;
+    return db.updateCodesPrefix(
       oldPrefix: oldPrefix,
       newPrefix: newPrefix,
     );
-
-    return count;
-  }
-
-  /// جلب عدد الرموز القديمة لنوع معين (لعرضه في الإعدادات)
-  static Future<int> getOldCodesCount(String type) async {
-    final db = DatabaseHelper.instance;
-    final prefix = await _getPrefixForType(type);
-    if (prefix.isEmpty) return 0;
-
-    final allCodes = await db.allTransactionsRaw();
-    int count = 0;
-    for (final t in allCodes) {
-      final code = t['code'] as String?;
-      if (code != null && code.startsWith('$prefix-')) {
-        count++;
-      }
-    }
-    return count;
   }
 
   // ========== إحصائيات ==========
@@ -227,11 +204,6 @@ class CodeService {
     return mode == 'random' ? 'عشوائي' : 'مرتب (تسلسلي)';
   }
 
-  static String describeDigits(int digits) {
-    return '$digits أرقام';
-  }
-
-  /// فحص الرموز المستخدمة (للعرض)
   static Future<Map<String, int>> getStats() async {
     return DatabaseHelper.instance.getCodesStats();
   }
