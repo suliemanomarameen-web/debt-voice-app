@@ -749,7 +749,6 @@ class _SettingsTabState extends State<SettingsTab> {
     final newPrefix = result.toUpperCase();
     final oldPrefix = current;
 
-    // إذا تغيّر الرمز فعلاً - اسأل عن تحديث الرموز القديمة
     if (newPrefix != oldPrefix && mounted) {
       final updateOld = await showDialog<bool>(
         context: context,
@@ -783,23 +782,11 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       );
 
-      // حفظ الإعداد الجديد
-      if (type == 'debt') {
-        await CodeService.setDebtPrefix(newPrefix);
-        if (mounted) setState(() => _debtPrefix = newPrefix);
-      } else if (type == 'payment') {
-        await CodeService.setPaymentPrefix(newPrefix);
-        if (mounted) setState(() => _paymentPrefix = newPrefix);
-      } else {
-        await CodeService.setReturnPrefix(newPrefix);
-        if (mounted) setState(() => _returnPrefix = newPrefix);
-      }
-
-      // تحديث الرموز القديمة إذا طلب المستخدم
+      // تحديث الرموز القديمة (قبل الحفظ)
       if (updateOld == true && mounted) {
         setState(() => _backupBusy = true);
         final count = await CodeService.updateOldCodes(
-          type: type,
+          oldPrefix: oldPrefix,
           newPrefix: newPrefix,
         );
         if (!mounted) return;
@@ -812,8 +799,19 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
         );
       }
+
+      // حفظ الإعداد الجديد
+      if (type == 'debt') {
+        await CodeService.setDebtPrefix(newPrefix);
+        if (mounted) setState(() => _debtPrefix = newPrefix);
+      } else if (type == 'payment') {
+        await CodeService.setPaymentPrefix(newPrefix);
+        if (mounted) setState(() => _paymentPrefix = newPrefix);
+      } else {
+        await CodeService.setReturnPrefix(newPrefix);
+        if (mounted) setState(() => _returnPrefix = newPrefix);
+      }
     } else {
-      // لم يتغير الرمز - احفظ فقط
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
         if (mounted) setState(() => _debtPrefix = newPrefix);
@@ -1114,7 +1112,6 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCodeMode,
             ),
-            // معاينة
             Container(
               margin: const EdgeInsets.all(12),
               padding: const EdgeInsets.all(12),
@@ -1323,7 +1320,8 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               leading: const Icon(Icons.schedule, color: Colors.deepPurple),
               title: const Text('تكرار الرفع'),
-              subtitle: Text(CloudBackupService.frequencyLabel(_cloudFrequency)),
+              subtitle:
+                  Text(CloudBackupService.frequencyLabel(_cloudFrequency)),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCloudFrequency,
             ),
