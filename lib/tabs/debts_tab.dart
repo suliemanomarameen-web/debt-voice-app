@@ -47,7 +47,6 @@ class _DebtsTabState extends State<DebtsTab> {
   @override
   void initState() {
     super.initState();
-    _loadPrefs();
     _refresh();
     _loadSyncInfo();
     _statusSub = SyncService.statusStream.listen((s) {
@@ -59,10 +58,6 @@ class _DebtsTabState extends State<DebtsTab> {
   void dispose() {
     _statusSub?.cancel();
     super.dispose();
-  }
-
-  Future<void> _loadPrefs() async {
-    // لا يوجد حفظ دائم لفلتر المدينين حالياً
   }
 
   Future<void> _loadSyncInfo() async {
@@ -163,7 +158,6 @@ class _DebtsTabState extends State<DebtsTab> {
         initialDateRange: (_debtorFrom != null && _debtorTo != null)
             ? DateTimeRange(start: _debtorFrom!, end: _debtorTo!)
             : null,
-        locale: const Locale('ar'),
         builder: (context, child) => Directionality(
           textDirection: TextDirection.rtl,
           child: child!,
@@ -249,7 +243,6 @@ class _DebtsTabState extends State<DebtsTab> {
         final tDate = DateTime.tryParse(t.createdAt);
         if (tDate == null) continue;
 
-        // تطبيق فلتر التاريخ
         if (debtorFrom != null && tDate.isBefore(debtorFrom)) continue;
         if (debtorTo != null && tDate.isAfter(debtorTo)) continue;
 
@@ -377,7 +370,8 @@ class _DebtsTabState extends State<DebtsTab> {
                         ),
                         ButtonSegment(
                           value: 'return',
-                          label: _SegmentLabel('مرتجع', Icons.keyboard_return),
+                          label:
+                              _SegmentLabel('مرتجع', Icons.keyboard_return),
                         ),
                       ],
                       selected: {type},
@@ -501,8 +495,8 @@ class _DebtsTabState extends State<DebtsTab> {
                                             c.phone!.isNotEmpty
                                         ? Text(
                                             c.phone!,
-                                            style: const TextStyle(
-                                                fontSize: 11),
+                                            style:
+                                                const TextStyle(fontSize: 11),
                                           )
                                         : null,
                                     onTap: () {
@@ -559,7 +553,8 @@ class _DebtsTabState extends State<DebtsTab> {
                         controller: noteCtrl,
                         decoration: InputDecoration(
                           hintText: 'مثال: دفعة شهر أكتوبر...',
-                          prefixIcon: const Icon(Icons.description_outlined),
+                          prefixIcon:
+                              const Icon(Icons.description_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -628,12 +623,32 @@ class _DebtsTabState extends State<DebtsTab> {
                     return;
                   }
 
+                  final storedType = (type == 'return') ? 'payment' : type;
+
+                  // ⚠️ منع التكرار
+                  final isDuplicate = await db.transactionExistsRecent(
+                    customerId: selectedCustomer!.id!,
+                    amount: amt,
+                    type: storedType,
+                    window: const Duration(seconds: 30),
+                  );
+
+                  if (isDuplicate) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            '⚠️ هذه العملية مسجلة بالفعل (خلال آخر 30 ثانية)'),
+                        backgroundColor: Colors.orange,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    return;
+                  }
+
                   String? code;
                   try {
                     code = await CodeService.generateCode(type);
-                  } catch (_) {
-                    code = null;
-                  }
+                  } catch (_) {}
 
                   String extraText;
                   if (type == 'payment') {
@@ -650,7 +665,7 @@ class _DebtsTabState extends State<DebtsTab> {
                     customerId: selectedCustomer!.id!,
                     code: code,
                     amount: amt,
-                    type: type == 'return' ? 'payment' : type,
+                    type: storedType,
                     items: extraText,
                     createdAt: DateTime.now().toIso8601String(),
                   ));
@@ -849,7 +864,6 @@ class _DebtsTabState extends State<DebtsTab> {
 
     return Column(
       children: [
-        // شريط العنوان مع الفلتر والتحكم
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 4),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -859,7 +873,6 @@ class _DebtsTabState extends State<DebtsTab> {
           ),
           child: Row(
             children: [
-              // إخفاء/إظهار
               IconButton(
                 icon: Icon(
                   _showTopDebtors ? Icons.expand_less : Icons.expand_more,
@@ -877,7 +890,6 @@ class _DebtsTabState extends State<DebtsTab> {
                       fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ),
-              // فلتر
               TextButton.icon(
                 onPressed: _showDebtorFilterSheet,
                 icon: Icon(
@@ -944,7 +956,6 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
-  /// حساب رصيد المدين في الفترة المحددة
   Future<double> _computeFilteredBalance(int customerId) async {
     final tx = await db.customerTransactions(customerId);
     final from = _getDebtorFrom();
@@ -993,32 +1004,9 @@ class _DebtsTabState extends State<DebtsTab> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // ===== الصف الثاني: الأزرار الأساسية =====
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              FloatingActionButton.extended(
-                heroTag: 'add_customer',
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const AddAccountScreen()),
-                  );
-                  _refresh();
-                },
-                icon: const Icon(Icons.person_add),
-                label: const Text('حساب'),
-              ),
-              const SizedBox(width: 10),
-              FloatingActionButton.extended(
-                heroTag: 'add_transaction',
-                onPressed: _addTransactionQuick,
-                icon: const Icon(Icons.add_card),
-                label: const Text('عملية'),
-                backgroundColor: Colors.teal,
-              ),
-              const SizedBox(width: 10),
               FloatingActionButton(
                 heroTag: 'voice_debts',
                 onPressed: () async {
@@ -1031,6 +1019,28 @@ class _DebtsTabState extends State<DebtsTab> {
                 backgroundColor: Colors.deepOrange,
                 tooltip: 'تسجيل صوتي',
                 child: const Icon(Icons.mic, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              FloatingActionButton.extended(
+                heroTag: 'add_transaction',
+                onPressed: _addTransactionQuick,
+                icon: const Icon(Icons.add_card),
+                label: const Text('عملية'),
+                backgroundColor: Colors.teal,
+              ),
+              const SizedBox(width: 10),
+              FloatingActionButton.extended(
+                heroTag: 'add_customer',
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AddAccountScreen()),
+                  );
+                  _refresh();
+                },
+                icon: const Icon(Icons.person_add),
+                label: const Text('حساب'),
               ),
             ],
           ),
@@ -1100,10 +1110,8 @@ class _DebtsTabState extends State<DebtsTab> {
             ],
             const SizedBox(height: 20),
 
-            // ===== أعلى المدينين =====
             _buildTopDebtorsSection(theme),
 
-            // ===== آخر العمليات =====
             if (_recent.isNotEmpty) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
