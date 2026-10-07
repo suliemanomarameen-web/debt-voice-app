@@ -43,21 +43,75 @@ class _DebtsTabState extends State<DebtsTab> {
   SyncStatus _syncStatus = SyncStatus.idle;
   DateTime? _lastSync;
   StreamSubscription<SyncStatus>? _statusSub;
+  StreamSubscription<SyncResult>? _resultSub;
+
+  // ===== منع التحديث المتزامن =====
+  bool _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
     _refresh();
     _loadSyncInfo();
+
+    // الاستماع لحالة المزامنة
     _statusSub = SyncService.statusStream.listen((s) {
       if (mounted) setState(() => _syncStatus = s);
     });
+
+    // الاستماع لنتيجة المزامنة → تحديث محلي + إشعار
+    _resultSub = SyncService.resultStream.listen(_onSyncResult);
   }
 
   @override
   void dispose() {
     _statusSub?.cancel();
+    _resultSub?.cancel();
     super.dispose();
+  }
+
+  /// يُستدعى بعد كل مزامنة (تلقائية أو يدوية)
+  Future<void> _onSyncResult(SyncResult result) async {
+    if (!mounted) return;
+
+    // 1. تحديث البيانات المحلية دائماً (لعرض نتيجة المزامنة)
+    await _refresh();
+
+    if (!mounted) return;
+
+    // 2. إذا فشلت المزامنة لا نُظهر شيء هنا
+    // (الإشعار يظهر في _manualSync عند الضغط اليدوي)
+    if (!result.success) return;
+
+    // 3. إظهار إشعار بعدد العمليات المضافة (فقط إذا كان هناك جديد)
+    if (result.transactionsAdded > 0 || result.customersAdded > 0) {
+      final parts = <String>[];
+      if (result.transactionsAdded > 0) {
+        parts.add('+${result.transactionsAdded} عملية');
+      }
+      if (result.customersAdded > 0) {
+        parts.add('+${result.customersAdded} حساب');
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.cloud_done, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '☁️ تمت المزامنة: ${parts.join(" و ")}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _loadSyncInfo() async {
@@ -203,8 +257,7 @@ class _DebtsTabState extends State<DebtsTab> {
                   DebtorFilter.month, Icons.calendar_month, 'آخر 30 يوم'),
               _debtorTile(
                   DebtorFilter.year, Icons.calendar_today, 'آخر سنة'),
-              _debtorTile(
-                  DebtorFilter.custom, Icons.event, 'تحديد تاريخ'),
+              _debtorTile(DebtorFilter.custom, Icons.event, 'تحديد تاريخ'),
             ],
           ),
         ),
@@ -225,62 +278,99 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
-  // ============ تحديث البيانات ============
+  // ============ تحديث البيانات المحلي ============
   Future<void> _refresh() async {
-    final t = await db.totalDebts();
-    final all = await db.allCustomers();
+    if (_isRefreshing) return;
+    _isRefreshing = true;
 
-    // ===== فلتر أعلى المدينين =====
-    final debtorFrom = _getDebtorFrom();
-    final debtorTo = _getDebtorTo();
+    try {
+      final t = await db.totalDebts();
+      final all = await db.allCustomers();
 
-    final withBalance = <MapEntry<Customer, double>>[];
-    for (final c in all) {
-      final tx = await db.customerTransactions(c.id!);
+      final debtorFrom = _getDebtorFrom();
+      final debtorTo = _getDebtorTo();
 
-      double balance = 0;
-      for (final t in tx) {
-        final tDate = DateTime.tryParse(t.createdAt);
-        if (tDate == null) continue;
+      final withBalance = <MapEntry<Customer, double>>[];
+      for (final c in all) {
+        final tx = await db.customerTransactions(c.id!);
 
-        if (debtorFrom != null && tDate.isBefore(debtorFrom)) continue;
-        if (debtorTo != null && tDate.isAfter(debtorTo)) continue;
+        double balance = 0;
+        for (final t in tx) {
+          final tDate = DateTime.tryParse(t.createdAt);
+          if (tDate == null) continue;
 
-        if (t.type == 'debt') {
-          balance += t.amount;
-        } else {
-          balance -= t.amount;
+          if (debtorFrom != null && tDate.isBefore(debtorFrom)) continue;
+          if (debtorTo != null && tDate.isAfter(debtorTo)) continue;
+
+          if (t.type == 'debt') {
+            balance += t.amount;
+          } else {
+            balance -= t.amount;
+          }
+        }
+
+        if (balance > 0) withBalance.add(MapEntry(c, balance));
+      }
+      withBalance.sort((a, b) => b.value.compareTo(a.value));
+
+      final recent = <MapEntry<Customer, Transaction>>[];
+      for (final c in all) {
+        final tx = await db.customerTransactions(c.id!);
+        for (final t in tx) {
+          if (_dateFilter.matches(t.createdAt)) {
+            recent.add(MapEntry(c, t));
+          }
         }
       }
+      recent.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
 
-      if (balance > 0) withBalance.add(MapEntry(c, balance));
+      if (!mounted) return;
+      setState(() {
+        _total = t;
+        _topDebtors = withBalance.take(5).map((e) => e.key).toList();
+        _recent = recent.take(10).toList();
+      });
+
+      _loadSyncInfo();
+    } finally {
+      _isRefreshing = false;
     }
-    withBalance.sort((a, b) => b.value.compareTo(a.value));
-
-    // ===== آخر العمليات =====
-    final recent = <MapEntry<Customer, Transaction>>[];
-    for (final c in all) {
-      final tx = await db.customerTransactions(c.id!);
-      for (final t in tx) {
-        if (_dateFilter.matches(t.createdAt)) {
-          recent.add(MapEntry(c, t));
-        }
-      }
-    }
-    recent.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
-
-    if (!mounted) return;
-    setState(() {
-      _total = t;
-      _topDebtors = withBalance.take(5).map((e) => e.key).toList();
-      _recent = recent.take(10).toList();
-    });
-
-    _loadSyncInfo();
   }
 
-  // ============ مزامنة يدوية ============
+  // ============================================================
+  // ============ السحب للتحديث + المزامنة ============
+  // ============================================================
+  Future<void> _refreshAndSync() async {
+    // 1. تحديث محلي أولاً (سريع)
+    await _refresh();
+
+    // 2. مزامنة سحابية (إذا كان مسجل دخول)
+    if (SyncService.isSyncAvailable) {
+      try {
+        // _onSyncResult() ستُستدعى تلقائياً بعد المزامنة
+        // وستقوم بالتحديث المحلي + إظهار الإشعار
+        await SyncService.manualSync();
+      } catch (e) {
+        debugPrint('Sync error during refresh: $e');
+      }
+    }
+  }
+
+  // ============ مزامنة يدوية (بالضغط على الشريط) ============
   Future<void> _manualSync() async {
+    if (!SyncService.isSyncAvailable) {
+      // محاولة تسجيل الدخول
+      final result = await SyncService.manualSync();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: result.success ? Colors.green : Colors.red,
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('جاري المزامنة...'),
@@ -292,14 +382,26 @@ class _DebtsTabState extends State<DebtsTab> {
 
     if (!mounted) return;
 
-    final bgColor = result.success ? Colors.green : Colors.red;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result.message),
-        backgroundColor: bgColor,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    // _onSyncResult() ستتكفل بالتحديث والإشعار عند وجود بيانات جديدة
+    // لكن نضيف إشعارات الحالات الخاصة
+    if (!result.success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } else if (result.transactionsAdded == 0 &&
+        result.customersAdded == 0 &&
+        result.message == 'لا توجد تغييرات') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد تغييرات'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
 
     await _loadSyncInfo();
   }
@@ -327,6 +429,7 @@ class _DebtsTabState extends State<DebtsTab> {
     final noteCtrl = TextEditingController();
     final searchCtrl = TextEditingController();
     List<Customer> filtered = List.from(all);
+    bool isSaving = false;
 
     await showDialog(
       context: context,
@@ -595,102 +698,126 @@ class _DebtsTabState extends State<DebtsTab> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
+                onPressed:
+                    isSaving ? null : () => Navigator.pop(dialogContext),
                 child: const Text('إلغاء'),
               ),
               FilledButton.icon(
-                onPressed: () async {
-                  if (selectedCustomer == null) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('الرجاء اختيار عميل'),
-                        backgroundColor: Colors.orange,
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
-                    return;
-                  }
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (selectedCustomer == null) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('الرجاء اختيار عميل'),
+                              backgroundColor: Colors.orange,
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                          return;
+                        }
 
-                  final amt = double.tryParse(amountCtrl.text);
-                  if (amt == null || amt <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('الرجاء إدخال مبلغ صحيح'),
-                        backgroundColor: Colors.orange,
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
-                    return;
-                  }
+                        final amt = double.tryParse(amountCtrl.text);
+                        if (amt == null || amt <= 0) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('الرجاء إدخال مبلغ صحيح'),
+                              backgroundColor: Colors.orange,
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                          return;
+                        }
 
-                  final storedType = (type == 'return') ? 'payment' : type;
+                        setStateDialog(() => isSaving = true);
 
-                  // ⚠️ منع التكرار
-                  final isDuplicate = await db.transactionExistsRecent(
-                    customerId: selectedCustomer!.id!,
-                    amount: amt,
-                    type: storedType,
-                    window: const Duration(seconds: 30),
-                  );
+                        try {
+                          final storedType =
+                              (type == 'return') ? 'payment' : type;
 
-                  if (isDuplicate) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                            '⚠️ هذه العملية مسجلة بالفعل (خلال آخر 30 ثانية)'),
-                        backgroundColor: Colors.orange,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    return;
-                  }
+                          // ⚠️ منع التكرار
+                          final isDuplicate =
+                              await db.transactionExistsRecent(
+                            customerId: selectedCustomer!.id!,
+                            amount: amt,
+                            type: storedType,
+                            window: const Duration(seconds: 30),
+                          );
 
-                  String? code;
-                  try {
-                    code = await CodeService.generateCode(type);
-                  } catch (_) {}
+                          if (isDuplicate) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    '⚠️ هذه العملية مسجلة بالفعل (خلال آخر 30 ثانية)'),
+                                backgroundColor: Colors.orange,
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            setStateDialog(() => isSaving = false);
+                            return;
+                          }
 
-                  String extraText;
-                  if (type == 'payment') {
-                    extraText = noteCtrl.text.trim();
-                  } else if (type == 'return') {
-                    extraText = itemsCtrl.text.trim().isEmpty
-                        ? 'مرتجع'
-                        : 'مرتجع: ${itemsCtrl.text.trim()}';
-                  } else {
-                    extraText = itemsCtrl.text.trim();
-                  }
+                          // 🔢 توليد الرمز
+                          String? code;
+                          try {
+                            code = await CodeService.generateCode(type);
+                          } catch (_) {}
 
-                  await db.insertTransaction(Transaction(
-                    customerId: selectedCustomer!.id!,
-                    code: code,
-                    amount: amt,
-                    type: storedType,
-                    items: extraText,
-                    createdAt: DateTime.now().toIso8601String(),
-                  ));
+                          String extraText;
+                          if (type == 'payment') {
+                            extraText = noteCtrl.text.trim();
+                          } else if (type == 'return') {
+                            extraText = itemsCtrl.text.trim().isEmpty
+                                ? 'مرتجع'
+                                : 'مرتجع: ${itemsCtrl.text.trim()}';
+                          } else {
+                            extraText = itemsCtrl.text.trim();
+                          }
 
-                  if (!dialogContext.mounted) return;
-                  Navigator.pop(dialogContext);
+                          await db.insertTransaction(Transaction(
+                            customerId: selectedCustomer!.id!,
+                            code: code,
+                            amount: amt,
+                            type: storedType,
+                            items: extraText,
+                            createdAt: DateTime.now().toIso8601String(),
+                          ));
 
-                  final typeLabel = {
-                    'debt': 'دين',
-                    'payment': 'سداد',
-                    'return': 'مرتجع',
-                  }[type]!;
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
 
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                          'تم تسجيل $typeLabel بقيمة ${amt.toStringAsFixed(0)} ريال'),
-                      backgroundColor: Colors.green,
-                      duration: const Duration(seconds: 2),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.check),
-                label: const Text('حفظ'),
+                          final typeLabel = {
+                            'debt': 'دين',
+                            'payment': 'سداد',
+                            'return': 'مرتجع',
+                          }[type]!;
+
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  'تم تسجيل $typeLabel بقيمة ${amt.toStringAsFixed(0)} ريال'),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        } finally {
+                          if (mounted) {
+                            setStateDialog(() => isSaving = false);
+                          }
+                        }
+                      },
+                icon: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.check),
+                label: Text(isSaving ? 'جاري الحفظ...' : 'حفظ'),
                 style: FilledButton.styleFrom(backgroundColor: Colors.teal),
               ),
             ],
@@ -996,7 +1123,7 @@ class _DebtsTabState extends State<DebtsTab> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _refresh,
+            onPressed: _refreshAndSync,
           ),
         ],
       ),
@@ -1047,7 +1174,7 @@ class _DebtsTabState extends State<DebtsTab> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _refresh,
+        onRefresh: _refreshAndSync,
         child: ListView(
           padding: const EdgeInsets.all(12),
           children: [
@@ -1109,9 +1236,7 @@ class _DebtsTabState extends State<DebtsTab> {
               ),
             ],
             const SizedBox(height: 20),
-
             _buildTopDebtorsSection(theme),
-
             if (_recent.isNotEmpty) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
