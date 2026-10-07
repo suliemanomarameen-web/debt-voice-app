@@ -9,7 +9,6 @@ class DatabaseHelper {
   static Database? _db;
   DatabaseHelper._init();
 
-  /// يُستدعى بعد أي تعديل في البيانات (للمزامنة)
   static void Function()? onDataChanged;
 
   Future<Database> get database async {
@@ -257,6 +256,25 @@ class DatabaseHelper {
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
   }
 
+  // ============ فحص التكرار ============
+  Future<bool> transactionExistsRecent({
+    required int customerId,
+    required double amount,
+    required String type,
+    Duration window = const Duration(seconds: 30),
+  }) async {
+    final db = await database;
+    final since = DateTime.now().subtract(window).toIso8601String();
+
+    final r = await db.query(
+      'transactions',
+      where: 'customer_id = ? AND amount = ? AND type = ? AND created_at > ?',
+      whereArgs: [customerId, amount, type, since],
+      limit: 1,
+    );
+    return r.isNotEmpty;
+  }
+
   Future<bool> transactionExists({
     required int customerId,
     required double amount,
@@ -272,7 +290,6 @@ class DatabaseHelper {
   }
 
   // ============ إدارة الرموز ============
-
   Future<bool> codeExists(String code) async {
     final db = await database;
     final r = await db.query('used_codes',
@@ -294,25 +311,6 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
-  Future<int> getMaxSequence(String type) async {
-    final db = await database;
-    final r = await db.query('used_codes',
-        where: 'type = ?', whereArgs: [type], columns: ['code']);
-    int maxSeq = 0;
-    for (final row in r) {
-      final code = row['code'] as String? ?? '';
-      final parts = code.split('-');
-      if (parts.length >= 2) {
-        final numPart = int.tryParse(parts.sublist(1).join('-'));
-        if (numPart != null && numPart > maxSeq) {
-          maxSeq = numPart;
-        }
-      }
-    }
-    return maxSeq;
-  }
-
-  /// ============ تحديث رموز العمليات القديمة ============
   Future<int> updateCodesPrefix({
     required String oldPrefix,
     required String newPrefix,
@@ -364,8 +362,7 @@ class DatabaseHelper {
         } catch (_) {}
       }
 
-      debugPrint(
-          '✅ Updated $updatedCount transaction codes: $oldPrefix → $newPrefix');
+      debugPrint('✅ Updated $updatedCount codes: $oldPrefix → $newPrefix');
     } catch (e) {
       debugPrint('❌ updateCodesPrefix error: $e');
     }
@@ -374,11 +371,9 @@ class DatabaseHelper {
     return updatedCount;
   }
 
-  /// إحصائيات الرموز (للعرض)
   Future<Map<String, int>> getCodesStats() async {
     final db = await database;
     final all = await db.query('used_codes', columns: ['type']);
-
     final stats = <String, int>{'debt': 0, 'payment': 0, 'return': 0};
     for (final row in all) {
       final t = row['type'] as String? ?? 'debt';
@@ -387,7 +382,7 @@ class DatabaseHelper {
     return stats;
   }
 
-  // ============ أدوات للمزامنة ============
+  // ============ أدوات ============
   Future<void> clearAll() async {
     final db = await database;
     await db.delete('transactions');
