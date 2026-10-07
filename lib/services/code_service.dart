@@ -118,7 +118,6 @@ class CodeService {
       }
       return await _generateSequential(db, prefix, digits);
     } catch (e) {
-      // fallback
       final r = Random().nextInt(pow(10, digits).toInt());
       return '$prefix-${r.toString().padLeft(digits, '0')}';
     }
