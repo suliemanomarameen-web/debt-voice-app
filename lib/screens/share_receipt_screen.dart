@@ -414,11 +414,9 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
               children: [
                 _receiptRow('الهاتف',
                     widget.customer.phone ?? 'غير محدد', textDark, textGray),
-                // إخفاء التصنيف
                 if (!_hideCategory)
                   _receiptRow('التصنيف',
                       _categoryLabel(widget.customer.category), textDark, textGray),
-                // إخفاء نوع الحساب
                 if (!_hideAccountType)
                   _receiptRow('النوع',
                       _accountTypeLabel(widget.customer.accountType),
@@ -552,7 +550,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                                   ),
                                 ),
                               ),
-                              // عرض الرمز
                               if (_showCodes &&
                                   t.code != null &&
                                   t.code!.isNotEmpty)
@@ -584,7 +581,6 @@ class _ShareReceiptScreenState extends State<ShareReceiptScreen> {
                               ),
                             ],
                           ),
-                          // الأصناف / البيان
                           if (items.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(
