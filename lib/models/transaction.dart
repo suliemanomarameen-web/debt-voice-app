@@ -1,7 +1,8 @@
 class Transaction {
   final int? id;
   final int customerId;
-  final String? code; // رمز العملية (مثل D-0001, P-0002)
+  final String? code;
+  final String? accountant; // 🆕 اسم المحاسب
   final double amount;
   final String currency;
   final String type;
@@ -12,6 +13,7 @@ class Transaction {
     this.id,
     required this.customerId,
     this.code,
+    this.accountant, // 🆕
     required this.amount,
     this.currency = 'YER',
     required this.type,
@@ -23,6 +25,7 @@ class Transaction {
         'id': id,
         'customer_id': customerId,
         'code': code,
+        'accountant': accountant, // 🆕
         'amount': amount,
         'currency': currency,
         'type': type,
@@ -34,6 +37,7 @@ class Transaction {
         id: m['id'],
         customerId: m['customer_id'],
         code: m['code'],
+        accountant: m['accountant'], // 🆕
         amount: (m['amount'] as num).toDouble(),
         currency: m['currency'],
         type: m['type'],
