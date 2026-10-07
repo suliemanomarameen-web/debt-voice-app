@@ -169,11 +169,10 @@ void _setupOverlayListener() {
 
 Future<void> _saveTransactionFor(
     Customer customer, dynamic parsed, DatabaseHelper db) async {
-  // تطبيع النوع
   final normalizedType = CodeService.normalizeType(parsed.intent);
   final storedType = (normalizedType == 'return') ? 'payment' : normalizedType;
 
-  // ⚠️ منع التكرار
+  // منع التكرار
   try {
     final isDuplicate = await db.transactionExistsRecent(
       customerId: customer.id!,
@@ -194,7 +193,7 @@ Future<void> _saveTransactionFor(
     debugPrint('Duplicate check error: $e');
   }
 
-  // 🔢 توليد الرمز
+  // توليد الرمز
   String? code;
   try {
     code = await CodeService.generateCode(normalizedType);
@@ -202,7 +201,6 @@ Future<void> _saveTransactionFor(
     debugPrint('❌ Code generation error: $e');
   }
 
-  // حفظ العملية
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
     code: code,
@@ -242,8 +240,41 @@ Future<void> _saveTransactionFor(
   await NotificationService.show('تم تسجيل $label', detail.toString());
 }
 
-class DebtApp extends StatelessWidget {
+// ============================================================
+// ============ DebtApp مع مراقبة حالة التطبيق ============
+// ============================================================
+class DebtApp extends StatefulWidget {
   const DebtApp({super.key});
+  @override
+  State<DebtApp> createState() => _DebtAppState();
+}
+
+class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    // عندما يعود التطبيق إلى المقدمة
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('📱 App resumed - checking sync status');
+      Future.delayed(const Duration(seconds: 2), () {
+        SyncService.checkAndSyncIfNeeded();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
