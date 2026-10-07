@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 4,
+      version: 5, // 🆕 رُفع من 4 إلى 5
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -45,6 +45,7 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER NOT NULL,
         code TEXT UNIQUE,
+        accountant TEXT,
         amount REAL NOT NULL,
         currency TEXT DEFAULT 'YER',
         type TEXT NOT NULL,
@@ -90,6 +91,15 @@ class DatabaseHelper {
           )
         ''');
       } catch (_) {}
+    }
+    if (oldV < 5) {
+      try {
+        // 🆕 إضافة عمود اسم المحاسب
+        await db.execute("ALTER TABLE transactions ADD COLUMN accountant TEXT");
+        debugPrint('✅ [DB] Added accountant column (v5)');
+      } catch (e) {
+        debugPrint('❌ [DB] Failed to add accountant column: $e');
+      }
     }
   }
 
@@ -382,7 +392,24 @@ class DatabaseHelper {
     return stats;
   }
 
-  // ============ أدوات ============
+  // ============ 🆕 إدارة المحاسبين (جلب قائمة الأسماء المستخدمة) ============
+  /// جلب كل أسماء المحاسبين المستخدمة في العمليات (مميزة)
+  Future<List<String>> getAllAccountants() async {
+    final db = await database;
+    final r = await db.rawQuery('''
+      SELECT DISTINCT accountant
+      FROM transactions
+      WHERE accountant IS NOT NULL AND accountant != ''
+      ORDER BY accountant ASC
+    ''');
+    return r
+        .map((row) => row['accountant'] as String?)
+        .where((s) => s != null && s.isNotEmpty)
+        .cast<String>()
+        .toList();
+  }
+
+  // ============ أدوات للمزامنة ============
   Future<void> clearAll() async {
     final db = await database;
     await db.delete('transactions');
