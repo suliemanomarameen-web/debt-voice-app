@@ -52,6 +52,8 @@ class SyncService {
   static const String _keyLastLocalChange = 'sync_last_local_change';
   static const String _keyHasPendingChanges = 'sync_has_pending';
 
+  static const Duration _autoSyncThreshold = Duration(minutes: 5);
+
   // ========== الحالة ==========
   static SyncStatus _status = SyncStatus.idle;
   static SyncStatus get status => _status;
@@ -60,17 +62,22 @@ class SyncService {
   static Timer? _periodicTimer;
   static bool _isSyncing = false;
 
-  /// Stream لإشعار الواجهة بالتغييرات
+  /// Stream لحالة المزامنة
   static final _statusController = StreamController<SyncStatus>.broadcast();
   static Stream<SyncStatus> get statusStream => _statusController.stream;
 
-  /// آخر تعارض
+  /// Stream لنتيجة المزامنة
+  static final _resultController = StreamController<SyncResult>.broadcast();
+  static Stream<SyncResult> get resultStream => _resultController.stream;
+
   static SyncConflict? _lastConflict;
   static SyncConflict? get lastConflict => _lastConflict;
 
+  // ========== إتاحة المزامنة ==========
+  static bool get isSyncAvailable => GDriveService.isSignedIn;
+
   // ========== التهيئة ==========
   static Future<void> init() async {
-    // ربط callback التغييرات في قاعدة البيانات
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
 
     // مزامنة أولية بعد 3 ثوانٍ
@@ -81,7 +88,7 @@ class SyncService {
     // مزامنة دورية كل 5 دقائق
     _periodicTimer?.cancel();
     _periodicTimer = Timer.periodic(
-      const Duration(minutes: 5),
+      _autoSyncThreshold,
       (_) => silentSync(),
     );
 
@@ -92,6 +99,7 @@ class SyncService {
     _debounceTimer?.cancel();
     _periodicTimer?.cancel();
     _statusController.close();
+    _resultController.close();
   }
 
   static void _setStatus(SyncStatus s) {
@@ -111,6 +119,35 @@ class SyncService {
     _debounceTimer = Timer(const Duration(seconds: 5), () {
       silentSync();
     });
+  }
+
+  // ========== المزامنة عند العودة من الخلفية ==========
+  static Future<void> checkAndSyncIfNeeded() async {
+    if (!GDriveService.isSignedIn) {
+      final ok = await GDriveService.trySilentSignIn();
+      if (!ok) return;
+    }
+
+    if (_isSyncing) return;
+
+    final lastSync = await getLastSyncTime();
+    final now = DateTime.now();
+
+    if (lastSync == null) {
+      debugPrint('🔄 [Sync] No previous sync - starting now');
+      await silentSync();
+      return;
+    }
+
+    final elapsed = now.difference(lastSync);
+    if (elapsed >= _autoSyncThreshold) {
+      debugPrint(
+          '🔄 [Sync] ${elapsed.inMinutes} min since last sync - starting');
+      await silentSync();
+    } else {
+      debugPrint(
+          '⏸️ [Sync] Only ${elapsed.inSeconds}s since last sync - skipping');
+    }
   }
 
   // ========== مزامنة صامتة ==========
@@ -185,11 +222,13 @@ class SyncService {
       // 4. إذا لا يوجد أي تغيير
       if (!hasLocalChanges && !hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.idle);
-        return SyncResult(
+        final r = SyncResult(
           success: true,
           message: 'لا توجد تغييرات',
           timestamp: lastSync,
         );
+        if (!_resultController.isClosed) _resultController.add(r);
+        return r;
       }
 
       // 5. تعارض؟
@@ -231,7 +270,7 @@ class SyncService {
 
       if (!silent) _setStatus(SyncStatus.idle);
 
-      return SyncResult(
+      final finalResult = SyncResult(
         success: true,
         message: conflict
             ? 'تمت المزامنة (مع دمج تعارض)'
@@ -241,13 +280,27 @@ class SyncService {
         hasConflict: conflict,
         timestamp: now,
       );
+
+      // 📢 بث النتيجة
+      if (!_resultController.isClosed) {
+        _resultController.add(finalResult);
+      }
+
+      return finalResult;
     } catch (e) {
       debugPrint('❌ [Sync] Error: $e');
       if (!silent) _setStatus(SyncStatus.error);
-      return SyncResult(
+
+      final errResult = SyncResult(
         success: false,
         message: 'فشل المزامنة: $e',
       );
+
+      if (!_resultController.isClosed) {
+        _resultController.add(errResult);
+      }
+
+      return errResult;
     }
   }
 
@@ -263,8 +316,7 @@ class SyncService {
       final transactions = (cloudData['transactions'] as List?) ?? [];
       final usedCodes = (cloudData['used_codes'] as List?) ?? [];
 
-      // ===== 1. دمج الرموز المستخدمة أولاً =====
-      // (لتجنب تكرار الأرقام عند إضافة عمليات جديدة)
+      // ===== 1. دمج الرموز =====
       for (final uc in usedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -350,7 +402,7 @@ class SyncService {
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 2, // رُفع من 1 إلى 2 (لوجود used_codes)
+        'version': 2,
         'created_at': DateTime.now().toIso8601String(),
         'customers': customers,
         'transactions': transactions,
