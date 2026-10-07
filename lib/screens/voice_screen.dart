@@ -3,6 +3,7 @@ import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/code_service.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
@@ -27,6 +28,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   String? _errorMessage;
   bool _askingWhich = false;
   bool _autoProcessed = false;
+
+  // ===== منع النقر المزدوج =====
+  bool _isSavingTransaction = false;
+  bool _isSavingAccount = false;
 
   @override
   void initState() {
@@ -163,119 +168,181 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
+  // ============ حفظ حساب جديد ============
   Future<void> _saveAccount() async {
+    // 🛡️ منع النقر المزدوج
+    if (_isSavingAccount) return;
+
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
-    final db = DatabaseHelper.instance;
 
-    final existing = await db.findExactCustomer(_parsed!.customerName);
-    if (existing != null) {
+    setState(() => _isSavingAccount = true);
+
+    try {
+      final db = DatabaseHelper.instance;
+
+      final existing = await db.findExactCustomer(_parsed!.customerName);
+      if (existing != null) {
+        if (!mounted) return;
+        setState(() {
+          _errorMessage = 'الحساب موجود مسبقاً';
+          _parsed = null;
+        });
+        await TtsService.speakExistsBefore(_parsed!.customerName);
+        return;
+      }
+
+      await db.insertCustomer(Customer(
+        name: _parsed!.customerName,
+        accountType: _parsed!.accountType,
+        createdAt: DateTime.now().toIso8601String(),
+      ));
+
+      if (!mounted) return;
+      await TtsService.speakAccountCreated(_parsed!.customerName);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
+          backgroundColor: Colors.green,
+        ),
+      );
       setState(() {
-        _errorMessage = 'الحساب موجود مسبقاً';
         _parsed = null;
+        _text = '';
       });
-      await TtsService.speakExistsBefore(_parsed!.customerName);
-      return;
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingAccount = false);
+      }
     }
-
-    await db.insertCustomer(Customer(
-      name: _parsed!.customerName,
-      accountType: _parsed!.accountType,
-      createdAt: DateTime.now().toIso8601String(),
-    ));
-
-    if (!mounted) return;
-    await TtsService.speakAccountCreated(_parsed!.customerName);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
-        backgroundColor: Colors.green,
-      ),
-    );
-    setState(() {
-      _parsed = null;
-      _text = '';
-    });
   }
 
+  // ============ حفظ معاملة ============
   Future<void> _saveTransaction() async {
+    // 🛡️ منع النقر المزدوج (السبب الرئيسي للمشكلة)
+    if (_isSavingTransaction) return;
+
     final p = _parsed;
     final c = _foundCustomer;
     if (p == null || c == null) return;
-    final db = DatabaseHelper.instance;
 
-    final storedType = (p.intent == 'return') ? 'payment' : p.intent;
+    setState(() => _isSavingTransaction = true);
 
-    await db.insertTransaction(Transaction(
-      customerId: c.id!,
-      amount: p.amount,
-      currency: p.currency,
-      type: storedType,
-      items: p.intent == 'return'
-          ? 'مرتجع${p.items.isEmpty ? "" : ": ${p.items}"}'
-          : p.items,
-      createdAt: DateTime.now().toIso8601String(),
-    ));
+    try {
+      final db = DatabaseHelper.instance;
 
-    final newBalance = await db.customerBalance(c.id!);
-    if (!mounted) return;
+      // تطبيع النوع
+      final normalizedType = CodeService.normalizeType(p.intent);
+      final storedType =
+          (normalizedType == 'return') ? 'payment' : normalizedType;
 
-    final label = {
-      'debt': 'دين',
-      'payment': 'سداد',
-      'return': 'مرتجع',
-    }[p.intent] ?? 'عملية';
+      // 🛡️ منع التكرار خلال 30 ثانية
+      final isDuplicate = await db.transactionExistsRecent(
+        customerId: c.id!,
+        amount: p.amount.toDouble(),
+        type: storedType,
+        window: const Duration(seconds: 30),
+      );
 
-    await TtsService.confirmTransaction(
-      type: label,
-      amount: p.amount,
-      customerName: c.name,
-      newBalance: newBalance,
-      currency: p.currency,
-    );
+      if (isDuplicate) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ هذه العملية مسجلة بالفعل (خلال آخر 30 ثانية)'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
 
-    if (!mounted) return;
+      // 🔢 توليد رمز العملية
+      String? code;
+      try {
+        code = await CodeService.generateCode(normalizedType);
+      } catch (_) {
+        code = null;
+      }
 
-    final title = {
-      'debt': '✅ تم تسجيل الدين',
-      'payment': '✅ تم تسجيل السداد',
-      'return': '✅ تم تسجيل المرتجع',
-    }[p.intent] ?? '✅ تم التسجيل';
+      // حفظ المعاملة
+      await db.insertTransaction(Transaction(
+        customerId: c.id!,
+        code: code,
+        amount: p.amount,
+        currency: p.currency,
+        type: storedType,
+        items: normalizedType == 'return'
+            ? 'مرتجع${p.items.isEmpty ? "" : ": ${p.items}"}'
+            : p.items,
+        createdAt: DateTime.now().toIso8601String(),
+      ));
 
-    final theme = Theme.of(context);
+      final newBalance = await db.customerBalance(c.id!);
+      if (!mounted) return;
 
-    await showDialog(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('الاسم: ${c.name}'),
-              Text('المبلغ: ${p.amount.toStringAsFixed(0)} ${p.currency}'),
-              if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
-              const Divider(),
-              Text('الرصيد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
-                  style: TextStyle(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16)),
+      final label = {
+        'debt': 'دين',
+        'payment': 'سداد',
+        'return': 'مرتجع',
+      }[normalizedType] ?? 'عملية';
+
+      await TtsService.confirmTransaction(
+        type: label,
+        amount: p.amount,
+        customerName: c.name,
+        newBalance: newBalance,
+        currency: p.currency,
+      );
+
+      if (!mounted) return;
+
+      final title = {
+        'debt': '✅ تم تسجيل الدين',
+        'payment': '✅ تم تسجيل السداد',
+        'return': '✅ تم تسجيل المرتجع',
+      }[normalizedType] ?? '✅ تم التسجيل';
+
+      final theme = Theme.of(context);
+
+      await showDialog(
+        context: context,
+        builder: (_) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: Text(title),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('الاسم: ${c.name}'),
+                if (code != null) Text('الرمز: $code'),
+                Text('المبلغ: ${p.amount.toStringAsFixed(0)} ${p.currency}'),
+                if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
+                const Divider(),
+                Text('الرصيد: ${newBalance.toStringAsFixed(0)} ${p.currency}',
+                    style: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pop(context, true);
+                },
+                child: const Text('تم'),
+              ),
             ],
           ),
-          actions: [
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context, true);
-              },
-              child: const Text('تم'),
-            ),
-          ],
         ),
-      ),
-    );
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingTransaction = false);
+      }
+    }
   }
 
   @override
@@ -497,22 +564,35 @@ class _VoiceScreenState extends State<VoiceScreen> {
                           children: [
                             Expanded(
                               child: OutlinedButton(
-                                onPressed: () => setState(() {
-                                  _parsed = null;
-                                  _text = '';
-                                  _foundCustomer = null;
-                                  _matches = [];
-                                  _errorMessage = null;
-                                  _askingWhich = false;
-                                }),
+                                onPressed: _isSavingTransaction
+                                    ? null
+                                    : () => setState(() {
+                                          _parsed = null;
+                                          _text = '';
+                                          _foundCustomer = null;
+                                          _matches = [];
+                                          _errorMessage = null;
+                                          _askingWhich = false;
+                                        }),
                                 child: const Text('إلغاء'),
                               ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: FilledButton(
-                                onPressed: _saveTransaction,
-                                child: const Text('حفظ'),
+                                onPressed: _isSavingTransaction
+                                    ? null
+                                    : _saveTransaction,
+                                child: _isSavingTransaction
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('حفظ'),
                               ),
                             ),
                           ],
@@ -551,19 +631,32 @@ class _VoiceScreenState extends State<VoiceScreen> {
                           children: [
                             Expanded(
                               child: OutlinedButton(
-                                onPressed: () => setState(() {
-                                  _parsed = null;
-                                  _text = '';
-                                  _errorMessage = null;
-                                }),
+                                onPressed: _isSavingAccount
+                                    ? null
+                                    : () => setState(() {
+                                          _parsed = null;
+                                          _text = '';
+                                          _errorMessage = null;
+                                        }),
                                 child: const Text('إلغاء'),
                               ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: FilledButton(
-                                onPressed: _saveAccount,
-                                child: const Text('إنشاء'),
+                                onPressed: _isSavingAccount
+                                    ? null
+                                    : _saveAccount,
+                                child: _isSavingAccount
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('إنشاء'),
                               ),
                             ),
                           ],
