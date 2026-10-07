@@ -7,12 +7,12 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../db/database_helper.dart';
 
 class PdfService {
-  /// عدد المعاملات في كل صفحة
   static const int _transactionsPerPage = 20;
 
   /// إنشاء كشف حساب PDF (عن طريق تحويل Widget إلى صورة)
@@ -25,7 +25,13 @@ class PdfService {
     final db = DatabaseHelper.instance;
     final allTx = await db.customerTransactions(customer.id!);
 
-    // ========== 1. حساب الرصيد الافتتاحي (قبل الفترة) ==========
+    // ===== إعدادات عرض =====
+    final prefs = await SharedPreferences.getInstance();
+    final hideCategory = prefs.getBool('pdf_hide_category') ?? false;
+    final hideAccountType = prefs.getBool('pdf_hide_account_type') ?? false;
+    final showCodes = prefs.getBool('pdf_show_codes') ?? true;
+
+    // ===== 1. الرصيد الافتتاحي =====
     double openingBalance = 0;
     if (fromDate != null) {
       final fromStart = DateTime(fromDate.year, fromDate.month, fromDate.day);
@@ -41,7 +47,7 @@ class PdfService {
       }
     }
 
-    // ========== 2. فلترة معاملات الفترة ==========
+    // ===== 2. فلترة المعاملات =====
     List<Transaction> tx = allTx;
     if (fromDate != null) {
       final fromStart = DateTime(fromDate.year, fromDate.month, fromDate.day);
@@ -65,7 +71,7 @@ class PdfService {
       }).toList();
     }
 
-    // ========== 3. تقسيم المعاملات إلى صفحات ==========
+    // ===== 3. تقسيم المعاملات لصفحات =====
     final List<List<Transaction>> pages = [];
     if (tx.isEmpty) {
       pages.add([]);
@@ -78,7 +84,7 @@ class PdfService {
       }
     }
 
-    // ========== 4. إنشاء PDF ==========
+    // ===== 4. إنشاء PDF =====
     final doc = pw.Document();
 
     for (int pageIndex = 0; pageIndex < pages.length; pageIndex++) {
@@ -86,7 +92,6 @@ class PdfService {
       final isFirstPage = pageIndex == 0;
       final isLastPage = pageIndex == pages.length - 1;
 
-      // بناء الـ Widget
       final widget = _buildStatementWidget(
         customer: customer,
         transactions: pageTx,
@@ -98,9 +103,11 @@ class PdfService {
         totalPages: pages.length,
         isFirstPage: isFirstPage,
         isLastPage: isLastPage,
+        hideCategory: hideCategory,
+        hideAccountType: hideAccountType,
+        showCodes: showCodes,
       );
 
-      // تحويل إلى صورة
       final imageBytes = await _widgetToImage(widget);
       final image = pw.MemoryImage(imageBytes);
 
@@ -119,7 +126,7 @@ class PdfService {
       );
     }
 
-    // ========== 5. حفظ الملف ==========
+    // ===== 5. حفظ الملف =====
     final dir = await getApplicationDocumentsDirectory();
     final safeName =
         customer.name.replaceAll(RegExp(r'[^\w\u0600-\u06FF]'), '_');
@@ -184,6 +191,9 @@ class PdfService {
     required int totalPages,
     required bool isFirstPage,
     required bool isLastPage,
+    required bool hideCategory,
+    required bool hideAccountType,
+    required bool showCodes,
     DateTime? fromDate,
     DateTime? toDate,
   }) {
@@ -193,17 +203,8 @@ class PdfService {
     const textDark = Color(0xFF1F2937);
     const textGray = Color(0xFF6B7280);
 
-    // حساب إجماليات الفترة كاملة (من كل الصفحات)
-    // ⚠️ ملاحظة: هنا نحسب فقط من الصفحة الحالية
-    // لكن في كشف متعدد الصفحات، نحتاج تمرير الإجماليات من الخارج
-    // لهذا سنمررها عبر المعاملات فقط في الصفحة الأولى
     double totalDebt = 0;
     double totalPaid = 0;
-    if (isFirstPage) {
-      // نحسب الإجماليات من كل المعاملات
-      // لكن هذا غير متاح هنا، لذا سنعتمد على _calculateTotals
-      // الذي يمرر من الخارج... للحفاظ على البساطة سنحسب من الصفحة
-    }
     for (final t in transactions) {
       if (t.type == 'debt') {
         totalDebt += t.amount;
@@ -237,9 +238,9 @@ class PdfService {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
+                      const Text(
                         'كشف حساب',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -284,7 +285,8 @@ class PdfService {
                       ),
                       child: Text(
                         'الفترة: ${fromDate != null ? _formatDate(fromDate) : "البداية"} - ${toDate != null ? _formatDate(toDate) : "اليوم"}',
-                        style: const TextStyle(color: Colors.white, fontSize: 9),
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 9),
                       ),
                     ),
                   ],
@@ -293,7 +295,7 @@ class PdfService {
             ),
             const SizedBox(height: 8),
 
-            // ===== معلومات العميل (تظهر فقط في الصفحة الأولى) =====
+            // ===== معلومات العميل =====
             if (isFirstPage) ...[
               Container(
                 padding: const EdgeInsets.all(10),
@@ -307,16 +309,19 @@ class PdfService {
                     _row('الاسم', customer.name, textDark, textGray),
                     if (customer.phone != null && customer.phone!.isNotEmpty)
                       _row('الهاتف', customer.phone!, textDark, textGray),
-                    _row('التصنيف', _categoryLabel(customer.category), textDark,
-                        textGray),
-                    _row('النوع',
-                        _accountTypeLabel(customer.accountType), textDark, textGray),
+                    if (!hideCategory)
+                      _row('التصنيف', _categoryLabel(customer.category),
+                          textDark, textGray),
+                    if (!hideAccountType)
+                      _row('النوع',
+                          _accountTypeLabel(customer.accountType),
+                          textDark, textGray),
                   ],
                 ),
               ),
               const SizedBox(height: 8),
 
-              // ===== الرصيد الختامي =====
+              // ===== الرصيد =====
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -353,7 +358,7 @@ class PdfService {
               ),
               const SizedBox(height: 8),
 
-              // ===== صندوق الرصيد الافتتاحي =====
+              // ===== الرصيد الافتتاحي =====
               if (isFiltered) ...[
                 Container(
                   padding: const EdgeInsets.all(10),
@@ -391,7 +396,7 @@ class PdfService {
                 const SizedBox(height: 8),
               ],
 
-              // ===== إجماليات الفترة =====
+              // ===== الإجماليات =====
               Row(
                 children: [
                   Expanded(
@@ -431,6 +436,7 @@ class PdfService {
                       ),
                     ),
                     const SizedBox(height: 6),
+                    // ===== رأس الجدول =====
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 5),
@@ -438,9 +444,9 @@ class PdfService {
                         color: primaryGreen,
                         borderRadius: BorderRadius.circular(5),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Expanded(
+                          const Expanded(
                             flex: 2,
                             child: Text('التاريخ',
                                 style: TextStyle(
@@ -448,7 +454,7 @@ class PdfService {
                                     fontWeight: FontWeight.bold,
                                     fontSize: 10)),
                           ),
-                          Expanded(
+                          const Expanded(
                             flex: 1,
                             child: Text('النوع',
                                 style: TextStyle(
@@ -456,7 +462,7 @@ class PdfService {
                                     fontWeight: FontWeight.bold,
                                     fontSize: 10)),
                           ),
-                          Expanded(
+                          const Expanded(
                             flex: 2,
                             child: Text('المبلغ',
                                 style: TextStyle(
@@ -464,9 +470,18 @@ class PdfService {
                                     fontWeight: FontWeight.bold,
                                     fontSize: 10)),
                           ),
-                          Expanded(
+                          if (showCodes)
+                            const Expanded(
+                              flex: 2,
+                              child: Text('الرمز',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 10)),
+                            ),
+                          const Expanded(
                             flex: 4,
-                            child: Text('الأصناف',
+                            child: Text('الأصناف / البيان',
                                 style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.bold,
@@ -475,6 +490,7 @@ class PdfService {
                         ],
                       ),
                     ),
+                    // ===== صفوف البيانات =====
                     ...transactions.asMap().entries.map((entry) {
                       final i = entry.key;
                       final t = entry.value;
@@ -534,6 +550,40 @@ class PdfService {
                                     TextStyle(fontSize: 9, color: textDark),
                               ),
                             ),
+                            if (showCodes)
+                              Expanded(
+                                flex: 2,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 4, vertical: 1),
+                                  decoration: (t.code != null &&
+                                          t.code!.isNotEmpty)
+                                      ? BoxDecoration(
+                                          color: const Color(0xFFEFF6FF),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color: const Color(0xFF93C5FD),
+                                            width: 0.5,
+                                          ),
+                                        )
+                                      : null,
+                                  child: Text(
+                                    (t.code != null && t.code!.isNotEmpty)
+                                        ? t.code!
+                                        : '-',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: (t.code != null &&
+                                              t.code!.isNotEmpty)
+                                          ? const Color(0xFF2563EB)
+                                          : textGray,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
                             Expanded(
                               flex: 4,
                               child: Text(
@@ -550,7 +600,7 @@ class PdfService {
                 ),
               ),
 
-            // ===== Footer (يظهر فقط في الصفحة الأخيرة) =====
+            // ===== Footer =====
             if (isLastPage) ...[
               const SizedBox(height: 8),
               Center(
