@@ -7,6 +7,7 @@ import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
+import 'services/code_service.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -17,7 +18,6 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/reminder_service.dart';
 import 'services/tts_service.dart';
-import 'services/code_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
@@ -40,13 +40,8 @@ void main() async {
   final theme = ThemeService();
   await theme.load();
 
-  // 🔄 النسخ الاحتياطي المحلي
   await AutoBackupService.init();
-
-  // ☁️ المزامنة الثنائية مع Google Drive
   await SyncService.init();
-
-  // ☁️ النسخ الاحتياطي التلقائي على Google Drive
   await CloudBackupService.init();
 
   try {
@@ -174,23 +169,47 @@ void _setupOverlayListener() {
 
 Future<void> _saveTransactionFor(
     Customer customer, dynamic parsed, DatabaseHelper db) async {
-  final storedType = (parsed.intent == 'return') ? 'payment' : parsed.intent;
+  // تطبيع النوع
+  final normalizedType = CodeService.normalizeType(parsed.intent);
+  final storedType = (normalizedType == 'return') ? 'payment' : normalizedType;
 
-  // 🔢 توليد رمز العملية
-  String? code;
+  // ⚠️ منع التكرار
   try {
-    code = await CodeService.generateCode(parsed.intent);
-  } catch (_) {
-    code = null;
+    final isDuplicate = await db.transactionExistsRecent(
+      customerId: customer.id!,
+      amount: parsed.amount.toDouble(),
+      type: storedType,
+      window: const Duration(seconds: 30),
+    );
+
+    if (isDuplicate) {
+      await TtsService.speak('هذه العملية مسجلة بالفعل');
+      await NotificationService.show(
+        'عملية مكررة',
+        'تم تجاهل العملية (مسجلة خلال آخر 30 ثانية)',
+      );
+      return;
+    }
+  } catch (e) {
+    debugPrint('Duplicate check error: $e');
   }
 
+  // 🔢 توليد الرمز
+  String? code;
+  try {
+    code = await CodeService.generateCode(normalizedType);
+  } catch (e) {
+    debugPrint('❌ Code generation error: $e');
+  }
+
+  // حفظ العملية
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
     code: code,
     amount: parsed.amount,
     currency: parsed.currency,
     type: storedType,
-    items: parsed.intent == 'return'
+    items: normalizedType == 'return'
         ? 'مرتجع${parsed.items.isEmpty ? "" : ": ${parsed.items}"}'
         : parsed.items,
     createdAt: DateTime.now().toIso8601String(),
@@ -201,7 +220,7 @@ Future<void> _saveTransactionFor(
     'debt': 'دين',
     'payment': 'سداد',
     'return': 'مرتجع',
-  }[parsed.intent] ?? 'عملية';
+  }[normalizedType] ?? 'عملية';
 
   await TtsService.confirmTransaction(
     type: label,
