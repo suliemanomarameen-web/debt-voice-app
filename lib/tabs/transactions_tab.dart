@@ -144,7 +144,6 @@ class _TransactionsTabState extends State<TransactionsTab> {
       initialDateRange: (_customFrom != null && _customTo != null)
           ? DateTimeRange(start: _customFrom!, end: _customTo!)
           : null,
-      locale: const Locale('ar'),
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
         child: child!,
