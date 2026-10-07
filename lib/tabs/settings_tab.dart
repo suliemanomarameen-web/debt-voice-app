@@ -782,7 +782,7 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       );
 
-      // تحديث الرموز القديمة (قبل الحفظ)
+      // تحديث الرموز القديمة أولاً (قبل حفظ البادئة الجديدة)
       if (updateOld == true && mounted) {
         setState(() => _backupBusy = true);
         final count = await CodeService.updateOldCodes(
@@ -800,7 +800,7 @@ class _SettingsTabState extends State<SettingsTab> {
         );
       }
 
-      // حفظ الإعداد الجديد
+      // حفظ البادئة الجديدة
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
         if (mounted) setState(() => _debtPrefix = newPrefix);
@@ -812,6 +812,7 @@ class _SettingsTabState extends State<SettingsTab> {
         if (mounted) setState(() => _returnPrefix = newPrefix);
       }
     } else {
+      // لم يتغير الرمز - احفظ فقط
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
         if (mounted) setState(() => _debtPrefix = newPrefix);
