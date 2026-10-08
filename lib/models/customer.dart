@@ -8,7 +8,8 @@ class Customer {
   final String? note;
   final String? photoPath;
   final String category;
-  final double? maxBalance; // 🆕 الحد الأقصى للرصيد (اختياري)
+  final double? maxBalance;
+  final bool isActive; // 🆕 الحساب نشط أم موقوف
   final String createdAt;
 
   Customer({
@@ -19,7 +20,8 @@ class Customer {
     this.note,
     this.photoPath,
     this.category = 'normal',
-    this.maxBalance, // 🆕
+    this.maxBalance,
+    this.isActive = true, // 🆕 افتراضياً نشط
     required this.createdAt,
   });
 
@@ -31,7 +33,8 @@ class Customer {
         'note': note,
         'photo_path': photoPath,
         'category': category,
-        'max_balance': maxBalance, // 🆕
+        'max_balance': maxBalance,
+        'is_active': isActive ? 1 : 0, // 🆕
         'created_at': createdAt,
       };
 
@@ -45,15 +48,49 @@ class Customer {
         category: m['category'] ?? 'normal',
         maxBalance: m['max_balance'] != null
             ? (m['max_balance'] as num).toDouble()
-            : null, // 🆕
+            : null,
+        isActive: m['is_active'] == null || m['is_active'] == 1, // 🆕
         createdAt: m['created_at'],
       );
+
+  /// نسخة معدّلة
+  Customer copyWith({
+    int? id,
+    String? name,
+    String? phone,
+    String? accountType,
+    String? note,
+    String? photoPath,
+    String? category,
+    double? maxBalance,
+    bool? isActive,
+    String? createdAt,
+  }) {
+    return Customer(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+      accountType: accountType ?? this.accountType,
+      note: note ?? this.note,
+      photoPath: photoPath ?? this.photoPath,
+      category: category ?? this.category,
+      maxBalance: maxBalance ?? this.maxBalance,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 
   /// هل تجاوز الرصيد الحد الأقصى؟
   bool isOverLimit(double currentBalance) {
     if (maxBalance == null) return false;
     if (maxBalance! <= 0) return false;
     return currentBalance > maxBalance!;
+  }
+
+  /// نسبة الرصيد من الحد الأقصى (0.0 - 1.0+)
+  double balanceRatio(double currentBalance) {
+    if (maxBalance == null || maxBalance! <= 0) return 0;
+    return currentBalance / maxBalance!;
   }
 }
 
