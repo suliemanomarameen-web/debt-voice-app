@@ -3,6 +3,7 @@ import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
@@ -170,7 +171,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   // ============ حفظ حساب جديد ============
   Future<void> _saveAccount() async {
-    // 🛡️ منع النقر المزدوج
     if (_isSavingAccount) return;
 
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
@@ -219,7 +219,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   // ============ حفظ معاملة ============
   Future<void> _saveTransaction() async {
-    // 🛡️ منع النقر المزدوج (السبب الرئيسي للمشكلة)
     if (_isSavingTransaction) return;
 
     final p = _parsed;
@@ -256,6 +255,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
         return;
       }
 
+      // 🆕 جلب اسم المحاسب
+      String? accountant;
+      try {
+        accountant = await AccountantService.getAccountantName();
+      } catch (e) {
+        debugPrint('❌ Accountant error: $e');
+      }
+
       // 🔢 توليد رمز العملية
       String? code;
       try {
@@ -268,6 +275,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       await db.insertTransaction(Transaction(
         customerId: c.id!,
         code: code,
+        accountant: accountant, // 🆕
         amount: p.amount,
         currency: p.currency,
         type: storedType,
@@ -316,6 +324,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
               children: [
                 Text('الاسم: ${c.name}'),
                 if (code != null) Text('الرمز: $code'),
+                if (accountant != null && accountant.isNotEmpty)
+                  Text('المحاسب: $accountant'),
                 Text('المبلغ: ${p.amount.toStringAsFixed(0)} ${p.currency}'),
                 if (p.items.isNotEmpty) Text('الأصناف: ${p.items}'),
                 const Divider(),
