@@ -60,32 +60,33 @@ class SyncService {
 
   static Timer? _debounceTimer;
   static Timer? _periodicTimer;
-  static bool _isSyncing = false;
 
-  /// Stream لحالة المزامنة
+  /// 🛡️ يمنع تشغيل أكثر من مزامنة في وقت واحد
+  static bool _isSyncing = false;
+  static bool get isSyncing => _isSyncing;
+
+  /// 🆕 Future للمزامنة الجارية (لمن يريد الانتظار)
+  static Future<SyncResult>? _currentSyncFuture;
+
   static final _statusController = StreamController<SyncStatus>.broadcast();
   static Stream<SyncStatus> get statusStream => _statusController.stream;
 
-  /// Stream لنتيجة المزامنة
   static final _resultController = StreamController<SyncResult>.broadcast();
   static Stream<SyncResult> get resultStream => _resultController.stream;
 
   static SyncConflict? _lastConflict;
   static SyncConflict? get lastConflict => _lastConflict;
 
-  // ========== إتاحة المزامنة ==========
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
   // ========== التهيئة ==========
   static Future<void> init() async {
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
 
-    // مزامنة أولية بعد 3 ثوانٍ
     Future.delayed(const Duration(seconds: 3), () {
       initialSync();
     });
 
-    // مزامنة دورية كل 5 دقائق
     _periodicTimer?.cancel();
     _periodicTimer = Timer.periodic(
       _autoSyncThreshold,
@@ -114,7 +115,6 @@ class SyncService {
     _saveLastLocalChange(DateTime.now());
     _saveHasPendingChanges(true);
 
-    // رفع تلقائي بعد 5 ثوانٍ (debounce)
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(seconds: 5), () {
       silentSync();
@@ -152,16 +152,21 @@ class SyncService {
 
   // ========== مزامنة صامتة ==========
   static Future<void> silentSync() async {
-    if (_isSyncing) return;
+    if (_isSyncing) {
+      debugPrint('⏸️ [Sync] Already syncing - skipping silent sync');
+      return;
+    }
     if (!GDriveService.isSignedIn) return;
 
     try {
       _isSyncing = true;
-      await _performSync(silent: true);
+      _currentSyncFuture = _performSync(silent: true);
+      await _currentSyncFuture;
     } catch (e) {
       debugPrint('❌ [Sync] Silent error: $e');
     } finally {
       _isSyncing = false;
+      _currentSyncFuture = null;
     }
   }
 
@@ -178,7 +183,7 @@ class SyncService {
       );
     }
 
-    return _performSync(silent: false);
+    return _runSync(silent: false);
   }
 
   // ========== مزامنة يدوية ==========
@@ -190,7 +195,37 @@ class SyncService {
       }
     }
 
-    return _performSync(silent: false);
+    return _runSync(silent: false);
+  }
+
+  // ========== دالة موحدة للتحكم في التزامن ==========
+  /// تمنع تشغيل أكثر من مزامنة في وقت واحد.
+  /// إذا كانت هناك مزامنة جارية، تنتظرها وترجع نتيجتها.
+  static Future<SyncResult> _runSync({required bool silent}) async {
+    // إذا كانت هناك مزامنة جارية، انتظر نتيجتها
+    if (_isSyncing && _currentSyncFuture != null) {
+      debugPrint('⏳ [Sync] Waiting for current sync to finish...');
+      try {
+        return await _currentSyncFuture!;
+      } catch (e) {
+        return SyncResult(
+          success: false,
+          message: 'فشل المزامنة السابقة: $e',
+        );
+      }
+    }
+
+    // ابدأ مزامنة جديدة
+    try {
+      _isSyncing = true;
+      final future = _performSync(silent: silent);
+      _currentSyncFuture = future;
+      final result = await future;
+      return result;
+    } finally {
+      _isSyncing = false;
+      _currentSyncFuture = null;
+    }
   }
 
   // ========== المزامنة الفعلية ==========
@@ -219,14 +254,21 @@ class SyncService {
       final hasCloudChanges = cloudModified != null &&
           (lastSync == null || cloudModified.isAfter(lastSync));
 
-      // 4. إذا لا يوجد أي تغيير
+      // ============================================================
+      // 4. إذا لا يوجد أي تغيير - نُحدّث وقت آخر مزامنة
+      // ============================================================
       if (!hasLocalChanges && !hasCloudChanges) {
+        final now = DateTime.now();
+        await prefs.setString(_keyLastSyncTime, now.toIso8601String());
+
         if (!silent) _setStatus(SyncStatus.idle);
+
         final r = SyncResult(
           success: true,
           message: 'لا توجد تغييرات',
-          timestamp: lastSync,
+          timestamp: now,
         );
+
         if (!_resultController.isClosed) _resultController.add(r);
         return r;
       }
@@ -248,7 +290,17 @@ class SyncService {
       // 7. ارفع الحالة الحالية
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
-        await _uploadCurrentState();
+        final uploadOk = await _uploadCurrentState();
+
+        if (!uploadOk) {
+          if (!silent) _setStatus(SyncStatus.error);
+          final errResult = SyncResult(
+            success: false,
+            message: 'فشل رفع البيانات إلى Drive',
+          );
+          if (!_resultController.isClosed) _resultController.add(errResult);
+          return errResult;
+        }
       }
 
       // 8. تحديث وقت المزامنة
@@ -281,7 +333,6 @@ class SyncService {
         timestamp: now,
       );
 
-      // 📢 بث النتيجة
       if (!_resultController.isClosed) {
         _resultController.add(finalResult);
       }
@@ -316,7 +367,6 @@ class SyncService {
       final transactions = (cloudData['transactions'] as List?) ?? [];
       final usedCodes = (cloudData['used_codes'] as List?) ?? [];
 
-      // ===== 1. دمج الرموز =====
       for (final uc in usedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -328,7 +378,6 @@ class SyncService {
         }
       }
 
-      // ===== 2. دمج الزبائن =====
       final Map<int, int> idMap = {};
 
       for (final c in customers) {
@@ -352,7 +401,6 @@ class SyncService {
         }
       }
 
-      // ===== 3. دمج المعاملات =====
       for (final t in transactions) {
         final cloudCustomerId = t['customer_id'] as int?;
         if (cloudCustomerId == null) continue;
