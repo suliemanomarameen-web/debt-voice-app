@@ -196,7 +196,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
-                // 🔢 توليد الرمز
                 String? code;
                 try {
                   code = await CodeService.generateCode(type);
@@ -221,7 +220,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 if (mounted) Navigator.pop(context);
                 await _load();
 
-                // إشعار واتساب تلقائي (إذا مفعّل)
                 final sp = await SharedPreferences.getInstance();
                 final autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
 
@@ -325,6 +323,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   id: t.id,
                   customerId: t.customerId,
                   code: t.code,
+                  accountant: t.accountant, // 🆕 الحفاظ على اسم المحاسب
                   amount: amt,
                   currency: t.currency,
                   type: t.type,
@@ -361,6 +360,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
           content: Text(
             'سيتم حذف هذه العملية نهائياً:\n\n'
             '${t.code != null ? 'الرمز: ${t.code}\n' : ''}'
+            '${t.accountant != null ? 'المحاسب: ${t.accountant}\n' : ''}'
             'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
             'المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}\n'
             '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}'
@@ -436,6 +436,34 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
                       const SizedBox(height: 8),
                     ],
+                    // 🆕 عرض اسم المحاسب
+                    if (t.accountant != null && t.accountant!.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.person,
+                                size: 14, color: Colors.teal),
+                            const SizedBox(width: 6),
+                            Text(
+                              t.accountant!,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.teal,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       '${t.amount.toStringAsFixed(0)} ${t.currency}',
                       style: const TextStyle(
@@ -456,7 +484,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
               ),
               const Divider(height: 1),
 
-              // إرسال واتساب
               ListTile(
                 leading: const Icon(Icons.message, color: Colors.green),
                 title: const Text('إرسال عبر واتساب'),
@@ -490,7 +517,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 },
               ),
 
-              // مشاركة
               ListTile(
                 leading: const Icon(Icons.share, color: Colors.blue),
                 title: const Text('مشاركة'),
@@ -517,7 +543,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 },
               ),
 
-              // طباعة PDF للعملية
               ListTile(
                 leading: const Icon(Icons.print, color: Colors.orange),
                 title: const Text('طباعة / حفظ PDF للعملية'),
@@ -1078,13 +1103,47 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                         fontWeight: FontWeight.bold),
                                   ),
                                 ),
+                                // 🆕 عرض اسم المحاسب
+                                if (t.accountant != null &&
+                                    t.accountant!.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    margin: const EdgeInsets.only(right: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.teal.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color:
+                                            Colors.teal.withOpacity(0.4),
+                                        width: 0.5,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.person,
+                                            size: 9, color: Colors.teal),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          t.accountant!,
+                                          style: const TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.teal,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 // عرض الرمز
                                 if (t.code != null && t.code!.isNotEmpty)
                                   Container(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
-                                      color: Colors.blue.withOpacity(0.15),
+                                      color:
+                                          Colors.blue.withOpacity(0.15),
                                       borderRadius: BorderRadius.circular(6),
                                       border: Border.all(
                                         color:
