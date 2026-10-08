@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
@@ -48,6 +49,9 @@ class _DebtsTabState extends State<DebtsTab> {
 
   // ===== منع التحديث المتزامن =====
   bool _isRefreshing = false;
+
+  // ===== التنبيه (لمرة واحدة) =====
+  final Set<int> _alertedCustomers = {};
 
   @override
   void initState() {
@@ -136,6 +140,25 @@ class _DebtsTabState extends State<DebtsTab> {
     if (diff.inHours < 24) return 'قبل ${diff.inHours} ساعة';
     if (diff.inDays < 30) return 'قبل ${diff.inDays} يوم';
     return _formatDateTime(dt.toIso8601String());
+  }
+
+  // ============ نسخ الرمز ============
+  Future<void> _copyCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('تم نسخ الرمز: $code'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // ============ الفلتر على أعلى المدينين ============
@@ -407,7 +430,6 @@ class _DebtsTabState extends State<DebtsTab> {
       return;
     }
 
-    // 🆕 جلب اسم المحاسب مسبقاً
     final accountant = await AccountantService.getAccountantName();
 
     String type = 'debt';
@@ -430,7 +452,6 @@ class _DebtsTabState extends State<DebtsTab> {
                 const Icon(Icons.add_card, color: Colors.teal),
                 const SizedBox(width: 8),
                 const Expanded(child: Text('عملية جديدة')),
-                // 🆕 عرض اسم المحاسب
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -465,7 +486,6 @@ class _DebtsTabState extends State<DebtsTab> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // ===== 1. نوع العملية =====
                     const Text(
                       'نوع العملية:',
                       style: TextStyle(
@@ -497,8 +517,6 @@ class _DebtsTabState extends State<DebtsTab> {
                       },
                     ),
                     const Divider(height: 24),
-
-                    // ===== 2. العميل =====
                     const Text(
                       'العميل:',
                       style: TextStyle(
@@ -625,10 +643,7 @@ class _DebtsTabState extends State<DebtsTab> {
                               ),
                       ),
                     ],
-
                     const Divider(height: 24),
-
-                    // ===== 3. المبلغ =====
                     const Text(
                       'المبلغ:',
                       style: TextStyle(
@@ -652,7 +667,6 @@ class _DebtsTabState extends State<DebtsTab> {
                             horizontal: 12, vertical: 12),
                       ),
                     ),
-
                     const SizedBox(height: 16),
                     if (type == 'payment') ...[
                       const Text(
@@ -787,7 +801,7 @@ class _DebtsTabState extends State<DebtsTab> {
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
-                            accountant: accountant, // 🆕
+                            accountant: accountant,
                             amount: amt,
                             type: storedType,
                             items: extraText,
@@ -1057,40 +1071,157 @@ class _DebtsTabState extends State<DebtsTab> {
         ),
         if (_showTopDebtors) ...[
           const SizedBox(height: 8),
-          ..._topDebtors.map((c) => Card(
-                margin:
-                    const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                child: ListTile(
-                  dense: true,
-                  leading: CircleAvatar(
+          ..._topDebtors.map((c) => _buildDebtorCard(c, theme)),
+          const SizedBox(height: 20),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildDebtorCard(Customer c, ThemeData theme) {
+    return FutureBuilder<double>(
+      future: _computeFilteredBalance(c.id!),
+      builder: (context, snap) {
+        final balance = snap.data ?? 0;
+        final overLimit = c.isOverLimit(balance);
+
+        // 🆕 تنبيه (لمرة واحدة)
+        if (overLimit && !_alertedCustomers.contains(c.id)) {
+          _alertedCustomers.add(c.id);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.warning_amber,
+                        color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '⚠️ رصيد "${c.name}" تجاوز الحد الأقصى (${c.maxBalance!.toStringAsFixed(0)} ريال)',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          });
+        }
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+          color: overLimit
+              ? Colors.red.withOpacity(0.08)
+              : null,
+          shape: overLimit
+              ? RoundedRectangleBorder(
+                  side: BorderSide(
+                    color: Colors.red.withOpacity(0.5),
+                    width: 1,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                )
+              : null,
+          child: ListTile(
+            dense: true,
+            leading: overLimit
+                ? Stack(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.red,
+                        child: Text(c.name.characters.first,
+                            style: const TextStyle(color: Colors.white)),
+                      ),
+                      Positioned(
+                        bottom: -2,
+                        right: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.warning_amber,
+                            color: Colors.red,
+                            size: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : CircleAvatar(
                     backgroundColor: theme.colorScheme.primary,
                     child: Text(c.name.characters.first,
                         style: const TextStyle(color: Colors.white)),
                   ),
-                  title: Text(c.name,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: FutureBuilder<double>(
-                    future: _computeFilteredBalance(c.id!),
-                    builder: (_, snap) => Text(
-                      '${(snap.data ?? 0).toStringAsFixed(0)} ريال',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.error,
-                      ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    c.name,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: overLimit ? Colors.red : null,
                     ),
                   ),
-                  onTap: () async {
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => CustomerScreen(customer: c)));
-                    _refresh();
-                  },
                 ),
-              )),
-          const SizedBox(height: 20),
-        ],
-      ],
+                if (overLimit)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                          color: Colors.red.withOpacity(0.5), width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.warning_amber,
+                            size: 10, color: Colors.red),
+                        const SizedBox(width: 2),
+                        Text(
+                          'تجاوز الحد',
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            subtitle: overLimit && c.maxBalance != null
+                ? Text(
+                    'الحد الأقصى: ${c.maxBalance!.toStringAsFixed(0)} ريال',
+                    style: const TextStyle(fontSize: 11, color: Colors.red),
+                  )
+                : null,
+            trailing: Text(
+              '${balance.toStringAsFixed(0)} ريال',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: overLimit ? Colors.red : theme.colorScheme.error,
+              ),
+            ),
+            onTap: () async {
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => CustomerScreen(customer: c)));
+              _refresh();
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1113,6 +1244,170 @@ class _DebtsTabState extends State<DebtsTab> {
       }
     }
     return balance;
+  }
+
+  // ============ بطاقة عملية (آخر العمليات) ============
+  Widget _buildTransactionCard(
+      Customer c, Transaction t, ThemeData theme) {
+    final isDebt = t.type == 'debt';
+    final isReturn = t.items.startsWith('مرتجع');
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                // 🆕 الأيقونة
+                Icon(
+                  isReturn
+                      ? Icons.keyboard_return
+                      : (isDebt
+                          ? Icons.arrow_upward
+                          : Icons.arrow_downward),
+                  color: isReturn
+                      ? Colors.orange
+                      : (isDebt
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.primary),
+                ),
+                const SizedBox(width: 8),
+
+                // 🆕 الاسم (يأخذ المساحة)
+                Expanded(
+                  child: Text(
+                    c.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+
+                // 🆕 شارات المحاسب والرمز (في أعلى اليسار)
+                if (t.accountant != null && t.accountant!.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  _badge(
+                    icon: Icons.person,
+                    text: t.accountant!,
+                    color: Colors.teal,
+                  ),
+                ],
+                if (t.code != null && t.code!.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  _badgeWithCopy(
+                    icon: Icons.qr_code,
+                    text: t.code!,
+                    color: Colors.blue,
+                    onCopy: () => _copyCode(t.code!),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const SizedBox(width: 32),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (t.items.isNotEmpty)
+                        Text(
+                          t.items,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatDateTime(t.createdAt),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _badge({
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.4), width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 2),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _badgeWithCopy({
+    required IconData icon,
+    required String text,
+    required Color color,
+    required VoidCallback onCopy,
+  }) {
+    return InkWell(
+      onTap: onCopy,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withOpacity(0.4), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 10, color: color),
+            const SizedBox(width: 2),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 3),
+            Icon(Icons.copy, size: 9, color: color.withOpacity(0.7)),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1256,116 +1551,8 @@ class _DebtsTabState extends State<DebtsTab> {
                         fontSize: 16, fontWeight: FontWeight.bold)),
               ),
               const SizedBox(height: 8),
-              ..._recent.map((entry) {
-                final c = entry.key;
-                final t = entry.value;
-                final isDebt = t.type == 'debt';
-                final isReturn = t.items.startsWith('مرتجع');
-                return Card(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                  child: ListTile(
-                    leading: Icon(
-                      isReturn
-                          ? Icons.keyboard_return
-                          : (isDebt
-                              ? Icons.arrow_upward
-                              : Icons.arrow_downward),
-                      color: isReturn
-                          ? Colors.orange
-                          : (isDebt
-                              ? theme.colorScheme.error
-                              : theme.colorScheme.primary),
-                    ),
-                    title: Row(
-                      children: [
-                        Expanded(child: Text(c.name)),
-                        // عرض اسم المحاسب
-                        if (t.accountant != null && t.accountant!.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            margin: const EdgeInsets.only(right: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.teal.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: Colors.teal.withOpacity(0.4),
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.person,
-                                    size: 9, color: Colors.teal),
-                                const SizedBox(width: 2),
-                                Text(
-                                  t.accountant!,
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.teal,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        // عرض الرمز
-                        if (t.code != null && t.code!.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: Colors.blue.withOpacity(0.4),
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Text(
-                              t.code!,
-                              style: const TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (t.items.isNotEmpty)
-                          Text(t.items,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13)),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatDateTime(t.createdAt),
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                      ],
-                    ),
-                    trailing: Text(
-                      '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    onTap: () async {
-                      await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => CustomerScreen(customer: c)));
-                      _refresh();
-                    },
-                  ),
-                );
-              }),
+              ..._recent.map((entry) =>
+                  _buildTransactionCard(entry.key, entry.value, theme)),
             ],
             if (_topDebtors.isEmpty && _recent.isEmpty)
               Padding(
