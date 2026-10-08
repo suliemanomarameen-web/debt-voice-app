@@ -38,6 +38,7 @@ class DatabaseHelper {
         photo_path TEXT,
         category TEXT DEFAULT 'normal',
         max_balance REAL,
+        is_active INTEGER DEFAULT 1,
         created_at TEXT NOT NULL
       )
     ''');
@@ -95,7 +96,8 @@ class DatabaseHelper {
     }
     if (oldV < 5) {
       try {
-        await db.execute("ALTER TABLE transactions ADD COLUMN accountant TEXT");
+        await db.execute(
+            "ALTER TABLE transactions ADD COLUMN accountant TEXT");
         debugPrint('✅ [DB] Added accountant column (v5)');
       } catch (e) {
         debugPrint('❌ [DB] Failed to add accountant column: $e');
@@ -103,11 +105,12 @@ class DatabaseHelper {
     }
     if (oldV < 6) {
       try {
-        // 🆕 إضافة عمود الحد الأقصى للرصيد
-        await db.execute("ALTER TABLE customers ADD COLUMN max_balance REAL");
-        debugPrint('✅ [DB] Added max_balance column (v6)');
+        // 🆕 إضافة عمود حالة الحساب
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
+        debugPrint('✅ [DB] Added is_active column (v6)');
       } catch (e) {
-        debugPrint('❌ [DB] Failed to add max_balance column: $e');
+        debugPrint('❌ [DB] Failed to add is_active column: $e');
       }
     }
   }
@@ -154,6 +157,22 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
+  /// 🆕 العملاء النشطون فقط
+  Future<List<Customer>> activeCustomers() async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'is_active = 1', orderBy: 'name ASC');
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
+
+  /// 🆕 العملاء الموقوفون فقط
+  Future<List<Customer>> inactiveCustomers() async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'is_active = 0 OR is_active IS NULL', orderBy: 'name ASC');
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
+
   Future<List<Customer>> customersByCategory(String category) async {
     final db = await database;
     final r = await db.query('customers',
@@ -165,14 +184,6 @@ class DatabaseHelper {
     final db = await database;
     final r = await db.query('customers',
         where: 'name = ?', whereArgs: [name], limit: 1);
-    if (r.isEmpty) return null;
-    return Customer.fromMap(r.first);
-  }
-
-  Future<Customer?> getCustomerById(int id) async {
-    final db = await database;
-    final r = await db.query('customers',
-        where: 'id = ?', whereArgs: [id], limit: 1);
     if (r.isEmpty) return null;
     return Customer.fromMap(r.first);
   }
@@ -193,6 +204,19 @@ class DatabaseHelper {
         limit: 1);
     if (r.isEmpty) return null;
     return r.first['id'] as int?;
+  }
+
+  /// 🆕 تغيير حالة الحساب (تفعيل/إيقاف)
+  Future<int> setCustomerActive(int id, bool active) async {
+    final db = await database;
+    final r = await db.update(
+      'customers',
+      {'is_active': active ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    _notifyChanged();
+    return r;
   }
 
   // ============ المعاملات ============
