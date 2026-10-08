@@ -5,6 +5,7 @@ import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
+import 'services/accountant_service.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
 import 'services/code_service.dart';
@@ -193,6 +194,14 @@ Future<void> _saveTransactionFor(
     debugPrint('Duplicate check error: $e');
   }
 
+  // 🆕 جلب اسم المحاسب
+  String? accountant;
+  try {
+    accountant = await AccountantService.getAccountantName();
+  } catch (e) {
+    debugPrint('❌ Accountant name error: $e');
+  }
+
   // توليد الرمز
   String? code;
   try {
@@ -204,6 +213,7 @@ Future<void> _saveTransactionFor(
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
     code: code,
+    accountant: accountant, // 🆕
     amount: parsed.amount,
     currency: parsed.currency,
     type: storedType,
@@ -231,6 +241,9 @@ Future<void> _saveTransactionFor(
   final detail = StringBuffer();
   detail.write('${customer.name}\n');
   if (code != null) detail.write('الرمز: $code\n');
+  if (accountant != null && accountant.isNotEmpty) {
+    detail.write('المحاسب: $accountant\n');
+  }
   detail.write('المبلغ: ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}');
   if (parsed.items.isNotEmpty) {
     detail.write('\nالأصناف: ${parsed.items}');
@@ -266,7 +279,6 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    // عندما يعود التطبيق إلى المقدمة
     if (state == AppLifecycleState.resumed) {
       debugPrint('📱 App resumed - checking sync status');
       Future.delayed(const Duration(seconds: 2), () {
