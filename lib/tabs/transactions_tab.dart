@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
@@ -35,9 +36,12 @@ class _TransactionsTabState extends State<TransactionsTab> {
   DateTime? _customTo;
   String _searchQuery = '';
 
-  // 🆕 فلتر المحاسب
-  String? _accountantFilter; // null = الكل
+  // فلتر المحاسب
+  String? _accountantFilter;
   List<String> _availableAccountants = [];
+
+  // ===== أرصدة العملاء (للتحذير) =====
+  Map<int, double> _customerBalances = {};
 
   @override
   void initState() {
@@ -57,7 +61,17 @@ class _TransactionsTabState extends State<TransactionsTab> {
     final customers = await db.allCustomers();
     final list = <MapEntry<Customer, Transaction>>[];
 
+    // 🆕 احسب أرصدة كل العملاء (للتحذير)
+    final balances = <int, double>{};
+
     for (final c in customers) {
+      if (c.id == null) continue;
+
+      // حساب الرصيد
+      final bal = await db.customerBalance(c.id!);
+      balances[c.id!] = bal;
+
+      // جلب المعاملات
       final tx = await db.customerTransactions(c.id!);
       for (final t in tx) {
         list.add(MapEntry(c, t));
@@ -66,13 +80,14 @@ class _TransactionsTabState extends State<TransactionsTab> {
 
     list.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
 
-    // 🆕 جلب قائمة المحاسبين المتاحين
+    // جلب قائمة المحاسبين المتاحين
     final accountants = await db.getAllAccountants();
 
     if (!mounted) return;
     setState(() {
       _allTx = list;
       _availableAccountants = accountants;
+      _customerBalances = balances;
       _loading = false;
       _applyFilters();
     });
@@ -118,7 +133,7 @@ class _TransactionsTabState extends State<TransactionsTab> {
         } catch (_) {}
       }
 
-      // 🆕 فلتر المحاسب
+      // فلتر المحاسب
       if (_accountantFilter != null) {
         final acc = entry.value.accountant ?? '';
         if (acc != _accountantFilter) return false;
@@ -183,7 +198,26 @@ class _TransactionsTabState extends State<TransactionsTab> {
     });
   }
 
-  // 🆕 نافذة فلتر المحاسب
+  // ============ نسخ الرمز ============
+  Future<void> _copyCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('تم نسخ الرمز: $code'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ============ نافذة فلتر المحاسب ============
   Future<void> _showAccountantFilterSheet() async {
     if (_availableAccountants.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -210,7 +244,6 @@ class _TransactionsTabState extends State<TransactionsTab> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
-              // الكل
               ListTile(
                 leading: const Icon(Icons.all_inclusive),
                 title: const Text('الكل'),
@@ -220,7 +253,6 @@ class _TransactionsTabState extends State<TransactionsTab> {
                 onTap: () => Navigator.pop(context, '__ALL__'),
               ),
               const Divider(height: 1),
-              // أسماء المحاسبين
               ..._availableAccountants.map((name) {
                 final selected = _accountantFilter == name;
                 return ListTile(
@@ -365,6 +397,14 @@ class _TransactionsTabState extends State<TransactionsTab> {
   bool get _hasActiveFilter =>
       _dateFilter != TxDateFilter.all || _accountantFilter != null;
 
+  // ============ هل تجاوز العميل الحد؟ ============
+  bool _isOverLimit(Customer c) {
+    if (c.id == null) return false;
+    if (c.maxBalance == null || c.maxBalance! <= 0) return false;
+    final bal = _customerBalances[c.id] ?? 0;
+    return bal > c.maxBalance!;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -374,7 +414,6 @@ class _TransactionsTabState extends State<TransactionsTab> {
       appBar: AppBar(
         title: const Text('العمليات'),
         actions: [
-          // 🆕 زر فلتر المحاسب
           IconButton(
             icon: Icon(
               _accountantFilter == null
@@ -389,7 +428,6 @@ class _TransactionsTabState extends State<TransactionsTab> {
                 : 'المحاسب: $_accountantFilter',
             onPressed: _showAccountantFilterSheet,
           ),
-          // فلتر التاريخ
           IconButton(
             icon: Icon(
               _dateFilter == TxDateFilter.all
@@ -574,22 +612,58 @@ class _TransactionsTabState extends State<TransactionsTab> {
                             final t = entry.value;
                             final isDebt = t.type == 'debt';
                             final isReturn = t.items.startsWith('مرتجع');
+                            final overLimit = _isOverLimit(c);
 
                             return Card(
                               margin: const EdgeInsets.symmetric(
                                   horizontal: 4, vertical: 4),
+                              color: overLimit
+                                  ? Colors.red.withOpacity(0.05)
+                                  : null,
+                              shape: overLimit
+                                  ? RoundedRectangleBorder(
+                                      side: BorderSide(
+                                        color:
+                                            Colors.red.withOpacity(0.4),
+                                        width: 1,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    )
+                                  : null,
                               child: ListTile(
-                                leading: Icon(
-                                  isReturn
-                                      ? Icons.keyboard_return
-                                      : (isDebt
-                                          ? Icons.arrow_upward
-                                          : Icons.arrow_downward),
-                                  color: isReturn
-                                      ? Colors.orange
-                                      : (isDebt
-                                          ? theme.colorScheme.error
-                                          : theme.colorScheme.primary),
+                                leading: Stack(
+                                  children: [
+                                    Icon(
+                                      isReturn
+                                          ? Icons.keyboard_return
+                                          : (isDebt
+                                              ? Icons.arrow_upward
+                                              : Icons.arrow_downward),
+                                      color: isReturn
+                                          ? Colors.orange
+                                          : (isDebt
+                                              ? theme.colorScheme.error
+                                              : theme.colorScheme.primary),
+                                    ),
+                                    if (overLimit)
+                                      Positioned(
+                                        bottom: -2,
+                                        right: -2,
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.all(1),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.white,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.warning_amber,
+                                            color: Colors.red,
+                                            size: 12,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                                 title: Row(
                                   children: [
@@ -600,7 +674,7 @@ class _TransactionsTabState extends State<TransactionsTab> {
                                             fontWeight: FontWeight.bold),
                                       ),
                                     ),
-                                    // 🆕 عرض اسم المحاسب
+                                    // المحاسب
                                     if (t.accountant != null &&
                                         t.accountant!.isNotEmpty)
                                       Container(
@@ -637,28 +711,47 @@ class _TransactionsTabState extends State<TransactionsTab> {
                                           ],
                                         ),
                                       ),
-                                    // عرض الرمز
-                                    if (t.code != null && t.code!.isNotEmpty)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Colors.blue.withOpacity(0.15),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                          border: Border.all(
+                                    // الرمز (قابل للنسخ)
+                                    if (t.code != null &&
+                                        t.code!.isNotEmpty)
+                                      InkWell(
+                                        onTap: () => _copyCode(t.code!),
+                                        borderRadius:
+                                            BorderRadius.circular(6),
+                                        child: Container(
+                                          padding: const EdgeInsets
+                                              .symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
                                             color: Colors.blue
-                                                .withOpacity(0.4),
-                                            width: 0.5,
+                                                .withOpacity(0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: Colors.blue
+                                                  .withOpacity(0.4),
+                                              width: 0.5,
+                                            ),
                                           ),
-                                        ),
-                                        child: Text(
-                                          t.code!,
-                                          style: const TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.blue,
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                t.code!,
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.blue,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 3),
+                                              Icon(
+                                                Icons.copy,
+                                                size: 9,
+                                                color: Colors.blue
+                                                    .withOpacity(0.7),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ),
@@ -682,8 +775,35 @@ class _TransactionsTabState extends State<TransactionsTab> {
                                             color: theme.colorScheme
                                                 .onSurfaceVariant,
                                             fontWeight: FontWeight.bold,
+                                            decoration: overLimit
+                                                ? TextDecoration.underline
+                                                : null,
+                                            decorationColor: Colors.red,
                                           ),
                                         ),
+                                        if (overLimit) ...[
+                                          const SizedBox(width: 4),
+                                          Container(
+                                            padding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 4,
+                                                    vertical: 1),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red
+                                                  .withOpacity(0.15),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: const Text(
+                                              'تجاوز الحد',
+                                              style: TextStyle(
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                     if (t.items.isNotEmpty)
