@@ -6,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
@@ -28,16 +29,26 @@ class _CustomerScreenState extends State<CustomerScreen> {
   List<Transaction> _tx = [];
   DateFilter _dateFilter = DateFilter();
   bool _alertShown = false;
+  late Customer _customer; // 🆕 نسخة قابلة للتحديث
 
   @override
   void initState() {
     super.initState();
+    _customer = widget.customer;
     _load();
   }
 
   Future<void> _load() async {
-    final bal = await db.customerBalance(widget.customer.id!);
-    final allTx = await db.customerTransactions(widget.customer.id!);
+    final bal = await db.customerBalance(_customer.id!);
+    final allTx = await db.customerTransactions(_customer.id!);
+
+    // 🆕 إعادة جلب بيانات العميل (للتأكد من isActive و maxBalance)
+    final all = await db.allCustomers();
+    final updated = all.where((c) => c.id == _customer.id).toList();
+    if (updated.isNotEmpty) {
+      _customer = updated.first;
+    }
+
     if (!mounted) return;
     setState(() {
       _balance = bal;
@@ -45,10 +56,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
       _applyFilter();
     });
 
-    // 🆕 تنبيه تجاوز الحد
-    if (!_alertShown &&
-        widget.customer.isOverLimit(bal) &&
-        widget.customer.maxBalance != null) {
+    // تنبيه تجاوز الحد
+    if (!_alertShown && _customer.isOverLimit(bal) && _customer.maxBalance != null) {
       _alertShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -113,7 +122,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'رصيد "${widget.customer.name}" تجاوز الحد الأقصى.',
+                'رصيد "${_customer.name}" تجاوز الحد الأقصى.',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
@@ -122,13 +131,13 @@ class _CustomerScreenState extends State<CustomerScreen> {
               const SizedBox(height: 4),
               _warningRow(
                 'الحد الأقصى',
-                '${widget.customer.maxBalance!.toStringAsFixed(0)} ريال',
+                '${_customer.maxBalance!.toStringAsFixed(0)} ريال',
                 Colors.grey,
               ),
               const SizedBox(height: 4),
               _warningRow(
                 'التجاوز',
-                '+${(_balance - widget.customer.maxBalance!).toStringAsFixed(0)} ريال',
+                '+${(_balance - _customer.maxBalance!).toStringAsFixed(0)} ريال',
                 Colors.orange,
               ),
             ],
@@ -164,7 +173,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ إرسال تذكير واتساب ============
   Future<void> _sendWhatsAppReminder() async {
-    if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
+    if (_customer.phone == null || _customer.phone!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('لا يوجد رقم هاتف لهذا العميل'),
@@ -176,8 +185,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
     try {
       await WhatsAppService.sendReminder(
-        phone: widget.customer.phone,
-        customerName: widget.customer.name,
+        phone: _customer.phone,
+        customerName: _customer.name,
         balance: _balance,
       );
     } catch (e) {
@@ -258,91 +267,229 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
+    // 🆕 تحقق من حالة الحساب
+    if (!_customer.isActive) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('الحساب موقوف'),
+              ],
+            ),
+            content: Text(
+              'الحساب "${_customer.name}" موقوف حالياً.\n\n'
+              'هل تريد المتابعة وإضافة العملية؟',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                style:
+                    FilledButton.styleFrom(backgroundColor: Colors.orange),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('متابعة'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (proceed != true) return;
+    }
+
     final amountCtrl = TextEditingController();
     final itemsCtrl = TextEditingController();
+    bool isSaving = false;
+
+    // 🆕 جلب اسم المحاسب مسبقاً
+    final accountant = await AccountantService.getAccountantName();
+
+    if (!mounted) return;
 
     await showDialog(
       context: context,
-      builder: (_) => Directionality(
+      builder: (dialogContext) => Directionality(
         textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: Text(type == 'debt'
-              ? 'دين جديد'
-              : type == 'return'
-                  ? 'مرتجع جديد'
-                  : 'دفعة سداد'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'المبلغ'),
-              ),
-              if (type != 'payment')
-                TextField(
-                  controller: itemsCtrl,
-                  decoration: const InputDecoration(labelText: 'الأصناف'),
+        child: StatefulBuilder(
+          builder: (ctx, setStateDialog) => AlertDialog(
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(type == 'debt'
+                      ? 'دين جديد'
+                      : type == 'return'
+                          ? 'مرتجع جديد'
+                          : 'دفعة سداد'),
                 ),
+                // 🆕 عرض اسم المحاسب
+                if (accountant != null && accountant.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: Colors.teal.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person,
+                            size: 12, color: Colors.teal),
+                        const SizedBox(width: 4),
+                        Text(
+                          accountant,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountCtrl,
+                  keyboardType: TextInputType.number,
+                  enabled: !isSaving,
+                  decoration: const InputDecoration(labelText: 'المبلغ'),
+                ),
+                if (type != 'payment')
+                  TextField(
+                    controller: itemsCtrl,
+                    enabled: !isSaving,
+                    decoration: const InputDecoration(labelText: 'الأصناف'),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed:
+                    isSaving ? null : () => Navigator.pop(dialogContext),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final amt = double.tryParse(amountCtrl.text);
+                        if (amt == null || amt <= 0) return;
+
+                        setStateDialog(() => isSaving = true);
+
+                        try {
+                          final storedType =
+                              (type == 'return') ? 'payment' : type;
+
+                          // منع التكرار
+                          final isDuplicate =
+                              await db.transactionExistsRecent(
+                            customerId: _customer.id!,
+                            amount: amt,
+                            type: storedType,
+                            window: const Duration(seconds: 30),
+                          );
+
+                          if (isDuplicate) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    '⚠️ هذه العملية مسجلة بالفعل (خلال آخر 30 ثانية)'),
+                                backgroundColor: Colors.orange,
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            setStateDialog(() => isSaving = false);
+                            return;
+                          }
+
+                          String? code;
+                          try {
+                            code = await CodeService.generateCode(type);
+                          } catch (_) {
+                            code = null;
+                          }
+
+                          String extraText;
+                          if (type == 'return') {
+                            extraText = itemsCtrl.text.trim().isEmpty
+                                ? 'مرتجع'
+                                : 'مرتجع: ${itemsCtrl.text.trim()}';
+                          } else {
+                            extraText = itemsCtrl.text.trim();
+                          }
+
+                          await db.insertTransaction(Transaction(
+                            customerId: _customer.id!,
+                            code: code,
+                            accountant: accountant, // 🆕
+                            amount: amt,
+                            type: storedType,
+                            items: extraText,
+                            createdAt: DateTime.now().toIso8601String(),
+                          ));
+
+                          final newBalance =
+                              await db.customerBalance(_customer.id!);
+
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
+                          await _load();
+
+                          final sp =
+                              await SharedPreferences.getInstance();
+                          final autoWhatsApp =
+                              sp.getBool('auto_whatsapp') ?? false;
+
+                          if (autoWhatsApp &&
+                              _customer.phone != null &&
+                              _customer.phone!.isNotEmpty) {
+                            await Future.delayed(
+                                const Duration(milliseconds: 500));
+                            try {
+                              await WhatsAppService
+                                  .sendTransactionNotification(
+                                phone: _customer.phone,
+                                customerName: _customer.name,
+                                type: type,
+                                amount: amt,
+                                newBalance: newBalance,
+                              );
+                            } catch (e) {
+                              debugPrint('WhatsApp error: $e');
+                            }
+                          }
+                        } finally {
+                          if (mounted) {
+                            setStateDialog(() => isSaving = false);
+                          }
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('حفظ'),
+              ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final amt = double.tryParse(amountCtrl.text);
-                if (amt == null || amt <= 0) return;
-
-                String? code;
-                try {
-                  code = await CodeService.generateCode(type);
-                } catch (_) {
-                  code = null;
-                }
-
-                await db.insertTransaction(Transaction(
-                  customerId: widget.customer.id!,
-                  code: code,
-                  amount: amt,
-                  type: type == 'return' ? 'payment' : type,
-                  items: type == 'return'
-                      ? 'مرتجع${itemsCtrl.text.trim().isEmpty ? "" : ": ${itemsCtrl.text.trim()}"}'
-                      : itemsCtrl.text.trim(),
-                  createdAt: DateTime.now().toIso8601String(),
-                ));
-
-                final newBalance =
-                    await db.customerBalance(widget.customer.id!);
-
-                if (mounted) Navigator.pop(context);
-                await _load();
-
-                final sp = await SharedPreferences.getInstance();
-                final autoWhatsApp = sp.getBool('auto_whatsapp') ?? false;
-
-                if (autoWhatsApp &&
-                    widget.customer.phone != null &&
-                    widget.customer.phone!.isNotEmpty) {
-                  await Future.delayed(const Duration(milliseconds: 500));
-                  try {
-                    await WhatsAppService.sendTransactionNotification(
-                      phone: widget.customer.phone,
-                      customerName: widget.customer.name,
-                      type: type,
-                      amount: amt,
-                      newBalance: newBalance,
-                    );
-                  } catch (e) {
-                    debugPrint('WhatsApp error: $e');
-                  }
-                }
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
         ),
       ),
     );
@@ -514,7 +661,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    // الرمز (قابل للنسخ)
                     if (t.code != null && t.code!.isNotEmpty) ...[
                       InkWell(
                         onTap: () => _copyCode(t.code!),
@@ -549,7 +695,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
                       const SizedBox(height: 8),
                     ],
-                    // المحاسب
                     if (t.accountant != null && t.accountant!.isNotEmpty) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -602,8 +747,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 title: const Text('إرسال عبر واتساب'),
                 onTap: () async {
                   Navigator.pop(context);
-                  if (widget.customer.phone == null ||
-                      widget.customer.phone!.isEmpty) {
+                  if (_customer.phone == null ||
+                      _customer.phone!.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('لا يوجد رقم هاتف لهذا العميل'),
@@ -614,8 +759,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   }
                   try {
                     await WhatsAppService.sendTransactionNotification(
-                      phone: widget.customer.phone,
-                      customerName: widget.customer.name,
+                      phone: _customer.phone,
+                      customerName: _customer.name,
                       type: t.type,
                       amount: t.amount,
                       newBalance: _balance,
@@ -641,7 +786,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           ? 'مرتجع'
                           : 'سداد';
                   final text = '''
-السلام عليكم ${widget.customer.name}،
+السلام عليكم ${_customer.name}،
 تم تسجيل العملية التالية:
 
 ${t.code != null ? 'الرمز: ${t.code}\n' : ''}النوع: $typeLabel
@@ -663,11 +808,11 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   Navigator.pop(context);
                   try {
                     final file = await PdfService.generateStatement(
-                      widget.customer,
+                      _customer,
                       fromDate: DateTime.parse(t.createdAt),
                       toDate: DateTime.parse(t.createdAt),
                     );
-                    await PdfService.share(file, widget.customer.name);
+                    await PdfService.share(file, _customer.name);
                   } catch (e) {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -705,8 +850,8 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   }
 
   Future<void> _exportStatement() async {
-    final f = await ExportService.exportCustomerStatement(widget.customer.id!);
-    await ExportService.shareFile(f, text: 'كشف حساب ${widget.customer.name}');
+    final f = await ExportService.exportCustomerStatement(_customer.id!);
+    await ExportService.shareFile(f, text: 'كشف حساب ${_customer.name}');
   }
 
   // ============ PDF مع فلترة التاريخ ============
@@ -832,7 +977,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       );
 
       final file = await PdfService.generateStatement(
-        widget.customer,
+        _customer,
         fromDate: result['from'],
         toDate: result['to'],
         fontName: result['font'] ?? 'Tajawal',
@@ -841,7 +986,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       if (!mounted) return;
       Navigator.pop(context);
 
-      await PdfService.share(file, widget.customer.name);
+      await PdfService.share(file, _customer.name);
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
@@ -854,63 +999,135 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }
   }
 
+  // ============ 🆕 حساب ألوان الرصيد حسب النسبة ============
+  Color _getBalanceColor(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    // إذا لا يوجد حد أقصى → السلوك القديم
+    if (_customer.maxBalance == null || _customer.maxBalance! <= 0) {
+      if (_balance > 0) {
+        return isDark ? Colors.red.shade300 : Colors.red.shade700;
+      } else {
+        return isDark ? Colors.green.shade300 : Colors.green.shade700;
+      }
+    }
+
+    final ratio = _customer.balanceRatio(_balance);
+
+    // 🟢 أخضر: أقل من 50%
+    if (ratio < 0.5) {
+      return isDark ? Colors.green.shade300 : Colors.green.shade700;
+    }
+    // 🟡 أصفر: من 50% إلى 80%
+    if (ratio < 0.8) {
+      return isDark ? Colors.amber.shade300 : Colors.amber.shade800;
+    }
+    // 🔴 أحمر: 80% أو أكثر
+    return isDark ? Colors.red.shade300 : Colors.red.shade700;
+  }
+
+  // ============ 🆕 لون خلفية الهيدر ============
+  Color _getHeaderBgColor(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    if (_customer.maxBalance == null || _customer.maxBalance! <= 0) {
+      if (_balance > 0) {
+        return isDark ? Colors.red.shade900.withOpacity(0.3) : Colors.red.shade50;
+      }
+      return isDark
+          ? Colors.green.shade900.withOpacity(0.3)
+          : Colors.green.shade50;
+    }
+
+    final ratio = _customer.balanceRatio(_balance);
+
+    if (ratio < 0.5) {
+      return isDark
+          ? Colors.green.shade900.withOpacity(0.3)
+          : Colors.green.shade50;
+    }
+    if (ratio < 0.8) {
+      return isDark
+          ? Colors.amber.shade900.withOpacity(0.3)
+          : Colors.amber.shade50;
+    }
+    return isDark ? Colors.red.shade900.withOpacity(0.3) : Colors.red.shade50;
+  }
+
   // ============ Header ============
   Widget _buildHeader(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
-    final catColor = Color(CustomerCategory.color(widget.customer.category));
-    final overLimit = widget.customer.isOverLimit(_balance);
+    final catColor = Color(CustomerCategory.color(_customer.category));
+    final overLimit = _customer.isOverLimit(_balance);
+    final balanceColor = _getBalanceColor(theme);
+    final headerBg = _getHeaderBgColor(theme);
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: overLimit
-            ? (isDark
-                ? Colors.red.shade900.withOpacity(0.4)
-                : Colors.red.shade100)
-            : (_balance > 0
-                ? (isDark
-                    ? Colors.red.shade900.withOpacity(0.3)
-                    : Colors.red.shade50)
-                : (isDark
-                    ? Colors.green.shade900.withOpacity(0.3)
-                    : Colors.green.shade50)),
-      ),
+      decoration: BoxDecoration(color: headerBg),
       child: Column(
         children: [
           Row(
             children: [
-              Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: theme.colorScheme.primary.withOpacity(0.2),
-                  border: Border.all(
-                    color: overLimit ? Colors.red : catColor,
-                    width: 3,
+              Stack(
+                children: [
+                  Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: theme.colorScheme.primary.withOpacity(0.2),
+                      border: Border.all(
+                        color: !_customer.isActive
+                            ? Colors.grey
+                            : (overLimit ? Colors.red : catColor),
+                        width: 3,
+                      ),
+                      image: _customer.photoPath != null &&
+                              File(_customer.photoPath!).existsSync()
+                          ? DecorationImage(
+                              image:
+                                  FileImage(File(_customer.photoPath!)),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
+                    ),
+                    child: _customer.photoPath == null ||
+                            !File(_customer.photoPath!).existsSync()
+                        ? Center(
+                            child: Text(
+                              _customer.name.characters.first,
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          )
+                        : null,
                   ),
-                  image: widget.customer.photoPath != null &&
-                          File(widget.customer.photoPath!).existsSync()
-                      ? DecorationImage(
-                          image: FileImage(File(widget.customer.photoPath!)),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: widget.customer.photoPath == null ||
-                        !File(widget.customer.photoPath!).existsSync()
-                    ? Center(
-                        child: Text(
-                          widget.customer.name.characters.first,
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.primary,
-                          ),
+                  // 🆕 شارة الإيقاف
+                  if (!_customer.isActive)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade700,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: theme.colorScheme.surface, width: 2),
                         ),
-                      )
-                    : null,
+                        child: const Icon(
+                          Icons.block,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -921,15 +1138,17 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       children: [
                         Expanded(
                           child: Text(
-                            widget.customer.name,
-                            style: const TextStyle(
+                            _customer.name,
+                            style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
+                              color: !_customer.isActive
+                                  ? Colors.grey
+                                  : null,
                             ),
                           ),
                         ),
-                        // 🆕 أيقونة تحذير
-                        if (overLimit)
+                        if (overLimit && _customer.isActive)
                           Container(
                             padding: const EdgeInsets.all(4),
                             decoration: BoxDecoration(
@@ -940,6 +1159,33 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                               Icons.warning_amber,
                               color: Colors.red,
                               size: 20,
+                            ),
+                          ),
+                        // 🆕 شارة الإيقاف
+                        if (!_customer.isActive)
+                          Container(
+                            margin: const EdgeInsets.only(right: 4),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade700,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.block,
+                                    size: 12, color: Colors.white),
+                                SizedBox(width: 3),
+                                Text(
+                                  'موقوف',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                       ],
@@ -961,8 +1207,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                               Icon(Icons.star, size: 14, color: catColor),
                               const SizedBox(width: 4),
                               Text(
-                                CustomerCategory.label(
-                                    widget.customer.category),
+                                CustomerCategory.label(_customer.category),
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -982,7 +1227,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            _accountTypeLabel(widget.customer.accountType),
+                            _accountTypeLabel(_customer.accountType),
                             style: TextStyle(
                               fontSize: 11,
                               color: theme.colorScheme.primary,
@@ -991,7 +1236,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         ),
                       ],
                     ),
-                    if (widget.customer.phone != null) ...[
+                    if (_customer.phone != null) ...[
                       const SizedBox(height: 6),
                       Row(
                         children: [
@@ -1000,7 +1245,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                               color: theme.colorScheme.onSurfaceVariant),
                           const SizedBox(width: 4),
                           Text(
-                            widget.customer.phone!,
+                            _customer.phone!,
                             style: TextStyle(
                               fontSize: 12,
                               color: theme.colorScheme.onSurfaceVariant,
@@ -1024,28 +1269,20 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             style: TextStyle(
               fontSize: 32,
               fontWeight: FontWeight.bold,
-              color: overLimit
-                  ? Colors.red.shade700
-                  : (_balance > 0
-                      ? (isDark ? Colors.red.shade300 : Colors.red.shade700)
-                      : (isDark
-                          ? Colors.green.shade300
-                          : Colors.green.shade700)),
+              color: balanceColor, // 🆕 حسب النسبة
             ),
           ),
-          // 🆕 عرض الحد الأقصى
-          if (widget.customer.maxBalance != null) ...[
+          // ===== الحد الأقصى + النسبة =====
+          if (_customer.maxBalance != null) ...[
             const SizedBox(height: 6),
             Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: overLimit
-                    ? Colors.red.withOpacity(0.2)
-                    : Colors.grey.withOpacity(0.15),
+                color: balanceColor.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: overLimit ? Colors.red : Colors.grey.shade400,
+                  color: balanceColor.withOpacity(0.5),
                   width: 0.5,
                 ),
               ),
@@ -1055,23 +1292,50 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   Icon(
                     overLimit ? Icons.warning_amber : Icons.shield_outlined,
                     size: 14,
-                    color: overLimit ? Colors.red : Colors.grey.shade700,
+                    color: balanceColor,
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    'الحد الأقصى: ${widget.customer.maxBalance!.toStringAsFixed(0)} ريال',
+                    'الحد الأقصى: ${_customer.maxBalance!.toStringAsFixed(0)} ريال',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
-                      color: overLimit ? Colors.red : Colors.grey.shade700,
+                      color: balanceColor,
                     ),
                   ),
+                  // 🆕 النسبة المئوية
+                  if (_balance > 0) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '(${(_customer.balanceRatio(_balance) * 100).toStringAsFixed(0)}%)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: balanceColor,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
+            // 🆕 شريط التقدم
+            if (_balance > 0) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: _customer.balanceRatio(_balance).clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: Colors.grey.withOpacity(0.3),
+                    valueColor: AlwaysStoppedAnimation<Color>(balanceColor),
+                  ),
+                ),
+              ),
+            ],
           ],
-          if (widget.customer.note != null &&
-              widget.customer.note!.isNotEmpty) ...[
+          if (_customer.note != null && _customer.note!.isNotEmpty) ...[
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(10),
@@ -1085,7 +1349,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      widget.customer.note!,
+                      _customer.note!,
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),
@@ -1106,6 +1370,66 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }[t] ?? 'عميل';
   }
 
+  // ============ 🆕 تبديل حالة الحساب ============
+  Future<void> _toggleCustomerActive() async {
+    final willStop = _customer.isActive;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                willStop ? Icons.block : Icons.check_circle,
+                color: willStop ? Colors.orange : Colors.green,
+              ),
+              const SizedBox(width: 8),
+              Text(willStop ? 'إيقاف الحساب' : 'تفعيل الحساب'),
+            ],
+          ),
+          content: Text(
+            willStop
+                ? 'سيتم إيقاف الحساب "${_customer.name}".\n\n'
+                    '• لن يُظهر في القوائم العادية.\n'
+                    '• يمكنك إضافته في العمليات مع تنبيه.\n'
+                    '• البيانات محفوظة بالكامل.'
+                : 'سيتم تفعيل الحساب "${_customer.name}" مرة أخرى.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: willStop ? Colors.orange : Colors.green,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(willStop ? 'إيقاف' : 'تفعيل'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    await db.setCustomerActive(_customer.id!, !_customer.isActive);
+    await _load();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(willStop
+            ? 'تم إيقاف الحساب "${_customer.name}"'
+            : 'تم تفعيل الحساب "${_customer.name}"'),
+        backgroundColor: willStop ? Colors.orange : Colors.green,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1115,7 +1439,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.customer.name),
+          title: Text(_customer.name),
           actions: [
             IconButton(
               icon: Icon(
@@ -1136,7 +1460,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 context,
                 MaterialPageRoute(
                   builder: (_) =>
-                      ShareReceiptScreen(customer: widget.customer),
+                      ShareReceiptScreen(customer: _customer),
                 ),
               ),
             ),
@@ -1161,7 +1485,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       context,
                       MaterialPageRoute(
                         builder: (_) =>
-                            AddAccountScreen(existing: widget.customer),
+                            AddAccountScreen(existing: _customer),
                       ),
                     ).then((changed) {
                       if (changed == true && mounted) {
@@ -1171,27 +1495,49 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       }
                     });
                     break;
+                  case 'toggle':
+                    _toggleCustomerActive();
+                    break;
                   case 'delete':
                     _showDeleteCustomer();
                     break;
                 }
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
+              itemBuilder: (_) => [
+                const PopupMenuItem(
                   value: 'excel',
                   child: ListTile(
                     leading: Icon(Icons.table_chart),
                     title: Text('تصدير Excel'),
                   ),
                 ),
-                PopupMenuItem(
+                const PopupMenuItem(
                   value: 'edit',
                   child: ListTile(
                     leading: Icon(Icons.edit),
                     title: Text('تعديل بيانات الحساب'),
                   ),
                 ),
+                // 🆕 إيقاف/تفعيل الحساب
                 PopupMenuItem(
+                  value: 'toggle',
+                  child: ListTile(
+                    leading: Icon(
+                      _customer.isActive ? Icons.block : Icons.check_circle,
+                      color:
+                          _customer.isActive ? Colors.orange : Colors.green,
+                    ),
+                    title: Text(
+                      _customer.isActive ? 'إيقاف الحساب' : 'تفعيل الحساب',
+                      style: TextStyle(
+                        color: _customer.isActive
+                            ? Colors.orange
+                            : Colors.green,
+                      ),
+                    ),
+                  ),
+                ),
+                const PopupMenuItem(
                   value: 'delete',
                   child: ListTile(
                     leading: Icon(Icons.delete, color: Colors.red),
@@ -1283,7 +1629,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                         fontWeight: FontWeight.bold),
                                   ),
                                 ),
-                                // المحاسب
                                 if (t.accountant != null &&
                                     t.accountant!.isNotEmpty)
                                   Container(
@@ -1294,7 +1639,8 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                       color: Colors.teal.withOpacity(0.15),
                                       borderRadius: BorderRadius.circular(6),
                                       border: Border.all(
-                                        color: Colors.teal.withOpacity(0.4),
+                                        color:
+                                            Colors.teal.withOpacity(0.4),
                                         width: 0.5,
                                       ),
                                     ),
@@ -1315,7 +1661,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                       ],
                                     ),
                                   ),
-                                // الرمز (قابل للنسخ)
                                 if (t.code != null && t.code!.isNotEmpty)
                                   InkWell(
                                     onTap: () => _copyCode(t.code!),
@@ -1326,7 +1671,8 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                       decoration: BoxDecoration(
                                         color:
                                             Colors.blue.withOpacity(0.15),
-                                        borderRadius: BorderRadius.circular(6),
+                                        borderRadius:
+                                            BorderRadius.circular(6),
                                         border: Border.all(
                                           color:
                                               Colors.blue.withOpacity(0.4),
@@ -1439,7 +1785,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             ],
           ),
           content: Text(
-            'سيتم حذف الحساب "${widget.customer.name}" وكل معاملاته (${_allTx.length} عملية).\n\n'
+            'سيتم حذف الحساب "${_customer.name}" وكل معاملاته (${_allTx.length} عملية).\n\n'
             'لا يمكن التراجع عن هذا الإجراء.',
           ),
           actions: [
@@ -1458,7 +1804,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
 
     if (confirmed == true) {
-      await db.deleteCustomer(widget.customer.id!);
+      await db.deleteCustomer(_customer.id!);
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
