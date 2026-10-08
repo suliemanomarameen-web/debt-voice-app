@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 5, // 🆕 رُفع من 4 إلى 5
+      version: 6, // 🆕 رُفع من 5 إلى 6
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -37,6 +37,7 @@ class DatabaseHelper {
         note TEXT,
         photo_path TEXT,
         category TEXT DEFAULT 'normal',
+        max_balance REAL,
         created_at TEXT NOT NULL
       )
     ''');
@@ -94,11 +95,19 @@ class DatabaseHelper {
     }
     if (oldV < 5) {
       try {
-        // 🆕 إضافة عمود اسم المحاسب
         await db.execute("ALTER TABLE transactions ADD COLUMN accountant TEXT");
         debugPrint('✅ [DB] Added accountant column (v5)');
       } catch (e) {
         debugPrint('❌ [DB] Failed to add accountant column: $e');
+      }
+    }
+    if (oldV < 6) {
+      try {
+        // 🆕 إضافة عمود الحد الأقصى للرصيد
+        await db.execute("ALTER TABLE customers ADD COLUMN max_balance REAL");
+        debugPrint('✅ [DB] Added max_balance column (v6)');
+      } catch (e) {
+        debugPrint('❌ [DB] Failed to add max_balance column: $e');
       }
     }
   }
@@ -156,6 +165,14 @@ class DatabaseHelper {
     final db = await database;
     final r = await db.query('customers',
         where: 'name = ?', whereArgs: [name], limit: 1);
+    if (r.isEmpty) return null;
+    return Customer.fromMap(r.first);
+  }
+
+  Future<Customer?> getCustomerById(int id) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'id = ?', whereArgs: [id], limit: 1);
     if (r.isEmpty) return null;
     return Customer.fromMap(r.first);
   }
@@ -392,8 +409,7 @@ class DatabaseHelper {
     return stats;
   }
 
-  // ============ 🆕 إدارة المحاسبين (جلب قائمة الأسماء المستخدمة) ============
-  /// جلب كل أسماء المحاسبين المستخدمة في العمليات (مميزة)
+  // ============ إدارة المحاسبين ============
   Future<List<String>> getAllAccountants() async {
     final db = await database;
     final r = await db.rawQuery('''
