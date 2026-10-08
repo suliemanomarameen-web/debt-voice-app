@@ -6,8 +6,9 @@ class Customer {
   final String? phone;
   final String accountType;
   final String? note;
-  final String? photoPath;    // 🆕 مسار صورة العميل
-  final String category;      // 🆕 التصنيف (VIP، عادي، إلخ)
+  final String? photoPath;
+  final String category;
+  final double? maxBalance; // 🆕 الحد الأقصى للرصيد (اختياري)
   final String createdAt;
 
   Customer({
@@ -18,30 +19,42 @@ class Customer {
     this.note,
     this.photoPath,
     this.category = 'normal',
+    this.maxBalance, // 🆕
     required this.createdAt,
   });
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'name': name,
-    'phone': phone,
-    'account_type': accountType,
-    'note': note,
-    'photo_path': photoPath,
-    'category': category,
-    'created_at': createdAt,
-  };
+        'id': id,
+        'name': name,
+        'phone': phone,
+        'account_type': accountType,
+        'note': note,
+        'photo_path': photoPath,
+        'category': category,
+        'max_balance': maxBalance, // 🆕
+        'created_at': createdAt,
+      };
 
   factory Customer.fromMap(Map<String, dynamic> m) => Customer(
-    id: m['id'],
-    name: m['name'],
-    phone: m['phone'],
-    accountType: m['account_type'] ?? AccountType.customer,
-    note: m['note'],
-    photoPath: m['photo_path'],
-    category: m['category'] ?? 'normal',
-    createdAt: m['created_at'],
-  );
+        id: m['id'],
+        name: m['name'],
+        phone: m['phone'],
+        accountType: m['account_type'] ?? AccountType.customer,
+        note: m['note'],
+        photoPath: m['photo_path'],
+        category: m['category'] ?? 'normal',
+        maxBalance: m['max_balance'] != null
+            ? (m['max_balance'] as num).toDouble()
+            : null, // 🆕
+        createdAt: m['created_at'],
+      );
+
+  /// هل تجاوز الرصيد الحد الأقصى؟
+  bool isOverLimit(double currentBalance) {
+    if (maxBalance == null) return false;
+    if (maxBalance! <= 0) return false;
+    return currentBalance > maxBalance!;
+  }
 }
 
 /// 🆕 التصنيفات الجاهزة
