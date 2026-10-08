@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
@@ -26,6 +27,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
   List<Transaction> _allTx = [];
   List<Transaction> _tx = [];
   DateFilter _dateFilter = DateFilter();
+  bool _alertShown = false;
 
   @override
   void initState() {
@@ -42,6 +44,17 @@ class _CustomerScreenState extends State<CustomerScreen> {
       _allTx = allTx;
       _applyFilter();
     });
+
+    // 🆕 تنبيه تجاوز الحد
+    if (!_alertShown &&
+        widget.customer.isOverLimit(bal) &&
+        widget.customer.maxBalance != null) {
+      _alertShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showLimitWarning();
+      });
+    }
   }
 
   void _applyFilter() {
@@ -60,6 +73,93 @@ class _CustomerScreenState extends State<CustomerScreen> {
     } catch (_) {
       return iso.length >= 16 ? iso.substring(0, 16) : iso;
     }
+  }
+
+  // ============ نسخ الرمز ============
+  Future<void> _copyCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('تم نسخ الرمز: $code'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ============ تنبيه تجاوز الحد ============
+  void _showLimitWarning() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.red, size: 28),
+              SizedBox(width: 8),
+              Text('تنبيه', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'رصيد "${widget.customer.name}" تجاوز الحد الأقصى.',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              _warningRow('الرصيد الحالي',
+                  '${_balance.toStringAsFixed(0)} ريال', Colors.red),
+              const SizedBox(height: 4),
+              _warningRow(
+                'الحد الأقصى',
+                '${widget.customer.maxBalance!.toStringAsFixed(0)} ريال',
+                Colors.grey,
+              ),
+              const SizedBox(height: 4),
+              _warningRow(
+                'التجاوز',
+                '+${(_balance - widget.customer.maxBalance!).toStringAsFixed(0)} ريال',
+                Colors.orange,
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('تم'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _warningRow(String label, String value, Color color) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 13)),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+      ],
+    );
   }
 
   // ============ إرسال تذكير واتساب ============
@@ -273,27 +373,32 @@ class _CustomerScreenState extends State<CustomerScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (t.code != null && t.code!.isNotEmpty) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.qr_code,
-                          size: 16, color: Colors.blue),
-                      const SizedBox(width: 6),
-                      Text(
-                        'الرمز: ${t.code}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
+                InkWell(
+                  onTap: () => _copyCode(t.code!),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.qr_code,
+                            size: 16, color: Colors.blue),
+                        const SizedBox(width: 6),
+                        Text(
+                          'الرمز: ${t.code}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        const Icon(Icons.copy, size: 14, color: Colors.blue),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -323,7 +428,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   id: t.id,
                   customerId: t.customerId,
                   code: t.code,
-                  accountant: t.accountant, // 🆕 الحفاظ على اسم المحاسب
+                  accountant: t.accountant,
                   amount: amt,
                   currency: t.currency,
                   type: t.type,
@@ -409,34 +514,42 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // الرمز (قابل للنسخ)
                     if (t.code != null && t.code!.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.qr_code,
-                                size: 14, color: Colors.blue),
-                            const SizedBox(width: 6),
-                            Text(
-                              t.code!,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue,
-                                fontSize: 13,
+                      InkWell(
+                        onTap: () => _copyCode(t.code!),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.qr_code,
+                                  size: 14, color: Colors.blue),
+                              const SizedBox(width: 6),
+                              Text(
+                                t.code!,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue,
+                                  fontSize: 13,
+                                ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 6),
+                              const Icon(Icons.copy,
+                                  size: 12, color: Colors.blue),
+                            ],
+                          ),
                         ),
                       ),
                       const SizedBox(height: 8),
                     ],
-                    // 🆕 عرض اسم المحاسب
+                    // المحاسب
                     if (t.accountant != null && t.accountant!.isNotEmpty) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -745,18 +858,23 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   Widget _buildHeader(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final catColor = Color(CustomerCategory.color(widget.customer.category));
+    final overLimit = widget.customer.isOverLimit(_balance);
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: _balance > 0
+        color: overLimit
             ? (isDark
-                ? Colors.red.shade900.withOpacity(0.3)
-                : Colors.red.shade50)
-            : (isDark
-                ? Colors.green.shade900.withOpacity(0.3)
-                : Colors.green.shade50),
+                ? Colors.red.shade900.withOpacity(0.4)
+                : Colors.red.shade100)
+            : (_balance > 0
+                ? (isDark
+                    ? Colors.red.shade900.withOpacity(0.3)
+                    : Colors.red.shade50)
+                : (isDark
+                    ? Colors.green.shade900.withOpacity(0.3)
+                    : Colors.green.shade50)),
       ),
       child: Column(
         children: [
@@ -768,7 +886,10 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: theme.colorScheme.primary.withOpacity(0.2),
-                  border: Border.all(color: catColor, width: 3),
+                  border: Border.all(
+                    color: overLimit ? Colors.red : catColor,
+                    width: 3,
+                  ),
                   image: widget.customer.photoPath != null &&
                           File(widget.customer.photoPath!).existsSync()
                       ? DecorationImage(
@@ -796,12 +917,32 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.customer.name,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.customer.name,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        // 🆕 أيقونة تحذير
+                        if (overLimit)
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.warning_amber,
+                              color: Colors.red,
+                              size: 20,
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -883,13 +1024,52 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             style: TextStyle(
               fontSize: 32,
               fontWeight: FontWeight.bold,
-              color: _balance > 0
-                  ? (isDark ? Colors.red.shade300 : Colors.red.shade700)
-                  : (isDark
-                      ? Colors.green.shade300
-                      : Colors.green.shade700),
+              color: overLimit
+                  ? Colors.red.shade700
+                  : (_balance > 0
+                      ? (isDark ? Colors.red.shade300 : Colors.red.shade700)
+                      : (isDark
+                          ? Colors.green.shade300
+                          : Colors.green.shade700)),
             ),
           ),
+          // 🆕 عرض الحد الأقصى
+          if (widget.customer.maxBalance != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: overLimit
+                    ? Colors.red.withOpacity(0.2)
+                    : Colors.grey.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: overLimit ? Colors.red : Colors.grey.shade400,
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    overLimit ? Icons.warning_amber : Icons.shield_outlined,
+                    size: 14,
+                    color: overLimit ? Colors.red : Colors.grey.shade700,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'الحد الأقصى: ${widget.customer.maxBalance!.toStringAsFixed(0)} ريال',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: overLimit ? Colors.red : Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (widget.customer.note != null &&
               widget.customer.note!.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -1103,7 +1283,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                         fontWeight: FontWeight.bold),
                                   ),
                                 ),
-                                // 🆕 عرض اسم المحاسب
+                                // المحاسب
                                 if (t.accountant != null &&
                                     t.accountant!.isNotEmpty)
                                   Container(
@@ -1114,8 +1294,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                       color: Colors.teal.withOpacity(0.15),
                                       borderRadius: BorderRadius.circular(6),
                                       border: Border.all(
-                                        color:
-                                            Colors.teal.withOpacity(0.4),
+                                        color: Colors.teal.withOpacity(0.4),
                                         width: 0.5,
                                       ),
                                     ),
@@ -1136,27 +1315,43 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                                       ],
                                     ),
                                   ),
-                                // عرض الرمز
+                                // الرمز (قابل للنسخ)
                                 if (t.code != null && t.code!.isNotEmpty)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color:
-                                          Colors.blue.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
+                                  InkWell(
+                                    onTap: () => _copyCode(t.code!),
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
                                         color:
-                                            Colors.blue.withOpacity(0.4),
-                                        width: 0.5,
+                                            Colors.blue.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color:
+                                              Colors.blue.withOpacity(0.4),
+                                          width: 0.5,
+                                        ),
                                       ),
-                                    ),
-                                    child: Text(
-                                      t.code!,
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.blue,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            t.code!,
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.blue,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 3),
+                                          Icon(
+                                            Icons.copy,
+                                            size: 9,
+                                            color:
+                                                Colors.blue.withOpacity(0.7),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
