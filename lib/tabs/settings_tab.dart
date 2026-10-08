@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
+import '../services/accountant_service.dart';
 import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
 import '../services/backup_service.dart';
@@ -37,6 +38,9 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _gdriveSignedIn = false;
   bool _autoWhatsApp = false;
 
+  // 🆕 اسم المحاسب
+  String? _accountantName;
+
   // ===== إعدادات الرموز =====
   bool _codeEnabled = true;
   String _debtPrefix = 'D';
@@ -66,9 +70,16 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadCodeSettings();
     _loadCloudBackupSettings();
     _loadPdfSettings();
+    _loadAccountantName();
   }
 
   // ========== تحميل الإعدادات ==========
+  Future<void> _loadAccountantName() async {
+    final name = await AccountantService.getAccountantName();
+    if (!mounted) return;
+    setState(() => _accountantName = name);
+  }
+
   Future<void> _loadAutoWhatsApp() async {
     final sp = await SharedPreferences.getInstance();
     if (!mounted) return;
@@ -205,6 +216,104 @@ class _SettingsTabState extends State<SettingsTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('تم تفعيل التذكير اليومي'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  // ============== 🆕 اسم المحاسب ==============
+  Future<void> _editAccountantName() async {
+    final ctrl = TextEditingController(text: _accountantName ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.person, color: Colors.teal),
+              SizedBox(width: 8),
+              Text('اسم المحاسب'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                textCapitalization: TextCapitalization.words,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'الاسم',
+                  hintText: 'مثال: سليمان، أحمد...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'يُسجَّل هذا الاسم مع كل عملية تضيفها من هذا الجهاز، '
+                'لتتمكن من معرفة من أضاف كل عملية عند المزامنة.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            if (_accountantName != null && _accountantName!.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx, '__CLEAR__');
+                },
+                child: const Text(
+                  'حذف',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final v = ctrl.text.trim();
+                Navigator.pop(ctx, v);
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    if (result == '__CLEAR__') {
+      await AccountantService.clearAccountantName();
+      if (!mounted) return;
+      setState(() => _accountantName = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم حذف اسم المحاسب'),
+          backgroundColor: Colors.grey,
+        ),
+      );
+      return;
+    }
+
+    if (result.isEmpty) {
+      // إذا الحقل فارغ، احذف الاسم
+      await AccountantService.clearAccountantName();
+      if (!mounted) return;
+      setState(() => _accountantName = null);
+      return;
+    }
+
+    await AccountantService.setAccountantName(result);
+    if (!mounted) return;
+    setState(() => _accountantName = result);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✅ تم حفظ اسم المحاسب: $result'),
         backgroundColor: Colors.green,
       ),
     );
@@ -782,7 +891,7 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       );
 
-      // تحديث الرموز القديمة أولاً (قبل حفظ البادئة الجديدة)
+      // تحديث الرموز القديمة أولاً
       if (updateOld == true && mounted) {
         setState(() => _backupBusy = true);
         final count = await CodeService.updateOldCodes(
@@ -812,7 +921,6 @@ class _SettingsTabState extends State<SettingsTab> {
         if (mounted) setState(() => _returnPrefix = newPrefix);
       }
     } else {
-      // لم يتغير الرمز - احفظ فقط
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
         if (mounted) setState(() => _debtPrefix = newPrefix);
@@ -967,6 +1075,53 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
+          // ========== 🆕 قسم المحاسب ==========
+          const _SectionHeader('المحاسب'),
+          ListTile(
+            leading: Icon(
+              Icons.person,
+              color: _accountantName != null ? Colors.teal : Colors.grey,
+            ),
+            title: const Text('اسم المحاسب'),
+            subtitle: Text(
+              _accountantName ?? 'لم يتم ضبطه - اضغط للإضافة',
+              style: TextStyle(
+                color: _accountantName != null ? Colors.teal : Colors.grey,
+                fontWeight: _accountantName != null
+                    ? FontWeight.bold
+                    : FontWeight.normal,
+              ),
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: _editAccountantName,
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.teal.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.teal.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 16, color: Colors.teal),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'يُسجَّل هذا الاسم مع كل عملية تضيفها من هذا الجهاز. '
+                    'يساعدك على معرفة من أضاف كل عملية عند المزامنة مع أجهزة أخرى.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.teal.shade200 : Colors.teal.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
           // ========== التهيئة ==========
           const _SectionHeader('التهيئة'),
           ListTile(
