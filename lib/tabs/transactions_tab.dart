@@ -35,6 +35,10 @@ class _TransactionsTabState extends State<TransactionsTab> {
   DateTime? _customTo;
   String _searchQuery = '';
 
+  // 🆕 فلتر المحاسب
+  String? _accountantFilter; // null = الكل
+  List<String> _availableAccountants = [];
+
   @override
   void initState() {
     super.initState();
@@ -62,9 +66,13 @@ class _TransactionsTabState extends State<TransactionsTab> {
 
     list.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
 
+    // 🆕 جلب قائمة المحاسبين المتاحين
+    final accountants = await db.getAllAccountants();
+
     if (!mounted) return;
     setState(() {
       _allTx = list;
+      _availableAccountants = accountants;
       _loading = false;
       _applyFilters();
     });
@@ -110,11 +118,20 @@ class _TransactionsTabState extends State<TransactionsTab> {
         } catch (_) {}
       }
 
+      // 🆕 فلتر المحاسب
+      if (_accountantFilter != null) {
+        final acc = entry.value.accountant ?? '';
+        if (acc != _accountantFilter) return false;
+      }
+
       // فلتر البحث
       if (query.isNotEmpty) {
         final code = (entry.value.code ?? '').toLowerCase();
         final name = entry.key.name.toLowerCase();
-        if (!code.contains(query) && !name.contains(query)) {
+        final acc = (entry.value.accountant ?? '').toLowerCase();
+        if (!code.contains(query) &&
+            !name.contains(query) &&
+            !acc.contains(query)) {
           return false;
         }
       }
@@ -162,6 +179,73 @@ class _TransactionsTabState extends State<TransactionsTab> {
         59,
         59,
       );
+      _applyFilters();
+    });
+  }
+
+  // 🆕 نافذة فلتر المحاسب
+  Future<void> _showAccountantFilterSheet() async {
+    if (_availableAccountants.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد محاسبون مسجلون في العمليات'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final result = await showModalBottomSheet<String?>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'فلترة حسب المحاسب',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              // الكل
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('الكل'),
+                trailing: _accountantFilter == null
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(context, '__ALL__'),
+              ),
+              const Divider(height: 1),
+              // أسماء المحاسبين
+              ..._availableAccountants.map((name) {
+                final selected = _accountantFilter == name;
+                return ListTile(
+                  leading: const Icon(Icons.person, color: Colors.teal),
+                  title: Text(name),
+                  trailing: selected
+                      ? const Icon(Icons.check, color: Colors.green)
+                      : null,
+                  onTap: () => Navigator.pop(context, name),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      if (result == '__ALL__') {
+        _accountantFilter = null;
+      } else {
+        _accountantFilter = result;
+      }
       _applyFilters();
     });
   }
@@ -278,6 +362,9 @@ class _TransactionsTabState extends State<TransactionsTab> {
     return sum;
   }
 
+  bool get _hasActiveFilter =>
+      _dateFilter != TxDateFilter.all || _accountantFilter != null;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -287,6 +374,22 @@ class _TransactionsTabState extends State<TransactionsTab> {
       appBar: AppBar(
         title: const Text('العمليات'),
         actions: [
+          // 🆕 زر فلتر المحاسب
+          IconButton(
+            icon: Icon(
+              _accountantFilter == null
+                  ? Icons.person_outline
+                  : Icons.person,
+              color: _accountantFilter == null
+                  ? null
+                  : theme.colorScheme.primary,
+            ),
+            tooltip: _accountantFilter == null
+                ? 'فلترة حسب المحاسب'
+                : 'المحاسب: $_accountantFilter',
+            onPressed: _showAccountantFilterSheet,
+          ),
+          // فلتر التاريخ
           IconButton(
             icon: Icon(
               _dateFilter == TxDateFilter.all
@@ -315,7 +418,7 @@ class _TransactionsTabState extends State<TransactionsTab> {
                   child: TextField(
                     controller: searchCtrl,
                     decoration: InputDecoration(
-                      hintText: 'ابحث برمز العملية أو اسم العميل...',
+                      hintText: 'ابحث برمز العملية أو اسم العميل أو المحاسب...',
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: _searchQuery.isNotEmpty
                           ? IconButton(
@@ -346,7 +449,7 @@ class _TransactionsTabState extends State<TransactionsTab> {
                 ),
 
                 // ===== شريط الفلتر النشط =====
-                if (_dateFilter != TxDateFilter.all)
+                if (_hasActiveFilter)
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 12),
                     padding: const EdgeInsets.symmetric(
@@ -361,31 +464,43 @@ class _TransactionsTabState extends State<TransactionsTab> {
                             size: 18, color: theme.colorScheme.primary),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: Text(
-                            'فلتر: ${_filterLabel()}',
-                            style: TextStyle(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              if (_dateFilter != TxDateFilter.all)
+                                _activeChip(
+                                  icon: Icons.calendar_today,
+                                  label: _filterLabel(),
+                                  theme: theme,
+                                  onRemove: () {
+                                    setState(() {
+                                      _dateFilter = TxDateFilter.all;
+                                      _customFrom = null;
+                                      _customTo = null;
+                                      _applyFilters();
+                                    });
+                                  },
+                                ),
+                              if (_accountantFilter != null)
+                                _activeChip(
+                                  icon: Icons.person,
+                                  label: _accountantFilter!,
+                                  theme: theme,
+                                  color: Colors.teal,
+                                  onRemove: () {
+                                    setState(() {
+                                      _accountantFilter = null;
+                                      _applyFilters();
+                                    });
+                                  },
+                                ),
+                            ],
                           ),
                         ),
                         Text(
                           '${_filtered.length} عملية',
                           style: const TextStyle(fontSize: 12),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () {
-                            setState(() {
-                              _dateFilter = TxDateFilter.all;
-                              _customFrom = null;
-                              _customTo = null;
-                              _applyFilters();
-                            });
-                          },
                         ),
                       ],
                     ),
@@ -485,6 +600,44 @@ class _TransactionsTabState extends State<TransactionsTab> {
                                             fontWeight: FontWeight.bold),
                                       ),
                                     ),
+                                    // 🆕 عرض اسم المحاسب
+                                    if (t.accountant != null &&
+                                        t.accountant!.isNotEmpty)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        margin:
+                                            const EdgeInsets.only(right: 4),
+                                        decoration: BoxDecoration(
+                                          color:
+                                              Colors.teal.withOpacity(0.15),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: Colors.teal
+                                                .withOpacity(0.4),
+                                            width: 0.5,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.person,
+                                                size: 9,
+                                                color: Colors.teal),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              t.accountant!,
+                                              style: const TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.teal,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    // عرض الرمز
                                     if (t.code != null && t.code!.isNotEmpty)
                                       Container(
                                         padding: const EdgeInsets.symmetric(
@@ -575,6 +728,44 @@ class _TransactionsTabState extends State<TransactionsTab> {
                 ),
               ],
             ),
+    );
+  }
+
+  Widget _activeChip({
+    required IconData icon,
+    required String label,
+    required ThemeData theme,
+    Color? color,
+    required VoidCallback onRemove,
+  }) {
+    final c = color ?? theme.colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: c.withOpacity(0.4), width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: c),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: c,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: onRemove,
+            child: Icon(Icons.close, size: 14, color: c),
+          ),
+        ],
+      ),
     );
   }
 
