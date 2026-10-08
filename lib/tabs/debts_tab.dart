@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/sync_service.dart';
@@ -54,12 +55,10 @@ class _DebtsTabState extends State<DebtsTab> {
     _refresh();
     _loadSyncInfo();
 
-    // الاستماع لحالة المزامنة
     _statusSub = SyncService.statusStream.listen((s) {
       if (mounted) setState(() => _syncStatus = s);
     });
 
-    // الاستماع لنتيجة المزامنة → تحديث محلي + إشعار
     _resultSub = SyncService.resultStream.listen(_onSyncResult);
   }
 
@@ -70,20 +69,15 @@ class _DebtsTabState extends State<DebtsTab> {
     super.dispose();
   }
 
-  /// يُستدعى بعد كل مزامنة (تلقائية أو يدوية)
   Future<void> _onSyncResult(SyncResult result) async {
     if (!mounted) return;
 
-    // 1. تحديث البيانات المحلية دائماً (لعرض نتيجة المزامنة)
     await _refresh();
 
     if (!mounted) return;
 
-    // 2. إذا فشلت المزامنة لا نُظهر شيء هنا
-    // (الإشعار يظهر في _manualSync عند الضغط اليدوي)
     if (!result.success) return;
 
-    // 3. إظهار إشعار بعدد العمليات المضافة (فقط إذا كان هناك جديد)
     if (result.transactionsAdded > 0 || result.customersAdded > 0) {
       final parts = <String>[];
       if (result.transactionsAdded > 0) {
@@ -337,18 +331,12 @@ class _DebtsTabState extends State<DebtsTab> {
     }
   }
 
-  // ============================================================
   // ============ السحب للتحديث + المزامنة ============
-  // ============================================================
   Future<void> _refreshAndSync() async {
-    // 1. تحديث محلي أولاً (سريع)
     await _refresh();
 
-    // 2. مزامنة سحابية (إذا كان مسجل دخول)
     if (SyncService.isSyncAvailable) {
       try {
-        // _onSyncResult() ستُستدعى تلقائياً بعد المزامنة
-        // وستقوم بالتحديث المحلي + إظهار الإشعار
         await SyncService.manualSync();
       } catch (e) {
         debugPrint('Sync error during refresh: $e');
@@ -356,10 +344,9 @@ class _DebtsTabState extends State<DebtsTab> {
     }
   }
 
-  // ============ مزامنة يدوية (بالضغط على الشريط) ============
+  // ============ مزامنة يدوية ============
   Future<void> _manualSync() async {
     if (!SyncService.isSyncAvailable) {
-      // محاولة تسجيل الدخول
       final result = await SyncService.manualSync();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -382,8 +369,6 @@ class _DebtsTabState extends State<DebtsTab> {
 
     if (!mounted) return;
 
-    // _onSyncResult() ستتكفل بالتحديث والإشعار عند وجود بيانات جديدة
-    // لكن نضيف إشعارات الحالات الخاصة
     if (!result.success) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -422,6 +407,9 @@ class _DebtsTabState extends State<DebtsTab> {
       return;
     }
 
+    // 🆕 جلب اسم المحاسب مسبقاً
+    final accountant = await AccountantService.getAccountantName();
+
     String type = 'debt';
     Customer? selectedCustomer;
     final amountCtrl = TextEditingController();
@@ -437,11 +425,37 @@ class _DebtsTabState extends State<DebtsTab> {
         textDirection: TextDirection.rtl,
         child: StatefulBuilder(
           builder: (ctx, setStateDialog) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.add_card, color: Colors.teal),
-                SizedBox(width: 8),
-                Text('عملية جديدة'),
+                const Icon(Icons.add_card, color: Colors.teal),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('عملية جديدة')),
+                // 🆕 عرض اسم المحاسب
+                if (accountant != null && accountant.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.teal.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person, size: 12, color: Colors.teal),
+                        const SizedBox(width: 4),
+                        Text(
+                          accountant,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             content: SizedBox(
@@ -482,7 +496,6 @@ class _DebtsTabState extends State<DebtsTab> {
                         setStateDialog(() => type = v.first);
                       },
                     ),
-
                     const Divider(height: 24),
 
                     // ===== 2. العميل =====
@@ -640,7 +653,6 @@ class _DebtsTabState extends State<DebtsTab> {
                       ),
                     ),
 
-                    // ===== 4. الحقل الإضافي =====
                     const SizedBox(height: 16),
                     if (type == 'payment') ...[
                       const Text(
@@ -735,7 +747,6 @@ class _DebtsTabState extends State<DebtsTab> {
                           final storedType =
                               (type == 'return') ? 'payment' : type;
 
-                          // ⚠️ منع التكرار
                           final isDuplicate =
                               await db.transactionExistsRecent(
                             customerId: selectedCustomer!.id!,
@@ -757,7 +768,6 @@ class _DebtsTabState extends State<DebtsTab> {
                             return;
                           }
 
-                          // 🔢 توليد الرمز
                           String? code;
                           try {
                             code = await CodeService.generateCode(type);
@@ -777,6 +787,7 @@ class _DebtsTabState extends State<DebtsTab> {
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
+                            accountant: accountant, // 🆕
                             amount: amt,
                             type: storedType,
                             items: extraText,
@@ -1269,6 +1280,38 @@ class _DebtsTabState extends State<DebtsTab> {
                     title: Row(
                       children: [
                         Expanded(child: Text(c.name)),
+                        // عرض اسم المحاسب
+                        if (t.accountant != null && t.accountant!.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            margin: const EdgeInsets.only(right: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: Colors.teal.withOpacity(0.4),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.person,
+                                    size: 9, color: Colors.teal),
+                                const SizedBox(width: 2),
+                                Text(
+                                  t.accountant!,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.teal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        // عرض الرمز
                         if (t.code != null && t.code!.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.symmetric(
