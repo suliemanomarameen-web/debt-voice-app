@@ -1086,8 +1086,8 @@ class _DebtsTabState extends State<DebtsTab> {
         final overLimit = c.isOverLimit(balance);
 
         // 🆕 تنبيه (لمرة واحدة)
-        if (overLimit && !_alertedCustomers.contains(c.id)) {
-          _alertedCustomers.add(c.id);
+        if (overLimit && c.id != null && !_alertedCustomers.contains(c.id)) {
+          _alertedCustomers.add(c.id!);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1114,9 +1114,7 @@ class _DebtsTabState extends State<DebtsTab> {
 
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-          color: overLimit
-              ? Colors.red.withOpacity(0.08)
-              : null,
+          color: overLimit ? Colors.red.withOpacity(0.08) : null,
           shape: overLimit
               ? RoundedRectangleBorder(
                   side: BorderSide(
@@ -1186,9 +1184,9 @@ class _DebtsTabState extends State<DebtsTab> {
                         const Icon(Icons.warning_amber,
                             size: 10, color: Colors.red),
                         const SizedBox(width: 2),
-                        Text(
+                        const Text(
                           'تجاوز الحد',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.bold,
                             color: Colors.red,
@@ -1251,7 +1249,6 @@ class _DebtsTabState extends State<DebtsTab> {
       Customer c, Transaction t, ThemeData theme) {
     final isDebt = t.type == 'debt';
     final isReturn = t.items.startsWith('مرتجع');
-    final isDark = theme.brightness == Brightness.dark;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
@@ -1261,7 +1258,6 @@ class _DebtsTabState extends State<DebtsTab> {
           children: [
             Row(
               children: [
-                // 🆕 الأيقونة
                 Icon(
                   isReturn
                       ? Icons.keyboard_return
@@ -1276,7 +1272,7 @@ class _DebtsTabState extends State<DebtsTab> {
                 ),
                 const SizedBox(width: 8),
 
-                // 🆕 الاسم (يأخذ المساحة)
+                // الاسم (يأخذ المساحة)
                 Expanded(
                   child: Text(
                     c.name,
@@ -1285,7 +1281,7 @@ class _DebtsTabState extends State<DebtsTab> {
                   ),
                 ),
 
-                // 🆕 شارات المحاسب والرمز (في أعلى اليسار)
+                // شارات المحاسب والرمز (في أعلى اليسار)
                 if (t.accountant != null && t.accountant!.isNotEmpty) ...[
                   const SizedBox(width: 4),
                   _badge(
