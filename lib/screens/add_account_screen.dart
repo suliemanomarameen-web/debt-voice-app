@@ -18,6 +18,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   late TextEditingController _name;
   late TextEditingController _phone;
   late TextEditingController _note;
+  late TextEditingController _maxBalance; // 🆕
   late String _type;
   late String _category;
   String? _photoPath;
@@ -32,6 +33,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _name = TextEditingController(text: c?.name ?? '');
     _phone = TextEditingController(text: c?.phone ?? '');
     _note = TextEditingController(text: c?.note ?? '');
+    _maxBalance = TextEditingController(
+      text: c?.maxBalance != null ? c!.maxBalance!.toStringAsFixed(0) : '',
+    ); // 🆕
     _type = c?.accountType ?? AccountType.customer;
     _category = c?.category ?? CustomerCategory.normal;
     _photoPath = c?.photoPath;
@@ -42,6 +46,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _name.dispose();
     _phone.dispose();
     _note.dispose();
+    _maxBalance.dispose(); // 🆕
     super.dispose();
   }
 
@@ -57,7 +62,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       );
       if (picked == null) return;
 
-      // احفظ الصورة في مجلد التطبيق
       final dir = await getApplicationDocumentsDirectory();
       final photosDir = Directory('${dir.path}/customer_photos');
       if (!await photosDir.exists()) {
@@ -68,7 +72,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedPath = '${photosDir.path}/$fileName';
 
-      // انسخ الملف
       final file = File(picked.path);
       await file.copy(savedPath);
 
@@ -133,6 +136,13 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
     final db = DatabaseHelper.instance;
 
+    // 🆕 تحويل الحد الأقصى
+    double? maxBalance;
+    final maxText = _maxBalance.text.trim();
+    if (maxText.isNotEmpty) {
+      maxBalance = double.tryParse(maxText);
+    }
+
     if (isEdit) {
       await db.updateCustomer(Customer(
         id: widget.existing!.id,
@@ -142,6 +152,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
         photoPath: _photoPath,
         category: _category,
+        maxBalance: maxBalance, // 🆕
         createdAt: widget.existing!.createdAt,
       ));
     } else {
@@ -152,6 +163,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
         photoPath: _photoPath,
         category: _category,
+        maxBalance: maxBalance, // 🆕
         createdAt: DateTime.now().toIso8601String(),
       ));
     }
@@ -267,7 +279,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  _photoPath == null ? 'اضغط لإضافة صورة' : 'اضغط لتغيير الصورة',
+                  _photoPath == null
+                      ? 'اضغط لإضافة صورة'
+                      : 'اضغط لتغيير الصورة',
                   style: TextStyle(
                     fontSize: 12,
                     color: isDark
@@ -293,7 +307,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               ),
               const SizedBox(height: 12),
 
-              // ============== النوع (عميل/مورد) ==============
+              // ============== النوع ==============
               DropdownButtonFormField<String>(
                 value: _type,
                 decoration: const InputDecoration(
@@ -349,6 +363,52 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   labelText: 'الهاتف (اختياري)',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.phone),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // ============== 🆕 الحد الأقصى للرصيد ==============
+              TextFormField(
+                controller: _maxBalance,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'الحد الأقصى للرصيد (اختياري)',
+                  hintText: 'مثال: 5000',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.warning_amber, color: Colors.orange),
+                  suffixText: 'ريال',
+                ),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return null;
+                  final n = double.tryParse(v.trim());
+                  if (n == null) return 'أدخل رقماً صحيحاً';
+                  if (n <= 0) return 'يجب أن يكون أكبر من صفر';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 14,
+                        color: isDark
+                            ? Colors.orange.shade200
+                            : Colors.orange.shade800),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'عند تجاوز رصيد العميل هذا الحد، سيظهر تحذير بالأحمر.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark
+                              ? Colors.orange.shade200
+                              : Colors.orange.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),
