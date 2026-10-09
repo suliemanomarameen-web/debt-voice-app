@@ -191,7 +191,7 @@ class _CustomersTabState extends State<CustomersTab> {
       return;
     }
 
-    // 🆕 جلب اسم المحاسب مسبقاً
+    // جلب اسم المحاسب مسبقاً
     final accountant = await AccountantService.getAccountantName();
 
     String type = 'debt';
@@ -214,7 +214,7 @@ class _CustomersTabState extends State<CustomersTab> {
                 const Icon(Icons.add_card, color: Colors.teal),
                 const SizedBox(width: 8),
                 const Expanded(child: Text('عملية جديدة')),
-                // 🆕 عرض اسم المحاسب في العنوان
+                // عرض اسم المحاسب
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -561,11 +561,12 @@ class _CustomersTabState extends State<CustomersTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
-                          // 🆕 حفظ مع اسم المحاسب
+                          // حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
-                            accountant: accountant, // ← جديد
+                            accountant: accountant,
+                            source: 'manual',
                             amount: amt,
                             type: storedType,
                             items: extraText,
