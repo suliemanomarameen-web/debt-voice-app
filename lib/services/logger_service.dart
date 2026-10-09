@@ -1,0 +1,724 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import '../db/database_helper.dart';
+import '../models/log_event.dart';
+import 'accountant_service.dart';
+
+/// خدمة تسجيل الأحداث
+/// - تحفظ كل حدث في قاعدة البيانات
+/// - تبث الأحداث الجديدة لمن يستمع (Stream)
+/// - تدير التنظيف التلقائي
+class LoggerService {
+  static final LoggerService _instance = LoggerService._internal();
+  factory LoggerService() => _instance;
+  LoggerService._internal();
+
+  // ========== الحد الأدنى للحدث ==========
+  static const int _maxLogs = 5000;
+  static const int _retentionDays = 30;
+
+  // ========== Stream للأحداث الجديدة ==========
+  static final _eventController = StreamController<LogEvent>.broadcast();
+  static Stream<LogEvent> get eventStream => _eventController.stream;
+
+  // ========== بث عدد التنبيهات المعلقة ==========
+  static final _pendingCountController = StreamController<int>.broadcast();
+  static Stream<int> get pendingCountStream => _pendingCountController.stream;
+
+  // ========== المفاتيح ==========
+  static const String _keyRetentionDays = 'log_retention_days';
+  static const String _keyMaxLogs = 'log_max_count';
+  static const String _keyNotificationsEnabled = 'log_notifications_enabled';
+
+  /// 🆕 ضبط مدة الاحتفاظ (بالأيام) — 0 = لا تحذف
+  static Future<void> setRetentionDays(int days) async {
+    final db = await DatabaseHelper.instance.database;
+    // حفظ في قاعدة البيانات (جدول settings بسيط)
+    try {
+      await db.insert('settings', {
+        'key': _keyRetentionDays,
+        'value': days.toString(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    } catch (_) {}
+  }
+
+  /// 🆕 جلب مدة الاحتفاظ
+  static Future<int> getRetentionDays() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.query('settings',
+          where: 'key = ?', whereArgs: [_keyRetentionDays], limit: 1);
+      if (r.isEmpty) return _retentionDays;
+      return int.tryParse(r.first['value'] as String? ?? '30') ?? 30;
+    } catch (_) {
+      return _retentionDays;
+    }
+  }
+
+  // ============================================================
+  // ============ 🆕 حفظ حدث جديد ============================
+  // ============================================================
+  static Future<int> log({
+    required String action,
+    required String description,
+    LogLevel level = LogLevel.info,
+    LogCategory category = LogCategory.system,
+    String? accountant,
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+    String? audioPath,
+  }) async {
+    try {
+      // جلب اسم المحاسب إذا لم يُمرَّر
+      if (accountant == null) {
+        try {
+          accountant = await AccountantService.getAccountantName();
+        } catch (_) {}
+      }
+
+      final event = LogEvent(
+        action: action,
+        description: description,
+        level: level,
+        category: category,
+        accountant: accountant,
+        relatedId: relatedId,
+        metadata: LogEvent.encodeMetadata(metadata),
+        audioPath: audioPath,
+        isAcknowledged: !(level == LogLevel.error || level == LogLevel.warning),
+        createdAt: DateTime.now().toIso8601String(),
+      );
+
+      final db = await DatabaseHelper.instance.database;
+      final id = await db.insert('log_events', event.toMap());
+
+      // بث الحدث لمن يستمع
+      final saved = event.copyWith(id: id);
+      if (!_eventController.isClosed) {
+        _eventController.add(saved);
+      }
+
+      // تحديث عدد التنبيهات المعلقة
+      _notifyPendingCount();
+
+      // تنظيف دوري (كل 100 حدث مثلاً — خفيف)
+      if (id % 50 == 0) {
+        unawaited(_autoCleanup());
+      }
+
+      return id;
+    } catch (e) {
+      debugPrint('❌ [Logger] Failed to log: $e');
+      return -1;
+    }
+  }
+
+  // ============================================================
+  // ============ 🆕 دوال مختصرة (Helpers) =====================
+  // ============================================================
+
+  /// حدث معلومة
+  static Future<void> info(
+    String action,
+    String description, {
+    LogCategory category = LogCategory.system,
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+  }) =>
+      log(
+        action: action,
+        description: description,
+        level: LogLevel.info,
+        category: category,
+        relatedId: relatedId,
+        metadata: metadata,
+      );
+
+  /// حدث نجاح
+  static Future<void> success(
+    String action,
+    String description, {
+    LogCategory category = LogCategory.system,
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+  }) =>
+      log(
+        action: action,
+        description: description,
+        level: LogLevel.success,
+        category: category,
+        relatedId: relatedId,
+        metadata: metadata,
+      );
+
+  /// حدث تحذير
+  static Future<void> warning(
+    String action,
+    String description, {
+    LogCategory category = LogCategory.system,
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+    String? audioPath,
+  }) =>
+      log(
+        action: action,
+        description: description,
+        level: LogLevel.warning,
+        category: category,
+        relatedId: relatedId,
+        metadata: metadata,
+        audioPath: audioPath,
+      );
+
+  /// حدث خطأ
+  static Future<void> error(
+    String action,
+    String description, {
+    LogCategory category = LogCategory.system,
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+    String? audioPath,
+  }) =>
+      log(
+        action: action,
+        description: description,
+        level: LogLevel.error,
+        category: category,
+        relatedId: relatedId,
+        metadata: metadata,
+        audioPath: audioPath,
+      );
+
+  // ============================================================
+  // ============ قراءة الأحداث ============================
+  // ============================================================
+
+  /// جلب الأحداث مع فلاتر
+  static Future<List<LogEvent>> getLogs({
+    LogLevel? level,
+    LogCategory? category,
+    DateTime? fromDate,
+    DateTime? toDate,
+    String? searchQuery,
+    bool onlyPending = false,
+    int limit = 500,
+    int offset = 0,
+  }) async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+
+      final where = <String>[];
+      final args = <dynamic>[];
+
+      if (level != null) {
+        where.add('level = ?');
+        args.add(level.name);
+      }
+      if (category != null) {
+        where.add('category = ?');
+        args.add(category.name);
+      }
+      if (fromDate != null) {
+        where.add('created_at >= ?');
+        args.add(fromDate.toIso8601String());
+      }
+      if (toDate != null) {
+        where.add('created_at <= ?');
+        args.add(toDate.toIso8601String());
+      }
+      if (onlyPending) {
+        where.add('is_acknowledged = 0');
+        where.add("(level = 'error' OR level = 'warning')");
+      }
+      if (searchQuery != null && searchQuery.trim().isNotEmpty) {
+        where.add('(action LIKE ? OR description LIKE ? OR accountant LIKE ?)');
+        final q = '%${searchQuery.trim()}%';
+        args.add(q);
+        args.add(q);
+        args.add(q);
+      }
+
+      final whereStr = where.isEmpty ? null : where.join(' AND ');
+
+      final r = await db.query(
+        'log_events',
+        where: whereStr,
+        whereArgs: args.isEmpty ? null : args,
+        orderBy: 'created_at DESC',
+        limit: limit,
+        offset: offset,
+      );
+
+      return r.map((e) => LogEvent.fromMap(e)).toList();
+    } catch (e) {
+      debugPrint('❌ [Logger] getLogs error: $e');
+      return [];
+    }
+  }
+
+  /// جلب كل الأحداث (بدون فلتر)
+  static Future<List<LogEvent>> getAllLogs({int limit = 2000}) async {
+    return getLogs(limit: limit);
+  }
+
+  /// عدد التنبيهات المعلقة (للشارة على التبويب)
+  static Future<int> getPendingCount() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.rawQuery('''
+        SELECT COUNT(*) AS cnt
+        FROM log_events
+        WHERE is_acknowledged = 0
+          AND (level = 'error' OR level = 'warning')
+      ''');
+      return (r.first['cnt'] as int?) ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 🆕 عدد التنبيهات لكل فئة (إحصائية)
+  static Future<Map<String, int>> getPendingCountByCategory() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.rawQuery('''
+        SELECT category, COUNT(*) AS cnt
+        FROM log_events
+        WHERE is_acknowledged = 0
+          AND (level = 'error' OR level = 'warning')
+        GROUP BY category
+      ''');
+      final map = <String, int>{};
+      for (final row in r) {
+        map[row['category'] as String? ?? 'system'] =
+            (row['cnt'] as int?) ?? 0;
+      }
+      return map;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // ============================================================
+  // ============ 🆕 الاعتراف بالأحداث ============================
+  // ============================================================
+
+  /// الاعتراف بحدث واحد (إيقاف التنبيه)
+  static Future<bool> acknowledge(int id) async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.update(
+        'log_events',
+        {'is_acknowledged': 1},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (r > 0) {
+        _notifyPendingCount();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('❌ [Logger] acknowledge error: $e');
+      return false;
+    }
+  }
+
+  /// الاعتراف بكل الأحداث المعلقة
+  static Future<int> acknowledgeAll() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.update(
+        'log_events',
+        {'is_acknowledged': 1},
+        where: 'is_acknowledged = 0',
+      );
+      _notifyPendingCount();
+      return r;
+    } catch (e) {
+      debugPrint('❌ [Logger] acknowledgeAll error: $e');
+      return 0;
+    }
+  }
+
+  // ============================================================
+  // ============ إحصائيات ============================
+  // ============================================================
+
+  /// إحصائيات عامة للسجل
+  static Future<Map<String, dynamic>> getStats() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+
+      final total = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
+      final errors = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM log_events WHERE level = 'error'");
+      final warnings = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM log_events WHERE level = 'warning'");
+      final today = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM log_events WHERE created_at >= ?",
+          [DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+              .toIso8601String()]);
+      final pending = await db.rawQuery('''
+        SELECT COUNT(*) AS c FROM log_events
+        WHERE is_acknowledged = 0
+          AND (level = 'error' OR level = 'warning')
+      ''');
+
+      return {
+        'total': (total.first['c'] as int?) ?? 0,
+        'errors': (errors.first['c'] as int?) ?? 0,
+        'warnings': (warnings.first['c'] as int?) ?? 0,
+        'today': (today.first['c'] as int?) ?? 0,
+        'pending': (pending.first['c'] as int?) ?? 0,
+      };
+    } catch (e) {
+      debugPrint('❌ [Logger] getStats error: $e');
+      return {
+        'total': 0,
+        'errors': 0,
+        'warnings': 0,
+        'today': 0,
+        'pending': 0,
+      };
+    }
+  }
+
+  // ============================================================
+  // ============ حذف ============================
+  // ============================================================
+
+  /// حذف حدث واحد
+  static Future<bool> deleteLog(int id) async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      await db.delete('log_events', where: 'id = ?', whereArgs: [id]);
+      _notifyPendingCount();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// حذف كل الأحداث
+  static Future<void> clearAll() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      await db.delete('log_events');
+      _notifyPendingCount();
+    } catch (e) {
+      debugPrint('❌ [Logger] clearAll error: $e');
+    }
+  }
+
+  /// حذف الأحداث الأقدم من X يوم
+  static Future<int> deleteOlderThan(int days) async {
+    try {
+      final cutoff = DateTime.now()
+          .subtract(Duration(days: days))
+          .toIso8601String();
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.delete(
+        'log_events',
+        where: 'created_at < ?',
+        whereArgs: [cutoff],
+      );
+      _notifyPendingCount();
+      return r;
+    } catch (e) {
+      debugPrint('❌ [Logger] deleteOlderThan error: $e');
+      return 0;
+    }
+  }
+
+  // ============================================================
+  // ============ تنظيف تلقائي ============================
+  // ============================================================
+
+  /// يُستدعى تلقائياً بعد كل 50 حدث
+  static Future<void> _autoCleanup() async {
+    try {
+      final days = await getRetentionDays();
+      if (days <= 0) return; // لا تحذف
+
+      // حذف الأقدم من X يوم
+      await deleteOlderThan(days);
+
+      // حذف الأقدم إذا تجاوز الحد الأقصى
+      final db = await DatabaseHelper.instance.database;
+      final count = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
+      final total = (count.first['c'] as int?) ?? 0;
+
+      if (total > _maxLogs) {
+        final excess = total - _maxLogs;
+        await db.rawQuery('''
+          DELETE FROM log_events
+          WHERE id IN (
+            SELECT id FROM log_events
+            ORDER BY created_at ASC
+            LIMIT $excess
+          )
+        ''');
+        _notifyPendingCount();
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Logger] autoCleanup error: $e');
+    }
+  }
+
+  /// تنظيف يدوي (للاستخدام من الإعدادات)
+  static Future<void> cleanup() async {
+    await _autoCleanup();
+  }
+
+  // ============================================================
+  // ============ بث عدد التنبيهات ============================
+  // ============================================================
+
+  static Future<void> _notifyPendingCount() async {
+    try {
+      final count = await getPendingCount();
+      if (!_pendingCountController.isClosed) {
+        _pendingCountController.add(count);
+      }
+    } catch (_) {}
+  }
+
+  /// طلب تحديث عدد التنبيهات يدوياً
+  static Future<void> refreshPendingCount() async {
+    await _notifyPendingCount();
+  }
+
+  // ============================================================
+  // ============ 🆕 دوال مختصرة للأحداث الشائعة ==================
+  // ============================================================
+
+  // ===== العمليات =====
+  static Future<void> logTransactionAdded({
+    required String typeLabel, // دين / سداد / مرتجع
+    required String customerName,
+    required double amount,
+    required String currency,
+    String? code,
+    String? accountant,
+    String? source,
+    String? relatedId,
+    String? audioPath,
+  }) =>
+      success(
+        'إضافة $typeLabel',
+        'تم تسجيل $typeLabel بمبلغ ${amount.toStringAsFixed(0)} $currency للعميل "$customerName"',
+        category: LogCategory.transaction,
+        relatedId: relatedId,
+        metadata: {
+          'customer': customerName,
+          'amount': amount,
+          'currency': currency,
+          'type': typeLabel,
+          'code': code,
+          'accountant': accountant,
+          'source': source,
+          'audio_path': audioPath,
+        },
+      );
+
+  static Future<void> logTransactionDeleted({
+    required String customerName,
+    required double amount,
+    String? code,
+  }) =>
+      warning(
+        'حذف عملية',
+        'تم حذف عملية بمبلغ ${amount.toStringAsFixed(0)} للعميل "$customerName"${code != null ? " (رمز: $code)" : ""}',
+        category: LogCategory.transaction,
+      );
+
+  // ===== العملاء =====
+  static Future<void> logCustomerAdded(String name) => success(
+        'إضافة عميل',
+        'تم إنشاء حساب جديد: "$name"',
+        category: LogCategory.customer,
+      );
+
+  static Future<void> logCustomerDeleted(String name) => warning(
+        'حذف عميل',
+        'تم حذف الحساب: "$name"',
+        category: LogCategory.customer,
+      );
+
+  static Future<void> logCustomerStatusChanged({
+    required String name,
+    required bool isActive,
+  }) =>
+      isActive
+          ? success(
+              'تفعيل حساب',
+              'تم تفعيل حساب "$name"',
+              category: LogCategory.customer,
+            )
+          : warning(
+              'إيقاف حساب',
+              'تم إيقاف حساب "$name"',
+              category: LogCategory.customer,
+            );
+
+  static Future<void> logCustomerLimitExceeded({
+    required String name,
+    required double balance,
+    required double maxBalance,
+  }) =>
+      warning(
+        'تجاوز الحد الأقصى',
+        'العميل "$name" تجاوز الحد الأقصى. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
+        category: LogCategory.customer,
+        metadata: {
+          'customer': name,
+          'balance': balance,
+          'max_balance': maxBalance,
+        },
+      );
+
+  // ===== المزامنة =====
+  static Future<void> logSyncSuccess({
+    int transactionsAdded = 0,
+    int customersAdded = 0,
+    bool hasConflict = false,
+  }) =>
+      success(
+        hasConflict ? 'مزامنة مع تعارض' : 'مزامنة ناجحة',
+        'تمت المزامنة:'
+            '${transactionsAdded > 0 ? " +$transactionsAdded عملية" : ""}'
+            '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
+            '${transactionsAdded == 0 && customersAdded == 0 ? " (لا تغييرات)" : ""}',
+        category: LogCategory.sync,
+        metadata: {
+          'transactions_added': transactionsAdded,
+          'customers_added': customersAdded,
+          'conflict': hasConflict,
+        },
+      );
+
+  static Future<void> logSyncError(String error) => error(
+        'فشل المزامنة',
+        'خطأ: $error',
+        category: LogCategory.sync,
+      );
+
+  static Future<void> logSyncUpload(String fileName) => info(
+        'رفع مزامنة',
+        'تم رفع ملف المزامنة: $fileName',
+        category: LogCategory.sync,
+      );
+
+  static Future<void> logSyncDownload(String fileName) => info(
+        'تنزيل مزامنة',
+        'تم تنزيل ملف المزامنة: $fileName',
+        category: LogCategory.sync,
+      );
+
+  // ===== النسخ الاحتياطي =====
+  static Future<void> logBackupCreated({
+    required int customersCount,
+    required int transactionsCount,
+    bool cloud = false,
+  }) =>
+      success(
+        cloud ? 'نسخة سحابية' : 'نسخة محلية',
+        'تم إنشاء نسخة احتياطية (${cloud ? "Google Drive" : "محلية"}): $customersCount حساب، $transactionsCount عملية',
+        category: LogCategory.backup,
+      );
+
+  static Future<void> logBackupRestored({
+    required int customersAdded,
+    required int transactionsAdded,
+    required String mode,
+  }) =>
+      warning(
+        'استعادة نسخة',
+        'تمت الاستعادة ($mode): +$customersAdded حساب، +$transactionsAdded عملية',
+        category: LogCategory.backup,
+      );
+
+  // ===== الصوت =====
+  static Future<void> logVoiceSuccess({
+    required String text,
+    String? audioPath,
+    String? parsedAction,
+  }) =>
+      success(
+        'تسجيل صوتي ناجح',
+        'تم التعرف على النص: "$text"${parsedAction != null ? " → $parsedAction" : ""}',
+        category: LogCategory.voice,
+        audioPath: audioPath,
+        metadata: {
+          'text': text,
+          'parsed_action': parsedAction,
+        },
+      );
+
+  static Future<void> logVoiceFail({
+    required String reason,
+    required String text,
+    String? audioPath,
+  }) =>
+      warning(
+        'تسجيل صوتي فاشل',
+        'لم يتم التعرف: $reason\nالنص: "$text"',
+        category: LogCategory.voice,
+        audioPath: audioPath,
+        metadata: {
+          'reason': reason,
+          'text': text,
+        },
+      );
+
+  static Future<void> logVoiceEmpty({String? audioPath}) => warning(
+        'تسجيل صوتي فارغ',
+        'لم أسمع شيئاً — اضغط مطولاً وتحدث بوضوح',
+        category: LogCategory.voice,
+        audioPath: audioPath,
+      );
+
+  // ===== الإعدادات =====
+  static Future<void> logSettingChanged({
+    required String settingName,
+    required String oldValue,
+    required String newValue,
+  }) =>
+      info(
+        'تغيير إعداد',
+        '$settingName: "$oldValue" → "$newValue"',
+        category: LogCategory.settings,
+        metadata: {
+          'setting': settingName,
+          'old': oldValue,
+          'new': newValue,
+        },
+      );
+
+  // ===== الأمان =====
+  static Future<void> logSecurityEvent({
+    required String action,
+    required String description,
+  }) =>
+      info(action, description, category: LogCategory.security);
+
+  // ===== الرموز =====
+  static Future<void> logCodeChanged({
+    required String type,
+    required String oldPrefix,
+    required String newPrefix,
+    required int updatedCount,
+  }) =>
+      info(
+        'تغيير رموز',
+        'تغيير بادئة "$type": "$oldPrefix" → "$newPrefix" (تم تحديث $updatedCount عملية)',
+        category: LogCategory.code,
+        metadata: {
+          'type': type,
+          'old': oldPrefix,
+          'new': newPrefix,
+          'updated_count': updatedCount,
+        },
+      );
+}
