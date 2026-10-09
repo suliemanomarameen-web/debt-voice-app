@@ -158,41 +158,31 @@ jobs:
               project.buildDir = "${rootProject.buildDir}/${project.name}"
           }
 
-          subprojects {
-              project.evaluationDependsOn(":app")
-          }
-
           // ═══════════════════════════════════════════════════════════
-          // 🆕 إصلاح تلقائي لمشكلة "Namespace not specified"
-          // يعمل مع أي حزمة لا تحتوي على namespace في build.gradle
-          // (مثل: record, audioplayers, وبعض الحزم القديمة)
+          // 🆕 إصلاح namespace — يجب أن يكون BEFORE evaluationDependsOn
           // ═══════════════════════════════════════════════════════════
           subprojects { subproject ->
-              afterEvaluate {
+              subproject.afterEvaluate {
                   if (subproject.hasProperty('android')) {
                       try {
                           def androidExt = subproject.android
-                          def currentNamespace = null
+                          def currentNs = null
                           try {
-                              currentNamespace = androidExt.namespace
+                              currentNs = androidExt.namespace
                           } catch (Exception e) {
-                              currentNamespace = null
+                              currentNs = null
                           }
 
-                          if (currentNamespace == null || currentNamespace.isEmpty()) {
-                              // محاولة استخراج package من AndroidManifest.xml
-                              def manifestFile = subproject.file('src/main/AndroidManifest.xml')
+                          if (currentNs == null || currentNs.isEmpty()) {
                               def pkgName = null
-
+                              def manifestFile = subproject.file('src/main/AndroidManifest.xml')
                               if (manifestFile.exists()) {
-                                  def manifestText = manifestFile.text
-                                  def matcher = manifestText =~ /package\s*=\s*"([^"]+)"/
+                                  def matcher = manifestFile.text =~ /package\s*=\s*"([^"]+)"/
                                   if (matcher.find()) {
                                       pkgName = matcher.group(1)
                                   }
                               }
 
-                              // fallback: استخدام group أو اسم الحزمة
                               if (pkgName == null || pkgName.isEmpty()) {
                                   def grp = subproject.group?.toString() ?: ''
                                   if (grp.isEmpty() || grp == 'unspecified') {
@@ -210,6 +200,11 @@ jobs:
                       }
                   }
               }
+          }
+
+          // بعد كتلة namespace نضيف evaluationDependsOn
+          subprojects {
+              project.evaluationDependsOn(":app")
           }
 
           tasks.register("clean", Delete) {
