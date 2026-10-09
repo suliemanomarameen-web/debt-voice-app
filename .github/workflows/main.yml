@@ -153,11 +153,63 @@ jobs:
           }
 
           rootProject.buildDir = "../build"
+
           subprojects {
               project.buildDir = "${rootProject.buildDir}/${project.name}"
           }
+
           subprojects {
               project.evaluationDependsOn(":app")
+          }
+
+          // ═══════════════════════════════════════════════════════════
+          // 🆕 إصلاح تلقائي لمشكلة "Namespace not specified"
+          // يعمل مع أي حزمة لا تحتوي على namespace في build.gradle
+          // (مثل: record, audioplayers, وبعض الحزم القديمة)
+          // ═══════════════════════════════════════════════════════════
+          subprojects { subproject ->
+              afterEvaluate {
+                  if (subproject.hasProperty('android')) {
+                      try {
+                          def androidExt = subproject.android
+                          def currentNamespace = null
+                          try {
+                              currentNamespace = androidExt.namespace
+                          } catch (Exception e) {
+                              currentNamespace = null
+                          }
+
+                          if (currentNamespace == null || currentNamespace.isEmpty()) {
+                              // محاولة استخراج package من AndroidManifest.xml
+                              def manifestFile = subproject.file('src/main/AndroidManifest.xml')
+                              def pkgName = null
+
+                              if (manifestFile.exists()) {
+                                  def manifestText = manifestFile.text
+                                  def matcher = manifestText =~ /package\s*=\s*"([^"]+)"/
+                                  if (matcher.find()) {
+                                      pkgName = matcher.group(1)
+                                  }
+                              }
+
+                              // fallback: استخدام group أو اسم الحزمة
+                              if (pkgName == null || pkgName.isEmpty()) {
+                                  def grp = subproject.group?.toString() ?: ''
+                                  if (grp.isEmpty() || grp == 'unspecified') {
+                                      pkgName = "com.${subproject.name.replaceAll('[^a-zA-Z0-9]', '')}"
+                                  } else {
+                                      pkgName = grp
+                                  }
+                              }
+
+                              androidExt.namespace = pkgName
+                              println "✅ [Auto-Namespace] Set '${pkgName}' for :${subproject.name}"
+                          }
+                      } catch (Exception e) {
+                          println "⚠️ [Auto-Namespace] Failed for :${subproject.name} — ${e.message}"
+                      }
+                  }
+              }
           }
 
           tasks.register("clean", Delete) {
@@ -187,7 +239,6 @@ jobs:
 
       - name: Fix SDK versions and namespace
         run: |
-          # ⚡ استبدال السطر بالكامل — يعمل مع أي صيغة
           sed -i -E 's/^[[:space:]]*compileSdk.*$/        compileSdk = 35/' android/app/build.gradle
           sed -i -E 's/^[[:space:]]*targetSdk.*$/        targetSdk = 35/' android/app/build.gradle
           sed -i -E 's/^[[:space:]]*minSdk.*$/        minSdk = 23/' android/app/build.gradle
@@ -207,7 +258,6 @@ jobs:
           with open(gradle_file, 'r') as f:
               content = f.read()
 
-          # 1) أضف keystoreProperties بعد plugins block
           plugins_match = re.search(r'plugins\s*\{.*?\n\}', content, re.DOTALL)
           if plugins_match:
               plugins_end = plugins_match.end()
@@ -221,7 +271,6 @@ jobs:
           '''
               content = content[:plugins_end] + keystore_def + content[plugins_end:]
 
-          # 2) أضف signingConfigs داخل android { }
           android_match = re.search(r'android\s*\{', content)
           if android_match:
               insert_at = android_match.end()
@@ -237,7 +286,6 @@ jobs:
               '''
               content = content[:insert_at] + signing_block + content[insert_at:]
 
-          # 3) أضف signingConfig إلى release build type
           build_types_match = re.search(r'buildTypes\s*\{', content)
           if build_types_match:
               start = build_types_match.end()
