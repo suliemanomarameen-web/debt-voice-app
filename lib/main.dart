@@ -144,7 +144,12 @@ void _setupOverlayListener() {
 
       final customer = await db.findExactCustomer(parsed.customerName);
       if (customer != null) {
-        await _saveTransactionFor(customer, parsed, db);
+        await _saveTransactionFor(
+          customer,
+          parsed,
+          db,
+          source: 'overlay', // 🆕 من الزر العائم
+        );
         return;
       }
       final partial = await db.findCustomersContaining(parsed.customerName);
@@ -163,13 +168,22 @@ void _setupOverlayListener() {
         );
         return;
       }
-      await _saveTransactionFor(partial.first, parsed, db);
+      await _saveTransactionFor(
+        partial.first,
+        parsed,
+        db,
+        source: 'overlay', // 🆕 من الزر العائم
+      );
     }
   });
 }
 
 Future<void> _saveTransactionFor(
-    Customer customer, dynamic parsed, DatabaseHelper db) async {
+  Customer customer,
+  dynamic parsed,
+  DatabaseHelper db, {
+  required String source, // 🆕
+}) async {
   final normalizedType = CodeService.normalizeType(parsed.intent);
   final storedType = (normalizedType == 'return') ? 'payment' : normalizedType;
 
@@ -194,7 +208,7 @@ Future<void> _saveTransactionFor(
     debugPrint('Duplicate check error: $e');
   }
 
-  // 🆕 جلب اسم المحاسب
+  // جلب اسم المحاسب
   String? accountant;
   try {
     accountant = await AccountantService.getAccountantName();
@@ -213,7 +227,8 @@ Future<void> _saveTransactionFor(
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
     code: code,
-    accountant: accountant, // 🆕
+    accountant: accountant,
+    source: source, // 🆕
     amount: parsed.amount,
     currency: parsed.currency,
     type: storedType,
