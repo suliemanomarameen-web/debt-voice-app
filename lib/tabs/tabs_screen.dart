@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'debts_tab.dart';
 import 'customers_tab.dart';
 import 'transactions_tab.dart';
+import 'logs_tab.dart';
 import 'settings_tab.dart';
 
 class TabsScreen extends StatefulWidget {
@@ -23,8 +24,8 @@ class _TabsScreenState extends State<TabsScreen> {
           children: [
             const DebtsTab(),
             const CustomersTab(),
-            // 🆕 مفتاح لتبويب العمليات
             TransactionsTab(key: _transactionsKey),
+            LogsTab(key: _logsKey), // 🆕 تبويب السجل
             const SettingsTab(),
           ],
         ),
@@ -33,7 +34,7 @@ class _TabsScreenState extends State<TabsScreen> {
           onDestinationSelected: (i) {
             setState(() => _currentIndex = i);
 
-            // 🆕 عندما يختار "العمليات" → حدّثها
+            // تحديث تبويب العمليات عند اختياره
             if (i == 2) {
               Future.delayed(const Duration(milliseconds: 100), () {
                 final state = _transactionsKey.currentState;
@@ -42,24 +43,39 @@ class _TabsScreenState extends State<TabsScreen> {
                 }
               });
             }
+            // تحديث تبويب السجل عند اختياره
+            if (i == 3) {
+              Future.delayed(const Duration(milliseconds: 100), () {
+                final state = _logsKey.currentState;
+                if (state != null && state.mounted) {
+                  state.reload();
+                }
+              });
+            }
           },
-          destinations: const [
-            NavigationDestination(
+          destinations: [
+            const NavigationDestination(
               icon: Icon(Icons.book_outlined),
               selectedIcon: Icon(Icons.book),
               label: 'دفتر الديون',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.people_outline),
               selectedIcon: Icon(Icons.people),
               label: 'الحسابات',
             ),
-            NavigationDestination(
+            const NavigationDestination(
               icon: Icon(Icons.receipt_long_outlined),
               selectedIcon: Icon(Icons.receipt_long),
               label: 'العمليات',
             ),
-            NavigationDestination(
+            // 🆕 تبويب السجل مع شارة التنبيهات
+            const NavigationDestination(
+              icon: LogsTabIcon(selected: false),
+              selectedIcon: LogsTabIcon(selected: true),
+              label: 'السجل',
+            ),
+            const NavigationDestination(
               icon: Icon(Icons.settings_outlined),
               selectedIcon: Icon(Icons.settings),
               label: 'الإعدادات',
@@ -74,3 +90,6 @@ class _TabsScreenState extends State<TabsScreen> {
 /// 🆕 مفتاح عالمي لتبويب العمليات
 final GlobalKey<TransactionsTabState> _transactionsKey =
     GlobalKey<TransactionsTabState>();
+
+/// 🆕 مفتاح عالمي لتبويب السجل
+final GlobalKey<LogsTabState> _logsKey = GlobalKey<LogsTabState>();
