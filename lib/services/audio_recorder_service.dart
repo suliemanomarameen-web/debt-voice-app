@@ -6,32 +6,24 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// خدمة تسجيل الصوت وإعادة تشغيله
-/// - تُسجّل الصوت إلى ملف .m4a
-/// - تُشغّل التسجيلات المحفوظة
-/// - تدير التنظيف التلقائي
 class AudioRecorderService {
   static final AudioRecorderService _instance =
       AudioRecorderService._internal();
   factory AudioRecorderService() => _instance;
   AudioRecorderService._internal();
 
-  // ========== المسجّل ==========
-  final AudioRecorder _recorder = AudioRecorder();
-
-  // ========== المشغّل ==========
+  // ⚠️ record 4.x يستخدم Record وليس AudioRecorder
+  final Record _recorder = Record();
   final AudioPlayer _player = AudioPlayer();
 
-  // ========== الحالة ==========
   bool _isRecording = false;
   String? _currentRecordingPath;
   DateTime? _recordingStartTime;
 
-  // ========== مفاتيح الإعدادات ==========
   static const String _keyRetentionDays = 'voice_retention_days';
-  static const int _defaultRetentionDays = 30; // أيام
+  static const int _defaultRetentionDays = 30;
   static const String _folderName = 'voice_recordings';
 
-  // ========== getters ==========
   bool get isRecording => _isRecording;
   String? get currentRecordingPath => _currentRecordingPath;
   Duration get recordingDuration {
@@ -39,20 +31,15 @@ class AudioRecorderService {
     return DateTime.now().difference(_recordingStartTime!);
   }
 
-  // ============================================================
-  // ============ 🆕 التهيئة ============================
-  // ============================================================
+  // ========== التهيئة ==========
   static Future<void> init() async {
     try {
-      // إنشاء المجلد
-      final dir = await _getRecordingsDir();
-      debugPrint('✅ [Audio] Recordings dir: ${dir.path}');
+      await _getRecordingsDir();
     } catch (e) {
       debugPrint('❌ [Audio] init error: $e');
     }
   }
 
-  /// 🆕 جلب مجلد التسجيلات (وإنشاؤه إذا لم يوجد)
   static Future<Directory> _getRecordingsDir() async {
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory('${docs.path}/$_folderName');
@@ -62,26 +49,19 @@ class AudioRecorderService {
     return dir;
   }
 
-  // ============================================================
-  // ============ 🆕 بدء التسجيل ====================
-  // ============================================================
-
-  /// يبدأ التسجيل. يعيد `true` إذا نجح.
+  // ========== بدء التسجيل ==========
   Future<bool> startRecording() async {
     try {
-      // إذا كان هناك تسجيل جارٍ → أوقفه أولاً
       if (_isRecording) {
         await stopRecording();
       }
 
-      // التحقق من الإذن
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) {
         debugPrint('❌ [Audio] No microphone permission');
         return false;
       }
 
-      // تجهيز مسار الملف
       final dir = await _getRecordingsDir();
       final timestamp = DateTime.now()
           .toIso8601String()
@@ -89,14 +69,12 @@ class AudioRecorderService {
           .replaceAll('.', '-');
       final path = '${dir.path}/rec_$timestamp.m4a';
 
-      // بدء التسجيل
+      // ⚠️ record 4.x API: path positional + named config
       await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 64000,
-          sampleRate: 44100,
-        ),
-        path: path,
+        path,
+        encoder: AudioEncoder.aacLc,
+        bitRate: 64000,
+        sampleRate: 44100,
       );
 
       _isRecording = true;
@@ -114,11 +92,7 @@ class AudioRecorderService {
     }
   }
 
-  // ============================================================
-  // ============ 🆕 إيقاف التسجيل ====================
-  // ============================================================
-
-  /// يوقف التسجيل ويعيد مسار الملف (أو `null` عند الفشل)
+  // ========== إيقاف التسجيل ==========
   Future<String?> stopRecording() async {
     try {
       if (!_isRecording) return null;
@@ -135,19 +109,15 @@ class AudioRecorderService {
         if (await file.exists()) {
           final size = await file.length();
           debugPrint(
-              '✅ [Audio] Recording stopped: $resultPath (${_formatBytes(size)})');
+              '✅ [Audio] Stopped: $resultPath (${_formatBytes(size)})');
 
-          // إذا كان الملف صغيراً جداً (< 2KB) → احذفه
           if (size < 2048) {
-            debugPrint('⚠️ [Audio] File too small, deleting');
             await file.delete();
             return null;
           }
-
           return resultPath;
         }
       }
-
       return null;
     } catch (e) {
       debugPrint('❌ [Audio] stopRecording error: $e');
@@ -158,7 +128,6 @@ class AudioRecorderService {
     }
   }
 
-  /// إلغاء التسجيل (بدون حفظ)
   Future<void> cancelRecording() async {
     try {
       if (_isRecording) {
@@ -169,10 +138,7 @@ class AudioRecorderService {
 
         if (path != null) {
           final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-            debugPrint('🗑️ [Audio] Recording cancelled & deleted');
-          }
+          if (await file.exists()) await file.delete();
         }
       }
     } catch (e) {
@@ -180,11 +146,7 @@ class AudioRecorderService {
     }
   }
 
-  // ============================================================
-  // ============ 🆕 تشغيل تسجيل ====================
-  // ============================================================
-
-  /// يبدأ تشغيل ملف صوتي. يعيد `true` إذا نجح.
+  // ========== تشغيل ==========
   Future<bool> play(String filePath) async {
     try {
       final file = File(filePath);
@@ -193,9 +155,7 @@ class AudioRecorderService {
         return false;
       }
 
-      // إيقاف أي تشغيل جارٍ
       await _player.stop();
-
       await _player.play(DeviceFileSource(filePath));
       debugPrint('▶️ [Audio] Playing: $filePath');
       return true;
@@ -205,39 +165,26 @@ class AudioRecorderService {
     }
   }
 
-  /// إيقاف التشغيل
   Future<void> stopPlayback() async {
     try {
       await _player.stop();
     } catch (_) {}
   }
 
-  /// إيقاف كل شيء (تسجيل + تشغيل)
   Future<void> stopAll() async {
     await stopPlayback();
-    if (_isRecording) {
-      await stopRecording();
-    }
+    if (_isRecording) await stopRecording();
   }
 
-  // ============================================================
-  // ============ Stream للتشغيل ====================
-  // ============================================================
+  // ========== Streams ==========
+  /// 🆕 Stream<bool> - true عندما يكون التشغيل نشطاً
+  Stream<bool> get isPlayingStream => _player.onPlayerStateChanged
+      .map((s) => s == PlayerState.playing);
 
-  /// حالة المشغّل (لتحديث الواجهة)
-  Stream<PlayerState> get playerStateStream => _player.onPlayerStateChanged;
+  Stream<bool> get isCompletedStream => _player.onPlayerStateChanged
+      .map((s) => s == PlayerState.completed || s == PlayerState.stopped);
 
-  /// موضع التشغيل الحالي
-  Stream<Duration> get playerPositionStream => _player.onPositionChanged;
-
-  /// مدة الملف الكامل
-  Stream<Duration> get playerDurationStream => _player.onDurationChanged;
-
-  // ============================================================
-  // ============ معلومات ملف ====================
-  // ============================================================
-
-  /// التحقق من وجود ملف
+  // ========== معلومات ==========
   static Future<bool> fileExists(String path) async {
     try {
       return await File(path).exists();
@@ -246,7 +193,6 @@ class AudioRecorderService {
     }
   }
 
-  /// حجم الملف (بايت)
   static Future<int> getFileSize(String path) async {
     try {
       final f = File(path);
@@ -257,7 +203,6 @@ class AudioRecorderService {
     }
   }
 
-  /// حذف ملف
   static Future<bool> deleteFile(String path) async {
     try {
       final f = File(path);
@@ -269,23 +214,17 @@ class AudioRecorderService {
     return false;
   }
 
-  // ============================================================
-  // ============ 🆕 التنظيف ====================
-  // ============================================================
-
-  /// جلب عدد الأيام المحددة للاحتفاظ (0 = لا تحذف)
+  // ========== التنظيف ==========
   static Future<int> getRetentionDays() async {
     final sp = await SharedPreferences.getInstance();
     return sp.getInt(_keyRetentionDays) ?? _defaultRetentionDays;
   }
 
-  /// تعيين عدد الأيام (0 = لا تحذف)
   static Future<void> setRetentionDays(int days) async {
     final sp = await SharedPreferences.getInstance();
     await sp.setInt(_keyRetentionDays, days);
   }
 
-  /// حذف التسجيلات الأقدم من X يوم
   static Future<int> cleanupOldRecordings() async {
     try {
       final days = await getRetentionDays();
@@ -293,7 +232,6 @@ class AudioRecorderService {
 
       final dir = await _getRecordingsDir();
       final files = await dir.list().toList();
-
       final cutoff = DateTime.now().subtract(Duration(days: days));
       int deleted = 0;
 
@@ -307,16 +245,12 @@ class AudioRecorderService {
           }
         } catch (_) {}
       }
-
-      debugPrint('🗑️ [Audio] Cleanup: deleted $deleted files');
       return deleted;
     } catch (e) {
-      debugPrint('❌ [Audio] cleanupOldRecordings error: $e');
       return 0;
     }
   }
 
-  /// حذف كل التسجيلات
   static Future<int> deleteAllRecordings() async {
     try {
       final dir = await _getRecordingsDir();
@@ -335,7 +269,6 @@ class AudioRecorderService {
     }
   }
 
-  /// حجم كل التسجيلات (بايت)
   static Future<int> getTotalSize() async {
     try {
       final dir = await _getRecordingsDir();
@@ -353,7 +286,6 @@ class AudioRecorderService {
     }
   }
 
-  /// عدد التسجيلات
   static Future<int> getCount() async {
     try {
       final dir = await _getRecordingsDir();
@@ -364,11 +296,6 @@ class AudioRecorderService {
     }
   }
 
-  // ============================================================
-  // ============ أدوات ====================
-  // ============================================================
-
-  /// تنظيف موارد
   Future<void> dispose() async {
     try {
       await _player.dispose();
@@ -384,6 +311,5 @@ class AudioRecorderService {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
-  /// تحويل بايت إلى نص (للعرض في الواجهة)
   static String formatSize(int bytes) => _formatBytes(bytes);
 }
