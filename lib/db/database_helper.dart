@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 7, // 🆕 رُفع من 6 إلى 7
+      version: 8, // 🆕 رُفع من 7 إلى 8
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -48,6 +48,7 @@ class DatabaseHelper {
         customer_id INTEGER NOT NULL,
         code TEXT UNIQUE,
         accountant TEXT,
+        source TEXT,
         amount REAL NOT NULL,
         currency TEXT DEFAULT 'YER',
         type TEXT NOT NULL,
@@ -112,17 +113,22 @@ class DatabaseHelper {
         debugPrint('❌ [DB] Failed to add is_active column: $e');
       }
     }
-
-    // 🆕 v7: تحقق آمن من وجود كل الأعمدة (حل مشكلة الترقيات الفاشلة)
     if (oldV < 7) {
       await _ensureAllColumns(db);
     }
+    if (oldV < 8) {
+      try {
+        await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT");
+        debugPrint('✅ [DB] Added source column (v8)');
+      } catch (e) {
+        debugPrint('❌ [DB] Failed to add source column: $e');
+      }
+    }
   }
 
-  /// 🆕 دالة آمنة تتأكد من وجود كل الأعمدة المطلوبة
+  /// دالة آمنة تتأكد من وجود كل الأعمدة المطلوبة
   Future<void> _ensureAllColumns(Database db) async {
     try {
-      // جلب معلومات الجدول
       final customersInfo = await db.rawQuery('PRAGMA table_info(customers)');
       final customersCols =
           customersInfo.map((c) => c['name'] as String).toSet();
@@ -132,49 +138,38 @@ class DatabaseHelper {
       final transactionsCols =
           transactionsInfo.map((c) => c['name'] as String).toSet();
 
-      // التأكد من أعمدة customers
       if (!customersCols.contains('is_active')) {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
-        debugPrint('✅ [DB v7] Added is_active to customers');
       }
       if (!customersCols.contains('max_balance')) {
-        await db.execute(
-            "ALTER TABLE customers ADD COLUMN max_balance REAL");
-        debugPrint('✅ [DB v7] Added max_balance to customers');
+        await db.execute("ALTER TABLE customers ADD COLUMN max_balance REAL");
       }
       if (!customersCols.contains('account_type')) {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN account_type TEXT DEFAULT 'customer'");
-        debugPrint('✅ [DB v7] Added account_type to customers');
       }
       if (!customersCols.contains('note')) {
         await db.execute("ALTER TABLE customers ADD COLUMN note TEXT");
-        debugPrint('✅ [DB v7] Added note to customers');
       }
       if (!customersCols.contains('photo_path')) {
-        await db.execute(
-            "ALTER TABLE customers ADD COLUMN photo_path TEXT");
-        debugPrint('✅ [DB v7] Added photo_path to customers');
+        await db.execute("ALTER TABLE customers ADD COLUMN photo_path TEXT");
       }
       if (!customersCols.contains('category')) {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN category TEXT DEFAULT 'normal'");
-        debugPrint('✅ [DB v7] Added category to customers');
       }
-
-      // التأكد من أعمدة transactions
       if (!transactionsCols.contains('code')) {
         await db.execute("ALTER TABLE transactions ADD COLUMN code TEXT");
-        debugPrint('✅ [DB v7] Added code to transactions');
       }
       if (!transactionsCols.contains('accountant')) {
         await db.execute(
             "ALTER TABLE transactions ADD COLUMN accountant TEXT");
-        debugPrint('✅ [DB v7] Added accountant to transactions');
+      }
+      if (!transactionsCols.contains('source')) {
+        await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT");
       }
 
-      // التأكد من جدول used_codes
       await db.execute('''
         CREATE TABLE IF NOT EXISTS used_codes(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,9 +179,9 @@ class DatabaseHelper {
         )
       ''');
 
-      debugPrint('✅ [DB v7] All columns verified');
+      debugPrint('✅ [DB] All columns verified');
     } catch (e) {
-      debugPrint('❌ [DB v7] Error ensuring columns: $e');
+      debugPrint('❌ [DB] Error ensuring columns: $e');
     }
   }
 
@@ -232,7 +227,6 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  /// 🆕 العملاء النشطون (مع fallback آمن)
   Future<List<Customer>> activeCustomers() async {
     final db = await database;
     try {
@@ -242,12 +236,10 @@ class DatabaseHelper {
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
       debugPrint('⚠️ activeCustomers error, fallback to allCustomers: $e');
-      // Fallback: ارجع كل العملاء
       return allCustomers();
     }
   }
 
-  /// 🆕 العملاء الموقوفون
   Future<List<Customer>> inactiveCustomers() async {
     final db = await database;
     try {
@@ -293,7 +285,6 @@ class DatabaseHelper {
     return r.first['id'] as int?;
   }
 
-  /// 🆕 تغيير حالة الحساب (مع fallback آمن)
   Future<int> setCustomerActive(int id, bool active) async {
     final db = await database;
     try {
@@ -307,7 +298,6 @@ class DatabaseHelper {
       return r;
     } catch (e) {
       debugPrint('❌ setCustomerActive error: $e');
-      // حاول إضافة العمود ثم أعد المحاولة
       try {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
@@ -558,6 +548,28 @@ class DatabaseHelper {
     } catch (e) {
       debugPrint('getAllAccountants error: $e');
       return [];
+    }
+  }
+
+  // ============ إحصائيات المصادر ============
+  /// 🆕 عدد العمليات حسب كل مصدر
+  Future<Map<String, int>> getSourceStats() async {
+    final db = await database;
+    try {
+      final r = await db.rawQuery('''
+        SELECT COALESCE(source, 'unknown') AS src, COUNT(*) AS cnt
+        FROM transactions
+        GROUP BY src
+      ''');
+      final stats = <String, int>{};
+      for (final row in r) {
+        final src = row['src'] as String? ?? 'unknown';
+        stats[src] = (row['cnt'] as int?) ?? 0;
+      }
+      return stats;
+    } catch (e) {
+      debugPrint('getSourceStats error: $e');
+      return {};
     }
   }
 
