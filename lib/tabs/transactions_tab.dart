@@ -16,7 +16,7 @@ enum TxDateFilter {
 class TransactionsTab extends StatefulWidget {
   const TransactionsTab({super.key});
 
-  /// 🆕 مفتاح للوصول من خارج الـ Widget
+  /// مفتاح للوصول من خارج الـ Widget
   static final GlobalKey<TransactionsTabState> globalKey =
       GlobalKey<TransactionsTabState>();
 
@@ -40,6 +40,9 @@ class TransactionsTabState extends State<TransactionsTab> {
   String? _accountantFilter;
   List<String> _availableAccountants = [];
 
+  // 🆕 فلتر المصدر
+  String? _sourceFilter;
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +55,6 @@ class TransactionsTabState extends State<TransactionsTab> {
     super.dispose();
   }
 
-  /// 🆕 دالة عامة للتحديث من الخارج
   Future<void> reload() async {
     await _load();
   }
@@ -114,6 +116,7 @@ class TransactionsTabState extends State<TransactionsTab> {
     final query = _searchQuery.trim().toLowerCase();
 
     _filtered = _allTx.where((entry) {
+      // فلتر التاريخ
       if (from != null || to != null) {
         try {
           final tDate = DateTime.parse(entry.value.createdAt);
@@ -122,18 +125,29 @@ class TransactionsTabState extends State<TransactionsTab> {
         } catch (_) {}
       }
 
+      // فلتر المحاسب
       if (_accountantFilter != null) {
         final acc = entry.value.accountant ?? '';
         if (acc != _accountantFilter) return false;
       }
 
+      // 🆕 فلتر المصدر
+      if (_sourceFilter != null) {
+        final src = entry.value.source ?? 'manual';
+        if (src != _sourceFilter) return false;
+      }
+
+      // البحث
       if (query.isNotEmpty) {
         final code = (entry.value.code ?? '').toLowerCase();
         final name = entry.key.name.toLowerCase();
         final acc = (entry.value.accountant ?? '').toLowerCase();
+        final srcLabel =
+            Transaction.sourceInfo(entry.value.source).label.toLowerCase();
         if (!code.contains(query) &&
             !name.contains(query) &&
-            !acc.contains(query)) {
+            !acc.contains(query) &&
+            !srcLabel.contains(query)) {
           return false;
         }
       }
@@ -185,6 +199,7 @@ class TransactionsTabState extends State<TransactionsTab> {
     });
   }
 
+  // ============ نافذة فلتر المحاسب ============
   Future<void> _showAccountantFilterSheet() async {
     if (_availableAccountants.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -244,6 +259,78 @@ class TransactionsTabState extends State<TransactionsTab> {
         _accountantFilter = null;
       } else {
         _accountantFilter = result;
+      }
+      _applyFilters();
+    });
+  }
+
+  // ============ 🆕 نافذة فلتر المصدر ============
+  Future<void> _showSourceFilterSheet() async {
+    final sources = ['voice', 'overlay', 'manual', 'customer_screen'];
+
+    final result = await showModalBottomSheet<String?>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'فلترة حسب المصدر',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              // الكل
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('الكل'),
+                trailing: _sourceFilter == null
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(context, '__ALL__'),
+              ),
+              const Divider(height: 1),
+              // المصادر
+              ...sources.map((key) {
+                final info = Transaction.sourceInfo(key);
+                final selected = _sourceFilter == key;
+                final color = Color(info.color);
+
+                return ListTile(
+                  leading: Text(
+                    info.emoji,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  title: Text(
+                    info.label,
+                    style: TextStyle(
+                      color: selected ? color : null,
+                      fontWeight:
+                          selected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: selected
+                      ? Icon(Icons.check, color: color)
+                      : null,
+                  onTap: () => Navigator.pop(context, key),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      if (result == '__ALL__') {
+        _sourceFilter = null;
+      } else {
+        _sourceFilter = result;
       }
       _applyFilters();
     });
@@ -328,6 +415,7 @@ class TransactionsTabState extends State<TransactionsTab> {
     );
   }
 
+  // ============ الإحصائيات ============
   double get _totalDebt {
     double sum = 0;
     for (final e in _filtered) {
@@ -359,7 +447,9 @@ class TransactionsTabState extends State<TransactionsTab> {
   }
 
   bool get _hasActiveFilter =>
-      _dateFilter != TxDateFilter.all || _accountantFilter != null;
+      _dateFilter != TxDateFilter.all ||
+      _accountantFilter != null ||
+      _sourceFilter != null;
 
   @override
   Widget build(BuildContext context) {
@@ -370,6 +460,22 @@ class TransactionsTabState extends State<TransactionsTab> {
       appBar: AppBar(
         title: const Text('العمليات'),
         actions: [
+          // 🆕 فلتر المصدر
+          IconButton(
+            icon: Icon(
+              _sourceFilter == null
+                  ? Icons.input_outlined
+                  : Icons.input,
+              color: _sourceFilter == null
+                  ? null
+                  : theme.colorScheme.primary,
+            ),
+            tooltip: _sourceFilter == null
+                ? 'فلترة حسب المصدر'
+                : 'المصدر: ${Transaction.sourceInfo(_sourceFilter).label}',
+            onPressed: _showSourceFilterSheet,
+          ),
+          // فلتر المحاسب
           IconButton(
             icon: Icon(
               _accountantFilter == null
@@ -384,6 +490,7 @@ class TransactionsTabState extends State<TransactionsTab> {
                 : 'المحاسب: $_accountantFilter',
             onPressed: _showAccountantFilterSheet,
           ),
+          // فلتر التاريخ
           IconButton(
             icon: Icon(
               _dateFilter == TxDateFilter.all
@@ -406,12 +513,14 @@ class TransactionsTabState extends State<TransactionsTab> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                // ===== شريط البحث =====
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: TextField(
                     controller: searchCtrl,
                     decoration: InputDecoration(
-                      hintText: 'ابحث برمز العملية أو اسم العميل أو المحاسب...',
+                      hintText:
+                          'ابحث برمز العملية أو اسم العميل أو المحاسب...',
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: _searchQuery.isNotEmpty
                           ? IconButton(
@@ -440,6 +549,8 @@ class TransactionsTabState extends State<TransactionsTab> {
                     },
                   ),
                 ),
+
+                // ===== شريط الفلاتر النشطة =====
                 if (_hasActiveFilter)
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -486,6 +597,23 @@ class TransactionsTabState extends State<TransactionsTab> {
                                     });
                                   },
                                 ),
+                              // 🆕 شريحة المصدر
+                              if (_sourceFilter != null)
+                                _activeChip(
+                                  icon: Icons.input,
+                                  label: Transaction.sourceInfo(_sourceFilter)
+                                      .label,
+                                  theme: theme,
+                                  color: Color(
+                                      Transaction.sourceInfo(_sourceFilter)
+                                          .color),
+                                  onRemove: () {
+                                    setState(() {
+                                      _sourceFilter = null;
+                                      _applyFilters();
+                                    });
+                                  },
+                                ),
                             ],
                           ),
                         ),
@@ -496,41 +624,34 @@ class TransactionsTabState extends State<TransactionsTab> {
                       ],
                     ),
                   ),
+
                 const SizedBox(height: 10),
+
+                // ===== الإحصائيات =====
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Row(
                     children: [
                       Expanded(
-                        child: _statCard(
-                          'ديون',
-                          _totalDebt,
-                          Colors.red,
-                          isDark,
-                        ),
+                        child: _statCard('ديون', _totalDebt, Colors.red, isDark),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child:
+                            _statCard('سداد', _totalPaid, Colors.green, isDark),
                       ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: _statCard(
-                          'سداد',
-                          _totalPaid,
-                          Colors.green,
-                          isDark,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _statCard(
-                          'مرتجع',
-                          _totalReturn,
-                          Colors.orange,
-                          isDark,
-                        ),
+                            'مرتجع', _totalReturn, Colors.orange, isDark),
                       ),
                     ],
                   ),
                 ),
+
                 const SizedBox(height: 10),
+
+                // ===== قائمة العمليات =====
                 Expanded(
                   child: _filtered.isEmpty
                       ? Center(
@@ -560,6 +681,10 @@ class TransactionsTabState extends State<TransactionsTab> {
                             final isDebt = t.type == 'debt';
                             final isReturn = t.items.startsWith('مرتجع');
 
+                            // 🆕 معلومات المصدر
+                            final srcInfo = Transaction.sourceInfo(t.source);
+                            final srcColor = Color(srcInfo.color);
+
                             return Card(
                               margin: const EdgeInsets.symmetric(
                                   horizontal: 4, vertical: 4),
@@ -585,6 +710,7 @@ class TransactionsTabState extends State<TransactionsTab> {
                                             fontWeight: FontWeight.bold),
                                       ),
                                     ),
+                                    // اسم المحاسب
                                     if (t.accountant != null &&
                                         t.accountant!.isNotEmpty)
                                       Container(
@@ -621,6 +747,27 @@ class TransactionsTabState extends State<TransactionsTab> {
                                           ],
                                         ),
                                       ),
+                                    // 🆕 المصدر (إيموجي فقط)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      margin:
+                                          const EdgeInsets.only(right: 4),
+                                      decoration: BoxDecoration(
+                                        color: srcColor.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: srcColor.withOpacity(0.4),
+                                          width: 0.5,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        srcInfo.emoji,
+                                        style:
+                                            const TextStyle(fontSize: 12),
+                                      ),
+                                    ),
+                                    // الرمز
                                     if (t.code != null && t.code!.isNotEmpty)
                                       Container(
                                         padding: const EdgeInsets.symmetric(
