@@ -3,6 +3,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' hide Transaction;
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../models/log_event.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -21,7 +22,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 8, // 🆕 رُفع من 7 إلى 8
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -65,6 +66,27 @@ class DatabaseHelper {
         created_at TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE TABLE log_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        description TEXT NOT NULL,
+        level TEXT NOT NULL,
+        category TEXT NOT NULL,
+        accountant TEXT,
+        related_id TEXT,
+        metadata TEXT,
+        audio_path TEXT,
+        is_acknowledged INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE settings(
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    ''');
   }
 
   Future _upgrade(Database db, int oldV, int newV) async {
@@ -99,19 +121,13 @@ class DatabaseHelper {
       try {
         await db.execute(
             "ALTER TABLE transactions ADD COLUMN accountant TEXT");
-        debugPrint('✅ [DB] Added accountant column (v5)');
-      } catch (e) {
-        debugPrint('❌ [DB] Failed to add accountant column: $e');
-      }
+      } catch (_) {}
     }
     if (oldV < 6) {
       try {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
-        debugPrint('✅ [DB] Added is_active column (v6)');
-      } catch (e) {
-        debugPrint('❌ [DB] Failed to add is_active column: $e');
-      }
+      } catch (_) {}
     }
     if (oldV < 7) {
       await _ensureAllColumns(db);
@@ -119,14 +135,35 @@ class DatabaseHelper {
     if (oldV < 8) {
       try {
         await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT");
-        debugPrint('✅ [DB] Added source column (v8)');
-      } catch (e) {
-        debugPrint('❌ [DB] Failed to add source column: $e');
-      }
+      } catch (_) {}
+    }
+    if (oldV < 9) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS log_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            description TEXT NOT NULL,
+            level TEXT NOT NULL,
+            category TEXT NOT NULL,
+            accountant TEXT,
+            related_id TEXT,
+            metadata TEXT,
+            audio_path TEXT,
+            is_acknowledged INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS settings(
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )
+        ''');
+      } catch (_) {}
     }
   }
 
-  /// دالة آمنة تتأكد من وجود كل الأعمدة المطلوبة
   Future<void> _ensureAllColumns(Database db) async {
     try {
       final customersInfo = await db.rawQuery('PRAGMA table_info(customers)');
@@ -144,20 +181,6 @@ class DatabaseHelper {
       }
       if (!customersCols.contains('max_balance')) {
         await db.execute("ALTER TABLE customers ADD COLUMN max_balance REAL");
-      }
-      if (!customersCols.contains('account_type')) {
-        await db.execute(
-            "ALTER TABLE customers ADD COLUMN account_type TEXT DEFAULT 'customer'");
-      }
-      if (!customersCols.contains('note')) {
-        await db.execute("ALTER TABLE customers ADD COLUMN note TEXT");
-      }
-      if (!customersCols.contains('photo_path')) {
-        await db.execute("ALTER TABLE customers ADD COLUMN photo_path TEXT");
-      }
-      if (!customersCols.contains('category')) {
-        await db.execute(
-            "ALTER TABLE customers ADD COLUMN category TEXT DEFAULT 'normal'");
       }
       if (!transactionsCols.contains('code')) {
         await db.execute("ALTER TABLE transactions ADD COLUMN code TEXT");
@@ -178,10 +201,29 @@ class DatabaseHelper {
           created_at TEXT NOT NULL
         )
       ''');
-
-      debugPrint('✅ [DB] All columns verified');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS log_events(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          action TEXT NOT NULL,
+          description TEXT NOT NULL,
+          level TEXT NOT NULL,
+          category TEXT NOT NULL,
+          accountant TEXT,
+          related_id TEXT,
+          metadata TEXT,
+          audio_path TEXT,
+          is_acknowledged INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS settings(
+          key TEXT PRIMARY KEY,
+          value TEXT
+        )
+      ''');
     } catch (e) {
-      debugPrint('❌ [DB] Error ensuring columns: $e');
+      debugPrint('❌ [DB] Error: $e');
     }
   }
 
@@ -235,7 +277,6 @@ class DatabaseHelper {
           orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
-      debugPrint('⚠️ activeCustomers error, fallback to allCustomers: $e');
       return allCustomers();
     }
   }
@@ -247,16 +288,8 @@ class DatabaseHelper {
           where: 'is_active = 0', orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
-      debugPrint('⚠️ inactiveCustomers error: $e');
       return [];
     }
-  }
-
-  Future<List<Customer>> customersByCategory(String category) async {
-    final db = await database;
-    final r = await db.query('customers',
-        where: 'category = ?', whereArgs: [category], orderBy: 'name ASC');
-    return r.map((e) => Customer.fromMap(e)).toList();
   }
 
   Future<Customer?> findExactCustomer(String name) async {
@@ -297,7 +330,6 @@ class DatabaseHelper {
       _notifyChanged();
       return r;
     } catch (e) {
-      debugPrint('❌ setCustomerActive error: $e');
       try {
         await db.execute(
             "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
@@ -310,7 +342,6 @@ class DatabaseHelper {
         _notifyChanged();
         return r;
       } catch (e2) {
-        debugPrint('❌ setCustomerActive retry failed: $e2');
         return 0;
       }
     }
@@ -404,7 +435,6 @@ class DatabaseHelper {
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
   }
 
-  // ============ فحص التكرار ============
   Future<bool> transactionExistsRecent({
     required int customerId,
     required double amount,
@@ -509,8 +539,6 @@ class DatabaseHelper {
           });
         } catch (_) {}
       }
-
-      debugPrint('✅ Updated $updatedCount codes: $oldPrefix → $newPrefix');
     } catch (e) {
       debugPrint('❌ updateCodesPrefix error: $e');
     }
@@ -546,31 +574,168 @@ class DatabaseHelper {
           .cast<String>()
           .toList();
     } catch (e) {
-      debugPrint('getAllAccountants error: $e');
       return [];
     }
   }
 
-  // ============ إحصائيات المصادر ============
-  /// 🆕 عدد العمليات حسب كل مصدر
-  Future<Map<String, int>> getSourceStats() async {
+  // ============ سجل الأحداث ============
+  Future<int> insertLog(Map<String, dynamic> data) async {
     final db = await database;
-    try {
-      final r = await db.rawQuery('''
-        SELECT COALESCE(source, 'unknown') AS src, COUNT(*) AS cnt
-        FROM transactions
-        GROUP BY src
-      ''');
-      final stats = <String, int>{};
-      for (final row in r) {
-        final src = row['src'] as String? ?? 'unknown';
-        stats[src] = (row['cnt'] as int?) ?? 0;
-      }
-      return stats;
-    } catch (e) {
-      debugPrint('getSourceStats error: $e');
-      return {};
+    return db.insert('log_events', data);
+  }
+
+  Future<List<Map<String, dynamic>>> getLogsRaw({
+    String? level,
+    String? category,
+    String? fromDate,
+    String? toDate,
+    String? searchQuery,
+    bool onlyPending = false,
+    int limit = 500,
+    int offset = 0,
+  }) async {
+    final db = await database;
+    final where = <String>[];
+    final args = <dynamic>[];
+
+    if (level != null) {
+      where.add('level = ?');
+      args.add(level);
     }
+    if (category != null) {
+      where.add('category = ?');
+      args.add(category);
+    }
+    if (fromDate != null) {
+      where.add('created_at >= ?');
+      args.add(fromDate);
+    }
+    if (toDate != null) {
+      where.add('created_at <= ?');
+      args.add(toDate);
+    }
+    if (onlyPending) {
+      where.add('is_acknowledged = 0');
+      where.add("(level = 'error' OR level = 'warning')");
+    }
+    if (searchQuery != null && searchQuery.trim().isNotEmpty) {
+      where.add('(action LIKE ? OR description LIKE ? OR accountant LIKE ?)');
+      final q = '%${searchQuery.trim()}%';
+      args.add(q);
+      args.add(q);
+      args.add(q);
+    }
+
+    return db.query(
+      'log_events',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'created_at DESC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  Future<int> deleteLog(int id) async {
+    final db = await database;
+    return db.delete('log_events', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteLogsOlderThan(String cutoffIso) async {
+    final db = await database;
+    return db.delete('log_events',
+        where: 'created_at < ?', whereArgs: [cutoffIso]);
+  }
+
+  Future<int> clearAllLogs() async {
+    final db = await database;
+    return db.delete('log_events');
+  }
+
+  Future<int> acknowledgeLog(int id) async {
+    final db = await database;
+    return db.update(
+      'log_events',
+      {'is_acknowledged': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> acknowledgeAllLogs() async {
+    final db = await database;
+    return db.update(
+      'log_events',
+      {'is_acknowledged': 1},
+      where: 'is_acknowledged = 0',
+    );
+  }
+
+  Future<int> getPendingLogsCount() async {
+    final db = await database;
+    final r = await db.rawQuery('''
+      SELECT COUNT(*) AS c FROM log_events
+      WHERE is_acknowledged = 0
+        AND (level = 'error' OR level = 'warning')
+    ''');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  Future<Map<String, dynamic>> getLogsStats() async {
+    final db = await database;
+    final total = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
+    final errors = await db.rawQuery(
+        "SELECT COUNT(*) AS c FROM log_events WHERE level = 'error'");
+    final warnings = await db.rawQuery(
+        "SELECT COUNT(*) AS c FROM log_events WHERE level = 'warning'");
+    final today = await db.rawQuery(
+        "SELECT COUNT(*) AS c FROM log_events WHERE created_at >= ?",
+        [
+          DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+              .toIso8601String()
+        ]);
+    final pending = await db.rawQuery('''
+      SELECT COUNT(*) AS c FROM log_events
+      WHERE is_acknowledged = 0
+        AND (level = 'error' OR level = 'warning')
+    ''');
+
+    return {
+      'total': (total.first['c'] as int?) ?? 0,
+      'errors': (errors.first['c'] as int?) ?? 0,
+      'warnings': (warnings.first['c'] as int?) ?? 0,
+      'today': (today.first['c'] as int?) ?? 0,
+      'pending': (pending.first['c'] as int?) ?? 0,
+    };
+  }
+
+  Future<int> countLogs() async {
+    final db = await database;
+    final r = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  Future<List<Map<String, dynamic>>> getOldestLogs(int count) async {
+    final db = await database;
+    return db.query('log_events', orderBy: 'created_at ASC', limit: count);
+  }
+
+  // ============ الإعدادات ============
+  Future<void> setSetting(String key, String value) async {
+    final db = await database;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getSetting(String key) async {
+    final db = await database;
+    final r = await db.query('settings',
+        where: 'key = ?', whereArgs: [key], limit: 1);
+    if (r.isEmpty) return null;
+    return r.first['value'] as String?;
   }
 
   // ============ أدوات للمزامنة ============
