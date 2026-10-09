@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/sync_service.dart';
@@ -10,7 +11,6 @@ import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
 
-/// نوع فلتر أعلى المدينين
 enum DebtorFilter {
   all,
   today,
@@ -30,7 +30,7 @@ class _DebtsTabState extends State<DebtsTab> {
   final db = DatabaseHelper.instance;
   double _total = 0;
   List<Customer> _topDebtors = [];
-  Map<int, double> _topDebtorsBalances = {}; // 🆕 خريطة أرصدة
+  Map<int, double> _topDebtorsBalances = {};
   List<MapEntry<Customer, Transaction>> _recent = [];
   DateFilter _dateFilter = DateFilter();
 
@@ -330,7 +330,6 @@ class _DebtsTabState extends State<DebtsTab> {
     }
   }
 
-  // ============ السحب للتحديث + المزامنة ============
   Future<void> _refreshAndSync() async {
     await _refresh();
 
@@ -343,7 +342,6 @@ class _DebtsTabState extends State<DebtsTab> {
     }
   }
 
-  // ============ مزامنة يدوية ============
   Future<void> _manualSync() async {
     if (!SyncService.isSyncAvailable) {
       final result = await SyncService.manualSync();
@@ -406,6 +404,9 @@ class _DebtsTabState extends State<DebtsTab> {
       return;
     }
 
+    // 🆕 جلب اسم المحاسب مسبقاً
+    final accountant = await AccountantService.getAccountantName();
+
     String type = 'debt';
     Customer? selectedCustomer;
     final amountCtrl = TextEditingController();
@@ -421,11 +422,39 @@ class _DebtsTabState extends State<DebtsTab> {
         textDirection: TextDirection.rtl,
         child: StatefulBuilder(
           builder: (ctx, setStateDialog) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.add_card, color: Colors.teal),
-                SizedBox(width: 8),
-                Text('عملية جديدة'),
+                const Icon(Icons.add_card, color: Colors.teal),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('عملية جديدة')),
+                // 🆕 عرض اسم المحاسب
+                if (accountant != null && accountant.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: Colors.teal.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person,
+                            size: 12, color: Colors.teal),
+                        const SizedBox(width: 4),
+                        Text(
+                          accountant,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             content: SizedBox(
@@ -745,9 +774,12 @@ class _DebtsTabState extends State<DebtsTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
+                          // 🆕 حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
+                            accountant: accountant,
+                            source: 'manual',
                             amount: amt,
                             type: storedType,
                             items: extraText,
@@ -956,7 +988,7 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
-  // ============ 🆕 حساب ألوان الرصيد ============
+  // ============ ألوان الرصيد ============
   Color _balanceColor(Customer c, double bal, ThemeData theme) {
     if (c.maxBalance != null && c.maxBalance! > 0) {
       if (bal >= c.maxBalance!) {
@@ -1044,9 +1076,7 @@ class _DebtsTabState extends State<DebtsTab> {
             return Card(
               margin:
                   const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-              color: overLimit
-                  ? Colors.red.withOpacity(0.08)
-                  : null,
+              color: overLimit ? Colors.red.withOpacity(0.08) : null,
               child: ListTile(
                 dense: true,
                 leading: Stack(
@@ -1086,7 +1116,6 @@ class _DebtsTabState extends State<DebtsTab> {
                           style:
                               const TextStyle(fontWeight: FontWeight.bold)),
                     ),
-                    // 🆕 أيقونة تحذير
                     if (overLimit)
                       Container(
                         padding: const EdgeInsets.all(3),
@@ -1118,9 +1147,8 @@ class _DebtsTabState extends State<DebtsTab> {
                         'الحد: ${c.maxBalance!.toStringAsFixed(0)}',
                         style: TextStyle(
                           fontSize: 9,
-                          color: overLimit
-                              ? Colors.red.shade700
-                              : Colors.grey,
+                          color:
+                              overLimit ? Colors.red.shade700 : Colors.grey,
                         ),
                       ),
                   ],
@@ -1143,7 +1171,7 @@ class _DebtsTabState extends State<DebtsTab> {
   }
 
   // ============================================================
-  // 🆕 بطاقة العملية (تصميم جديد - الرمز والمحاسب في أعلى اليسار)
+  // بطاقة العملية (الرمز + المحاسب + المصدر في أعلى اليسار)
   // ============================================================
   Widget _buildTransactionCard(
       Customer c, Transaction t, ThemeData theme, bool isDark) {
@@ -1163,6 +1191,10 @@ class _DebtsTabState extends State<DebtsTab> {
       typeIcon = Icons.arrow_downward;
     }
 
+    // 🆕 معلومات المصدر
+    final sourceInfo = Transaction.sourceInfo(t.source);
+    final sourceColor = Color(sourceInfo.color);
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: InkWell(
@@ -1178,10 +1210,9 @@ class _DebtsTabState extends State<DebtsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ═══ الصف الأول: (اليسار) رمز + محاسب  |  (اليمين) وقت ═══
+              // ═══ السطر 1: الوقت (يمين) + المصدر + المحاسب + الرمز (يسار) ═══
               Row(
                 children: [
-                  // في RTL: العنصر الأول يظهر على اليمين
                   Text(
                     _formatDateTime(t.createdAt),
                     style: TextStyle(
@@ -1190,8 +1221,25 @@ class _DebtsTabState extends State<DebtsTab> {
                     ),
                   ),
                   const Spacer(),
-                  // في RTL: العنصر الأخير يظهر على اليسار
-                  // 🆕 اسم المحاسب
+                  // 🆕 المصدر
+                  if (t.source != null && t.source!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      margin: const EdgeInsets.only(left: 4),
+                      decoration: BoxDecoration(
+                        color: sourceColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: sourceColor.withOpacity(0.4),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Text(
+                        sourceInfo.emoji,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
                   if (t.accountant != null && t.accountant!.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1222,7 +1270,6 @@ class _DebtsTabState extends State<DebtsTab> {
                         ],
                       ),
                     ),
-                  // 🆕 رمز العملية
                   if (t.code != null && t.code!.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1255,7 +1302,7 @@ class _DebtsTabState extends State<DebtsTab> {
                 ],
               ),
               const SizedBox(height: 8),
-              // ═══ الصف الثاني: أيقونة + اسم العميل + المبلغ ═══
+              // ═══ السطر 2: أيقونة + عميل + مبلغ ═══
               Row(
                 children: [
                   Container(
@@ -1286,7 +1333,7 @@ class _DebtsTabState extends State<DebtsTab> {
                   ),
                 ],
               ),
-              // ═══ الصف الثالث: الأصناف ═══
+              // ═══ السطر 3: الأصناف ═══
               if (t.items.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Padding(
@@ -1493,7 +1540,6 @@ class _DebtsTabState extends State<DebtsTab> {
   }
 }
 
-/// ويدجت صغير لعرض كلمة فوق وأيقونة تحت في SegmentedButton
 class _SegmentLabel extends StatelessWidget {
   final String text;
   final IconData icon;
