@@ -3,6 +3,7 @@ import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../screens/add_account_screen.dart';
@@ -190,6 +191,9 @@ class _CustomersTabState extends State<CustomersTab> {
       return;
     }
 
+    // 🆕 جلب اسم المحاسب مسبقاً
+    final accountant = await AccountantService.getAccountantName();
+
     String type = 'debt';
     Customer? selectedCustomer;
     final amountCtrl = TextEditingController();
@@ -205,11 +209,39 @@ class _CustomersTabState extends State<CustomersTab> {
         textDirection: TextDirection.rtl,
         child: StatefulBuilder(
           builder: (ctx, setStateDialog) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.add_card, color: Colors.teal),
-                SizedBox(width: 8),
-                Text('عملية جديدة'),
+                const Icon(Icons.add_card, color: Colors.teal),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('عملية جديدة')),
+                // 🆕 عرض اسم المحاسب في العنوان
+                if (accountant != null && accountant.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border:
+                          Border.all(color: Colors.teal.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person,
+                            size: 12, color: Colors.teal),
+                        const SizedBox(width: 4),
+                        Text(
+                          accountant,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             content: SizedBox(
@@ -529,9 +561,11 @@ class _CustomersTabState extends State<CustomersTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
+                          // 🆕 حفظ مع اسم المحاسب
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
+                            accountant: accountant, // ← جديد
                             amount: amt,
                             type: storedType,
                             items: extraText,
@@ -804,9 +838,6 @@ class _CustomersTabState extends State<CustomersTab> {
           ),
         ),
       ),
-      // ═══════════════════════════════════════════════════════
-      // 🆕 الأزرار العائمة: [🎤] [➕ عملية] [👤 حساب]
-      // ═══════════════════════════════════════════════════════
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -814,7 +845,6 @@ class _CustomersTabState extends State<CustomersTab> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // التسجيل الصوتي
               FloatingActionButton(
                 heroTag: 'voice_customers',
                 onPressed: () async {
@@ -829,7 +859,6 @@ class _CustomersTabState extends State<CustomersTab> {
                 child: const Icon(Icons.mic, color: Colors.white),
               ),
               const SizedBox(width: 10),
-              // 🆕 عملية جديدة
               FloatingActionButton.extended(
                 heroTag: 'add_transaction_customers',
                 onPressed: _addTransactionQuick,
@@ -838,7 +867,6 @@ class _CustomersTabState extends State<CustomersTab> {
                 backgroundColor: Colors.teal,
               ),
               const SizedBox(width: 10),
-              // حساب جديد
               FloatingActionButton.extended(
                 heroTag: 'add_customer_2',
                 onPressed: () async {
@@ -1083,7 +1111,6 @@ class _CustomersTabState extends State<CustomersTab> {
   }
 }
 
-/// ويدجت صغير لعرض الكلمة فوق والأيقونة تحت
 class _SegmentLabel extends StatelessWidget {
   final String text;
   final IconData icon;
