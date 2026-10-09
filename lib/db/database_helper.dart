@@ -21,7 +21,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 6, // 🆕 رُفع من 5 إلى 6
+      version: 7, // 🆕 رُفع من 6 إلى 7
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -105,13 +105,88 @@ class DatabaseHelper {
     }
     if (oldV < 6) {
       try {
-        // 🆕 إضافة عمود حالة الحساب
         await db.execute(
             "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
         debugPrint('✅ [DB] Added is_active column (v6)');
       } catch (e) {
         debugPrint('❌ [DB] Failed to add is_active column: $e');
       }
+    }
+
+    // 🆕 v7: تحقق آمن من وجود كل الأعمدة (حل مشكلة الترقيات الفاشلة)
+    if (oldV < 7) {
+      await _ensureAllColumns(db);
+    }
+  }
+
+  /// 🆕 دالة آمنة تتأكد من وجود كل الأعمدة المطلوبة
+  Future<void> _ensureAllColumns(Database db) async {
+    try {
+      // جلب معلومات الجدول
+      final customersInfo = await db.rawQuery('PRAGMA table_info(customers)');
+      final customersCols =
+          customersInfo.map((c) => c['name'] as String).toSet();
+
+      final transactionsInfo =
+          await db.rawQuery('PRAGMA table_info(transactions)');
+      final transactionsCols =
+          transactionsInfo.map((c) => c['name'] as String).toSet();
+
+      // التأكد من أعمدة customers
+      if (!customersCols.contains('is_active')) {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
+        debugPrint('✅ [DB v7] Added is_active to customers');
+      }
+      if (!customersCols.contains('max_balance')) {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN max_balance REAL");
+        debugPrint('✅ [DB v7] Added max_balance to customers');
+      }
+      if (!customersCols.contains('account_type')) {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN account_type TEXT DEFAULT 'customer'");
+        debugPrint('✅ [DB v7] Added account_type to customers');
+      }
+      if (!customersCols.contains('note')) {
+        await db.execute("ALTER TABLE customers ADD COLUMN note TEXT");
+        debugPrint('✅ [DB v7] Added note to customers');
+      }
+      if (!customersCols.contains('photo_path')) {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN photo_path TEXT");
+        debugPrint('✅ [DB v7] Added photo_path to customers');
+      }
+      if (!customersCols.contains('category')) {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN category TEXT DEFAULT 'normal'");
+        debugPrint('✅ [DB v7] Added category to customers');
+      }
+
+      // التأكد من أعمدة transactions
+      if (!transactionsCols.contains('code')) {
+        await db.execute("ALTER TABLE transactions ADD COLUMN code TEXT");
+        debugPrint('✅ [DB v7] Added code to transactions');
+      }
+      if (!transactionsCols.contains('accountant')) {
+        await db.execute(
+            "ALTER TABLE transactions ADD COLUMN accountant TEXT");
+        debugPrint('✅ [DB v7] Added accountant to transactions');
+      }
+
+      // التأكد من جدول used_codes
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS used_codes(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          code TEXT UNIQUE NOT NULL,
+          type TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      ''');
+
+      debugPrint('✅ [DB v7] All columns verified');
+    } catch (e) {
+      debugPrint('❌ [DB v7] Error ensuring columns: $e');
     }
   }
 
@@ -157,20 +232,32 @@ class DatabaseHelper {
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  /// 🆕 العملاء النشطون فقط
+  /// 🆕 العملاء النشطون (مع fallback آمن)
   Future<List<Customer>> activeCustomers() async {
     final db = await database;
-    final r = await db.query('customers',
-        where: 'is_active = 1', orderBy: 'name ASC');
-    return r.map((e) => Customer.fromMap(e)).toList();
+    try {
+      final r = await db.query('customers',
+          where: 'is_active = 1 OR is_active IS NULL',
+          orderBy: 'name ASC');
+      return r.map((e) => Customer.fromMap(e)).toList();
+    } catch (e) {
+      debugPrint('⚠️ activeCustomers error, fallback to allCustomers: $e');
+      // Fallback: ارجع كل العملاء
+      return allCustomers();
+    }
   }
 
-  /// 🆕 العملاء الموقوفون فقط
+  /// 🆕 العملاء الموقوفون
   Future<List<Customer>> inactiveCustomers() async {
     final db = await database;
-    final r = await db.query('customers',
-        where: 'is_active = 0 OR is_active IS NULL', orderBy: 'name ASC');
-    return r.map((e) => Customer.fromMap(e)).toList();
+    try {
+      final r = await db.query('customers',
+          where: 'is_active = 0', orderBy: 'name ASC');
+      return r.map((e) => Customer.fromMap(e)).toList();
+    } catch (e) {
+      debugPrint('⚠️ inactiveCustomers error: $e');
+      return [];
+    }
   }
 
   Future<List<Customer>> customersByCategory(String category) async {
@@ -206,17 +293,37 @@ class DatabaseHelper {
     return r.first['id'] as int?;
   }
 
-  /// 🆕 تغيير حالة الحساب (تفعيل/إيقاف)
+  /// 🆕 تغيير حالة الحساب (مع fallback آمن)
   Future<int> setCustomerActive(int id, bool active) async {
     final db = await database;
-    final r = await db.update(
-      'customers',
-      {'is_active': active ? 1 : 0},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    _notifyChanged();
-    return r;
+    try {
+      final r = await db.update(
+        'customers',
+        {'is_active': active ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ setCustomerActive error: $e');
+      // حاول إضافة العمود ثم أعد المحاولة
+      try {
+        await db.execute(
+            "ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1");
+        final r = await db.update(
+          'customers',
+          {'is_active': active ? 1 : 0},
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        _notifyChanged();
+        return r;
+      } catch (e2) {
+        debugPrint('❌ setCustomerActive retry failed: $e2');
+        return 0;
+      }
+    }
   }
 
   // ============ المعاملات ============
@@ -436,17 +543,22 @@ class DatabaseHelper {
   // ============ إدارة المحاسبين ============
   Future<List<String>> getAllAccountants() async {
     final db = await database;
-    final r = await db.rawQuery('''
-      SELECT DISTINCT accountant
-      FROM transactions
-      WHERE accountant IS NOT NULL AND accountant != ''
-      ORDER BY accountant ASC
-    ''');
-    return r
-        .map((row) => row['accountant'] as String?)
-        .where((s) => s != null && s.isNotEmpty)
-        .cast<String>()
-        .toList();
+    try {
+      final r = await db.rawQuery('''
+        SELECT DISTINCT accountant
+        FROM transactions
+        WHERE accountant IS NOT NULL AND accountant != ''
+        ORDER BY accountant ASC
+      ''');
+      return r
+          .map((row) => row['accountant'] as String?)
+          .where((s) => s != null && s.isNotEmpty)
+          .cast<String>()
+          .toList();
+    } catch (e) {
+      debugPrint('getAllAccountants error: $e');
+      return [];
+    }
   }
 
   // ============ أدوات للمزامنة ============
