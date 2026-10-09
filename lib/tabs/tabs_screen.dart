@@ -13,22 +13,36 @@ class TabsScreen extends StatefulWidget {
 class _TabsScreenState extends State<TabsScreen> {
   int _currentIndex = 0;
 
-  final _tabs = const [
-    DebtsTab(),
-    CustomersTab(),
-    TransactionsTab(),
-    SettingsTab(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        body: IndexedStack(index: _currentIndex, children: _tabs),
+        body: IndexedStack(
+          index: _currentIndex,
+          children: [
+            const DebtsTab(),
+            const CustomersTab(),
+            // 🆕 مفتاح لتبويب العمليات
+            TransactionsTab(key: _transactionsKey),
+            const SettingsTab(),
+          ],
+        ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _currentIndex,
-          onDestinationSelected: (i) => setState(() => _currentIndex = i),
+          onDestinationSelected: (i) {
+            setState(() => _currentIndex = i);
+
+            // 🆕 عندما يختار "العمليات" → حدّثها
+            if (i == 2) {
+              Future.delayed(const Duration(milliseconds: 100), () {
+                final state = _transactionsKey.currentState;
+                if (state != null && state.mounted) {
+                  state.reload();
+                }
+              });
+            }
+          },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.book_outlined),
@@ -56,3 +70,7 @@ class _TabsScreenState extends State<TabsScreen> {
     );
   }
 }
+
+/// 🆕 مفتاح عالمي لتبويب العمليات
+final GlobalKey<TransactionsTabState> _transactionsKey =
+    GlobalKey<TransactionsTabState>();
