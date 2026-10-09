@@ -22,8 +22,8 @@ dependencies:
   # ============ الصوت ============
   speech_to_text: ^6.6.0
   flutter_tts: ^3.8.5
-  record: ^5.0.4              # 🆕 تسجيل الصوت
-  audioplayers: ^5.2.1        # 🆕 تشغيل الصوت
+  record: ^4.4.4              # 🆕 (نسخة متوافقة)
+  audioplayers: ^5.2.1        # 🆕 (نسخة متوافقة)
 
   # ============ PDF والتصدير ============
   pdf: ^3.10.7
@@ -75,14 +75,12 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # ============ الأصول (Assets) ============
   assets:
     - assets/fonts/Cairo-Regular.ttf
     - assets/fonts/Cairo-Bold.ttf
     - assets/fonts/Tajawal-Regular.ttf
     - assets/fonts/Tajawal-Bold.ttf
 
-  # ============ الخطوط (Fonts) ============
   fonts:
     - family: Cairo
       fonts:
