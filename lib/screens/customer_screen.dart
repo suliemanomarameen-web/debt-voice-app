@@ -29,7 +29,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
   List<Transaction> _tx = [];
   DateFilter _dateFilter = DateFilter();
   bool _alertShown = false;
-  late Customer _customer; // 🆕 نسخة قابلة للتحديث
+  late Customer _customer;
 
   @override
   void initState() {
@@ -42,7 +42,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     final bal = await db.customerBalance(_customer.id!);
     final allTx = await db.customerTransactions(_customer.id!);
 
-    // 🆕 إعادة جلب بيانات العميل (للتأكد من isActive و maxBalance)
     final all = await db.allCustomers();
     final updated = all.where((c) => c.id == _customer.id).toList();
     if (updated.isNotEmpty) {
@@ -56,8 +55,9 @@ class _CustomerScreenState extends State<CustomerScreen> {
       _applyFilter();
     });
 
-    // تنبيه تجاوز الحد
-    if (!_alertShown && _customer.isOverLimit(bal) && _customer.maxBalance != null) {
+    if (!_alertShown &&
+        _customer.isOverLimit(bal) &&
+        _customer.maxBalance != null) {
       _alertShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -267,7 +267,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
-    // 🆕 تحقق من حالة الحساب
+    // تحقق من حالة الحساب
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
         context: context,
@@ -303,12 +303,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
       if (proceed != true) return;
     }
 
+    // 🆕 جلب اسم المحاسب
+    final accountant = await AccountantService.getAccountantName();
+
     final amountCtrl = TextEditingController();
     final itemsCtrl = TextEditingController();
     bool isSaving = false;
-
-    // 🆕 جلب اسم المحاسب مسبقاً
-    final accountant = await AccountantService.getAccountantName();
 
     if (!mounted) return;
 
@@ -335,8 +335,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     decoration: BoxDecoration(
                       color: Colors.teal.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: Colors.teal.withOpacity(0.4)),
+                      border:
+                          Border.all(color: Colors.teal.withOpacity(0.4)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -393,7 +393,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           final storedType =
                               (type == 'return') ? 'payment' : type;
 
-                          // منع التكرار
                           final isDuplicate =
                               await db.transactionExistsRecent(
                             customerId: _customer.id!,
@@ -431,10 +430,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             extraText = itemsCtrl.text.trim();
                           }
 
+                          // 🆕 حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: _customer.id!,
                             code: code,
-                            accountant: accountant, // 🆕
+                            accountant: accountant,
+                            source: 'customer_screen', // ← 🆕
                             amount: amt,
                             type: storedType,
                             items: extraText,
@@ -576,6 +577,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   customerId: t.customerId,
                   code: t.code,
                   accountant: t.accountant,
+                  source: t.source,
                   amount: amt,
                   currency: t.currency,
                   type: t.type,
@@ -661,6 +663,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // الرمز
                     if (t.code != null && t.code!.isNotEmpty) ...[
                       InkWell(
                         onTap: () => _copyCode(t.code!),
@@ -695,6 +698,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
                       const SizedBox(height: 8),
                     ],
+                    // المحاسب
                     if (t.accountant != null && t.accountant!.isNotEmpty) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -720,6 +724,40 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 8),
+                    ],
+                    // 🆕 المصدر
+                    if (t.source != null && t.source!.isNotEmpty) ...[
+                      Builder(builder: (_) {
+                        final info = Transaction.sourceInfo(t.source);
+                        final c = Color(info.color);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: c.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                info.emoji,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                info.label,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: c,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                       const SizedBox(height: 8),
                     ],
                     Text(
@@ -999,11 +1037,10 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }
   }
 
-  // ============ 🆕 حساب ألوان الرصيد حسب النسبة ============
+  // ============ ألوان الرصيد ============
   Color _getBalanceColor(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
 
-    // إذا لا يوجد حد أقصى → السلوك القديم
     if (_customer.maxBalance == null || _customer.maxBalance! <= 0) {
       if (_balance > 0) {
         return isDark ? Colors.red.shade300 : Colors.red.shade700;
@@ -1014,25 +1051,23 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     final ratio = _customer.balanceRatio(_balance);
 
-    // 🟢 أخضر: أقل من 50%
     if (ratio < 0.5) {
       return isDark ? Colors.green.shade300 : Colors.green.shade700;
     }
-    // 🟡 أصفر: من 50% إلى 80%
     if (ratio < 0.8) {
       return isDark ? Colors.amber.shade300 : Colors.amber.shade800;
     }
-    // 🔴 أحمر: 80% أو أكثر
     return isDark ? Colors.red.shade300 : Colors.red.shade700;
   }
 
-  // ============ 🆕 لون خلفية الهيدر ============
   Color _getHeaderBgColor(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
 
     if (_customer.maxBalance == null || _customer.maxBalance! <= 0) {
       if (_balance > 0) {
-        return isDark ? Colors.red.shade900.withOpacity(0.3) : Colors.red.shade50;
+        return isDark
+            ? Colors.red.shade900.withOpacity(0.3)
+            : Colors.red.shade50;
       }
       return isDark
           ? Colors.green.shade900.withOpacity(0.3)
@@ -1107,7 +1142,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                           )
                         : null,
                   ),
-                  // 🆕 شارة الإيقاف
                   if (!_customer.isActive)
                     Positioned(
                       bottom: 0,
@@ -1161,7 +1195,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                               size: 20,
                             ),
                           ),
-                        // 🆕 شارة الإيقاف
                         if (!_customer.isActive)
                           Container(
                             margin: const EdgeInsets.only(right: 4),
@@ -1269,10 +1302,9 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             style: TextStyle(
               fontSize: 32,
               fontWeight: FontWeight.bold,
-              color: balanceColor, // 🆕 حسب النسبة
+              color: balanceColor,
             ),
           ),
-          // ===== الحد الأقصى + النسبة =====
           if (_customer.maxBalance != null) ...[
             const SizedBox(height: 6),
             Container(
@@ -1303,7 +1335,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       color: balanceColor,
                     ),
                   ),
-                  // 🆕 النسبة المئوية
                   if (_balance > 0) ...[
                     const SizedBox(width: 6),
                     Text(
@@ -1318,7 +1349,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 ],
               ),
             ),
-            // 🆕 شريط التقدم
             if (_balance > 0) ...[
               const SizedBox(height: 8),
               Padding(
@@ -1370,7 +1400,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }[t] ?? 'عميل';
   }
 
-  // ============ 🆕 تبديل حالة الحساب ============
+  // ============ تبديل حالة الحساب ============
   Future<void> _toggleCustomerActive() async {
     final willStop = _customer.isActive;
 
@@ -1426,6 +1456,211 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             ? 'تم إيقاف الحساب "${_customer.name}"'
             : 'تم تفعيل الحساب "${_customer.name}"'),
         backgroundColor: willStop ? Colors.orange : Colors.green,
+      ),
+    );
+  }
+
+  // ============================================================
+  // بطاقة العملية (بنفس تصميم debts_tab مع المصدر)
+  // ============================================================
+  Widget _buildTransactionCard(
+      Transaction t, ThemeData theme, bool isDark) {
+    final isDebt = t.type == 'debt';
+    final isReturn = t.items.startsWith('مرتجع');
+
+    Color typeColor;
+    IconData typeIcon;
+    if (isReturn) {
+      typeColor = Colors.orange;
+      typeIcon = Icons.keyboard_return;
+    } else if (isDebt) {
+      typeColor = theme.colorScheme.error;
+      typeIcon = Icons.arrow_upward;
+    } else {
+      typeColor = theme.colorScheme.primary;
+      typeIcon = Icons.arrow_downward;
+    }
+
+    final sourceInfo = Transaction.sourceInfo(t.source);
+    final sourceColor = Color(sourceInfo.color);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: InkWell(
+        onTap: () => _showTransactionMenu(t),
+        onLongPress: () => _showTransactionMenu(t),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ═══ السطر 1: الوقت (يمين) + المصدر + المحاسب + الرمز (يسار) ═══
+              Row(
+                children: [
+                  Text(
+                    _formatDateTime(t.createdAt),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  // المصدر
+                  if (t.source != null && t.source!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      margin: const EdgeInsets.only(left: 4),
+                      decoration: BoxDecoration(
+                        color: sourceColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: sourceColor.withOpacity(0.4),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Text(
+                        sourceInfo.emoji,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+                  // المحاسب
+                  if (t.accountant != null && t.accountant!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      margin: const EdgeInsets.only(left: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: Colors.teal.withOpacity(0.4),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.person,
+                              size: 10, color: Colors.teal),
+                          const SizedBox(width: 3),
+                          Text(
+                            t.accountant!,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.teal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // الرمز
+                  if (t.code != null && t.code!.isNotEmpty)
+                    InkWell(
+                      onTap: () => _copyCode(t.code!),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.blue.withOpacity(0.4),
+                            width: 0.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              t.code!,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                              ),
+                            ),
+                            const SizedBox(width: 3),
+                            Icon(
+                              Icons.copy,
+                              size: 9,
+                              color: Colors.blue.withOpacity(0.7),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // ═══ السطر 2: أيقونة + مبلغ ═══
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: typeColor.withOpacity(0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(typeIcon, color: typeColor, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isReturn
+                          ? 'مرتجع'
+                          : (isDebt ? 'دين' : 'سداد'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: typeColor,
+                    ),
+                  ),
+                ],
+              ),
+              // ═══ السطر 3: الأصناف ═══
+              if (t.items.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(right: 34),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.inventory_2_outlined,
+                        size: 12,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          t.items.replaceFirst(
+                              RegExp(r'^مرتجع:?\s*'), ''),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1518,7 +1753,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                     title: Text('تعديل بيانات الحساب'),
                   ),
                 ),
-                // 🆕 إيقاف/تفعيل الحساب
                 PopupMenuItem(
                   value: 'toggle',
                   child: ListTile(
@@ -1595,135 +1829,8 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                     )
                   : ListView.builder(
                       itemCount: _tx.length,
-                      itemBuilder: (_, i) {
-                        final t = _tx[i];
-                        final isDebt = t.type == 'debt';
-                        final isReturn = t.items.startsWith('مرتجع');
-
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          child: ListTile(
-                            leading: Icon(
-                              isReturn
-                                  ? Icons.keyboard_return
-                                  : (isDebt
-                                      ? Icons.arrow_upward
-                                      : Icons.arrow_downward),
-                              color: isReturn
-                                  ? Colors.orange
-                                  : (isDebt
-                                      ? (isDark
-                                          ? Colors.red.shade300
-                                          : theme.colorScheme.error)
-                                      : (isDark
-                                          ? Colors.green.shade300
-                                          : theme.colorScheme.primary)),
-                            ),
-                            title: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                if (t.accountant != null &&
-                                    t.accountant!.isNotEmpty)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    margin: const EdgeInsets.only(right: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.teal.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
-                                        color:
-                                            Colors.teal.withOpacity(0.4),
-                                        width: 0.5,
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.person,
-                                            size: 9, color: Colors.teal),
-                                        const SizedBox(width: 2),
-                                        Text(
-                                          t.accountant!,
-                                          style: const TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.teal,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                if (t.code != null && t.code!.isNotEmpty)
-                                  InkWell(
-                                    onTap: () => _copyCode(t.code!),
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            Colors.blue.withOpacity(0.15),
-                                        borderRadius:
-                                            BorderRadius.circular(6),
-                                        border: Border.all(
-                                          color:
-                                              Colors.blue.withOpacity(0.4),
-                                          width: 0.5,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text(
-                                            t.code!,
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.blue,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 3),
-                                          Icon(
-                                            Icons.copy,
-                                            size: 9,
-                                            color:
-                                                Colors.blue.withOpacity(0.7),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (t.items.isNotEmpty)
-                                  Text(t.items,
-                                      style: const TextStyle(fontSize: 13)),
-                                const SizedBox(height: 2),
-                                Text(
-                                  _formatDateTime(t.createdAt),
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: theme
-                                          .colorScheme.onSurfaceVariant),
-                                ),
-                              ],
-                            ),
-                            onLongPress: () => _showTransactionMenu(t),
-                            onTap: () => _showTransactionMenu(t),
-                          ),
-                        );
-                      },
+                      itemBuilder: (_, i) =>
+                          _buildTransactionCard(_tx[i], theme, isDark),
                     ),
             ),
           ],
