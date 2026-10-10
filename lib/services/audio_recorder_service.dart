@@ -11,7 +11,6 @@ class AudioRecorderService {
   factory AudioRecorderService() => _instance;
   AudioRecorderService._internal();
 
-  // ⚠️ record 4.x يستخدم Record (وليس AudioRecorder)
   final Record _recorder = Record();
   final AudioPlayer _player = AudioPlayer();
 
@@ -47,7 +46,7 @@ class AudioRecorderService {
     return dir;
   }
 
-  // ========== بدء التسجيل (record 4.x API) ==========
+  // ========== بدء التسجيل ==========
   Future<bool> startRecording() async {
     try {
       if (_isRecording) {
@@ -67,9 +66,9 @@ class AudioRecorderService {
           .replaceAll('.', '-');
       final path = '${dir.path}/rec_$timestamp.m4a';
 
-      // ✅ record 4.x: path positional + named arguments
+      // ✅ path كـ named parameter
       await _recorder.start(
-        path,
+        path: path,
         encoder: AudioEncoder.aacLc,
         bitRate: 64000,
         sampleRate: 44100,
