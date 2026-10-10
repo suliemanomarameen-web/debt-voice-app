@@ -19,7 +19,6 @@ class LoggerService {
   static Stream<int> get pendingCountStream => _pendingCountController.stream;
 
   static const String _keyRetentionDays = 'log_retention_days';
-  static const String _keyMaxLogs = 'log_max_count';
 
   static Future<void> setRetentionDays(int days) async {
     try {
@@ -40,6 +39,22 @@ class LoggerService {
       return int.tryParse(r.first['value'] as String? ?? '30') ?? 30;
     } catch (_) {
       return _retentionDays;
+    }
+  }
+
+  // ============ 🆕 اسم المصدر بالعربي ============
+  static String _sourceLabel(String? source) {
+    switch (source) {
+      case 'voice':
+        return '🎤 التسجيل الصوتي';
+      case 'overlay':
+        return '🖼️ الزر العائم';
+      case 'customer_screen':
+        return '👤 شاشة العميل';
+      case 'manual':
+        return '➕ إضافة يدوية';
+      default:
+        return '';
     }
   }
 
@@ -414,6 +429,8 @@ class LoggerService {
   }
 
   // ============ دوال مختصرة للأحداث ============
+
+  // 🆕 إضافة عملية (مع عرض المصدر)
   static Future<void> logTransactionAdded({
     required String typeLabel,
     required String customerName,
@@ -424,23 +441,28 @@ class LoggerService {
     String? source,
     String? relatedId,
     String? audioPath,
-  }) =>
-      success(
-        'إضافة $typeLabel',
-        'تم تسجيل $typeLabel بمبلغ ${amount.toStringAsFixed(0)} $currency للعميل "$customerName"',
-        category: LogCategory.transaction,
-        relatedId: relatedId,
-        audioPath: audioPath,
-        metadata: {
-          'customer': customerName,
-          'amount': amount,
-          'currency': currency,
-          'type': typeLabel,
-          'code': code,
-          'accountant': accountant,
-          'source': source,
-        },
-      );
+  }) {
+    // 🆕 بناء وصف يظهر فيه المصدر
+    final sourceText = _sourceLabel(source);
+    final sourcePart = sourceText.isNotEmpty ? ' • المصدر: $sourceText' : '';
+
+    return success(
+      'إضافة $typeLabel',
+      'تم تسجيل $typeLabel بمبلغ ${amount.toStringAsFixed(0)} $currency للعميل "$customerName"$sourcePart',
+      category: LogCategory.transaction,
+      relatedId: relatedId,
+      audioPath: audioPath,
+      metadata: {
+        'customer': customerName,
+        'amount': amount,
+        'currency': currency,
+        'type': typeLabel,
+        'code': code,
+        'accountant': accountant,
+        'source': source,
+      },
+    );
+  }
 
   static Future<void> logTransactionDeleted({
     required String customerName,
@@ -490,6 +512,7 @@ class LoggerService {
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
+    int customersUpdated = 0,
     bool hasConflict = false,
   }) =>
       success(
@@ -497,7 +520,8 @@ class LoggerService {
         'تمت المزامنة:'
             '${transactionsAdded > 0 ? " +$transactionsAdded عملية" : ""}'
             '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
-            '${transactionsAdded == 0 && customersAdded == 0 ? " (لا تغييرات)" : ""}',
+            '${customersUpdated > 0 ? " ~$customersUpdated حساب محدّث" : ""}'
+            '${transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات)" : ""}',
         category: LogCategory.sync,
       );
 
@@ -531,7 +555,6 @@ class LoggerService {
         category: LogCategory.backup,
       );
 
-  // 🆕 النسخ الاحتياطي - استعادة
   static Future<void> logBackupRestored({
     required int customersAdded,
     required int transactionsAdded,
