@@ -24,7 +24,6 @@ import 'services/tts_service.dart';
 import 'db/database_helper.dart';
 import 'models/customer.dart';
 import 'models/transaction.dart';
-import 'models/log_event.dart';
 
 String? pendingVoiceText;
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -86,17 +85,15 @@ void _setupOverlayListener() {
 
     if (data['action'] == 'voice_text') {
       final text = data['text'] as String? ?? '';
-      String? audioPath; // 🆕 مسار التسجيل الصوتي
+      String? audioPath;
 
-      // 🆕 محاولة جلب آخر تسجيل صوتي من خدمة التسجيل (إن وُجد)
+      // محاولة جلب آخر تسجيل صوتي
       try {
         audioPath = AudioRecorderService().currentRecordingPath;
       } catch (_) {}
 
       if (text == '__EMPTY__') {
-        // 🆕 تسجيل حدث صوتي فارغ
         await LoggerService.logVoiceEmpty(audioPath: audioPath);
-
         await TtsService.speakDidNotHear();
         await NotificationService.show(
           'لم أسمع شيئا',
@@ -120,13 +117,11 @@ void _setupOverlayListener() {
 
       final parsed = ParserService.parse(text);
       if (parsed == null) {
-        // 🆕 تسجيل حدث صوتي فاشل (لم يُفهم)
         await LoggerService.logVoiceFail(
           reason: 'لم يُفهم النص',
           text: text,
           audioPath: audioPath,
         );
-
         await TtsService.speakDidNotUnderstand();
         await NotificationService.show('لم أفهم', 'النص: "$text"');
         return;
@@ -159,15 +154,12 @@ void _setupOverlayListener() {
           accountType: parsed.accountType,
           createdAt: DateTime.now().toIso8601String(),
         ));
-
-        // 🆕 تسجيل الحدث
         await LoggerService.logCustomerAdded(parsed.customerName);
         await LoggerService.logVoiceSuccess(
           text: text,
           audioPath: audioPath,
           parsedAction: 'إنشاء حساب',
         );
-
         await TtsService.speakAccountCreated(parsed.customerName);
         final typeAr = {
           'customer': 'عميل',
@@ -183,7 +175,13 @@ void _setupOverlayListener() {
 
       final customer = await db.findExactCustomer(parsed.customerName);
       if (customer != null) {
-        await _saveTransactionFor(customer, parsed, db, audioPath: audioPath);
+        await _saveTransactionFor(
+          customer,
+          parsed,
+          db,
+          source: 'overlay',
+          audioPath: audioPath,
+        );
         return;
       }
       final partial = await db.findCustomersContaining(parsed.customerName);
@@ -207,14 +205,24 @@ void _setupOverlayListener() {
         );
         return;
       }
-      await _saveTransactionFor(partial.first, parsed, db, audioPath: audioPath);
+      await _saveTransactionFor(
+        partial.first,
+        parsed,
+        db,
+        source: 'overlay',
+        audioPath: audioPath,
+      );
     }
   });
 }
 
 Future<void> _saveTransactionFor(
-    Customer customer, dynamic parsed, DatabaseHelper db,
-    {String? audioPath}) async {
+  Customer customer,
+  dynamic parsed,
+  DatabaseHelper db, {
+  required String source,
+  String? audioPath,
+}) async {
   final normalizedType = CodeService.normalizeType(parsed.intent);
   final storedType = (normalizedType == 'return') ? 'payment' : normalizedType;
 
@@ -230,7 +238,7 @@ Future<void> _saveTransactionFor(
     if (isDuplicate) {
       await LoggerService.logVoiceFail(
         reason: 'عملية مكررة (خلال 30 ثانية)',
-        text: 'مبلغ: ${parsed.amount}',
+        text: '${parsed.amount} - ${customer.name}',
         audioPath: audioPath,
       );
       await TtsService.speak('هذه العملية مسجلة بالفعل');
@@ -244,6 +252,14 @@ Future<void> _saveTransactionFor(
     debugPrint('Duplicate check error: $e');
   }
 
+  // جلب اسم المحاسب
+  String? accountant;
+  try {
+    accountant = await AccountantService.getAccountantName();
+  } catch (e) {
+    debugPrint('❌ Accountant name error: $e');
+  }
+
   // توليد الرمز
   String? code;
   try {
@@ -252,17 +268,11 @@ Future<void> _saveTransactionFor(
     debugPrint('❌ Code generation error: $e');
   }
 
-  // جلب اسم المحاسب
-  String? accountant;
-  try {
-    accountant = await AccountantService.getAccountantName();
-  } catch (_) {}
-
   await db.insertTransaction(Transaction(
     customerId: customer.id!,
     code: code,
     accountant: accountant,
-    source: 'overlay', // 🆕 من الزر العائم
+    source: source,
     amount: parsed.amount,
     currency: parsed.currency,
     type: storedType,
@@ -287,12 +297,12 @@ Future<void> _saveTransactionFor(
     currency: parsed.currency,
     code: code,
     accountant: accountant,
-    source: 'overlay',
+    source: source,
     audioPath: audioPath,
   );
 
   await LoggerService.logVoiceSuccess(
-    text: '${label} ${parsed.amount} ${customer.name}',
+    text: '$label ${parsed.amount.toStringAsFixed(0)} ${customer.name}',
     audioPath: audioPath,
     parsedAction: label,
   );
@@ -320,9 +330,6 @@ Future<void> _saveTransactionFor(
   await NotificationService.show('تم تسجيل $label', detail.toString());
 }
 
-// ============================================================
-// ============ DebtApp ============
-// ============================================================
 class DebtApp extends StatefulWidget {
   const DebtApp({super.key});
   @override
