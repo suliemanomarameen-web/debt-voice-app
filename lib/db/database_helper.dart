@@ -347,6 +347,26 @@ class DatabaseHelper {
     }
   }
 
+  /// 🆕 تحديث حقول محددة للعميل (للمزامنة)
+  Future<int> updateCustomerFields(
+      int id, Map<String, dynamic> fields) async {
+    if (fields.isEmpty) return 0;
+    try {
+      final db = await database;
+      final r = await db.update(
+        'customers',
+        fields,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ updateCustomerFields error: $e');
+      return 0;
+    }
+  }
+
   // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
