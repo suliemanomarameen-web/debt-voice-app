@@ -43,6 +43,7 @@ class LoggerService {
     }
   }
 
+  // ============ حفظ حدث ============
   static Future<int> log({
     required String action,
     required String description,
@@ -95,6 +96,7 @@ class LoggerService {
     }
   }
 
+  // ============ دوال مختصرة ============
   static Future<void> info(
     String action,
     String description, {
@@ -167,6 +169,7 @@ class LoggerService {
         audioPath: audioPath,
       );
 
+  // ============ قراءة ============
   static Future<List<LogEvent>> getLogs({
     LogLevel? level,
     LogCategory? category,
@@ -264,6 +267,7 @@ class LoggerService {
     }
   }
 
+  // ============ الاعتراف ============
   static Future<bool> acknowledge(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -298,6 +302,7 @@ class LoggerService {
     }
   }
 
+  // ============ إحصائيات ============
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -329,6 +334,7 @@ class LoggerService {
     }
   }
 
+  // ============ حذف ============
   static Future<bool> deleteLog(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -364,6 +370,7 @@ class LoggerService {
     }
   }
 
+  // ============ تنظيف تلقائي ============
   static Future<void> _autoCleanup() async {
     try {
       final days = await getRetentionDays();
@@ -406,6 +413,7 @@ class LoggerService {
     await _notifyPendingCount();
   }
 
+  // ============ دوال مختصرة للأحداث ============
   static Future<void> logTransactionAdded({
     required String typeLabel,
     required String customerName,
@@ -478,6 +486,7 @@ class LoggerService {
         category: LogCategory.customer,
       );
 
+  // ============ المزامنة ============
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
@@ -498,6 +507,19 @@ class LoggerService {
         category: LogCategory.sync,
       );
 
+  static Future<void> logSyncUpload(String fileName) => info(
+        'رفع مزامنة',
+        'تم رفع ملف المزامنة: $fileName',
+        category: LogCategory.sync,
+      );
+
+  static Future<void> logSyncDownload(String fileName) => info(
+        'تنزيل مزامنة',
+        'تم تنزيل ملف المزامنة: $fileName',
+        category: LogCategory.sync,
+      );
+
+  // ============ النسخ الاحتياطي ============
   static Future<void> logBackupCreated({
     required int customersCount,
     required int transactionsCount,
@@ -509,6 +531,19 @@ class LoggerService {
         category: LogCategory.backup,
       );
 
+  // 🆕 النسخ الاحتياطي - استعادة
+  static Future<void> logBackupRestored({
+    required int customersAdded,
+    required int transactionsAdded,
+    required String mode,
+  }) =>
+      warning(
+        'استعادة نسخة',
+        'تمت الاستعادة ($mode): +$customersAdded حساب، +$transactionsAdded عملية',
+        category: LogCategory.backup,
+      );
+
+  // ============ الصوت ============
   static Future<void> logVoiceSuccess({
     required String text,
     String? audioPath,
@@ -540,6 +575,7 @@ class LoggerService {
         audioPath: audioPath,
       );
 
+  // ============ الإعدادات ============
   static Future<void> logSettingChanged({
     required String settingName,
     required String oldValue,
@@ -551,12 +587,14 @@ class LoggerService {
         category: LogCategory.settings,
       );
 
+  // ============ الأمان ============
   static Future<void> logSecurityEvent({
     required String action,
     required String description,
   }) =>
       info(action, description, category: LogCategory.security);
 
+  // ============ الرموز ============
   static Future<void> logCodeChanged({
     required String type,
     required String oldPrefix,
