@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
+import '../services/logger_service.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
@@ -108,6 +109,10 @@ class _CustomersTabState extends State<CustomersTab> {
     );
     if (ok == true) {
       await db.deleteCustomer(c.id!);
+
+      // 🆕 تسجيل الحدث
+      await LoggerService.logCustomerDeleted(c.name);
+
       _refresh();
     }
   }
@@ -157,6 +162,13 @@ class _CustomersTabState extends State<CustomersTab> {
     if (confirmed != true) return;
 
     await db.setCustomerActive(c.id!, !c.isActive);
+
+    // 🆕 تسجيل الحدث
+    await LoggerService.logCustomerStatusChanged(
+      name: c.name,
+      isActive: !c.isActive,
+    );
+
     await _refresh();
 
     if (!mounted) return;
@@ -191,7 +203,6 @@ class _CustomersTabState extends State<CustomersTab> {
       return;
     }
 
-    // جلب اسم المحاسب مسبقاً
     final accountant = await AccountantService.getAccountantName();
 
     String type = 'debt';
@@ -214,7 +225,6 @@ class _CustomersTabState extends State<CustomersTab> {
                 const Icon(Icons.add_card, color: Colors.teal),
                 const SizedBox(width: 8),
                 const Expanded(child: Text('عملية جديدة')),
-                // عرض اسم المحاسب
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -561,7 +571,6 @@ class _CustomersTabState extends State<CustomersTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
-                          // حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
@@ -573,14 +582,24 @@ class _CustomersTabState extends State<CustomersTab> {
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          if (!dialogContext.mounted) return;
-                          Navigator.pop(dialogContext);
-
+                          // 🆕 تسجيل الحدث
                           final typeLabel = {
                             'debt': 'دين',
                             'payment': 'سداد',
                             'return': 'مرتجع',
                           }[type]!;
+                          await LoggerService.logTransactionAdded(
+                            typeLabel: typeLabel,
+                            customerName: selectedCustomer!.name,
+                            amount: amt,
+                            currency: 'YER',
+                            code: code,
+                            accountant: accountant,
+                            source: 'manual',
+                          );
+
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
 
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
