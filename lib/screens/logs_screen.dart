@@ -40,10 +40,10 @@ class _LogsScreenState extends State<LogsScreen> {
     _loadStats();
     _loadLogs();
 
-    // الاستماع للتشغيل
-    _audioService.playerStateStream.listen((state) {
-      if (state == PlayerState.completed || state == PlayerState.stopped) {
-        if (mounted) setState(() => _playingPath = null);
+    // الاستماع لاكتمال التشغيل
+    _audioService.isCompletedStream.listen((isCompleted) {
+      if (isCompleted && mounted) {
+        setState(() => _playingPath = null);
       }
     });
   }
@@ -100,14 +100,12 @@ class _LogsScreenState extends State<LogsScreen> {
   Future<void> _togglePlay(LogEvent e) async {
     if (e.audioPath == null || e.audioPath!.isEmpty) return;
 
-    // إذا كان نفس الملف قيد التشغيل → أوقفه
     if (_playingPath == e.audioPath) {
       await _audioService.stopPlayback();
       if (mounted) setState(() => _playingPath = null);
       return;
     }
 
-    // تشغيل ملف جديد
     final ok = await _audioService.play(e.audioPath!);
     if (!mounted) return;
 
@@ -251,7 +249,8 @@ class _LogsScreenState extends State<LogsScreen> {
   Future<void> _pickDate({required bool isFrom}) async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: isFrom ? (_fromDate ?? DateTime.now()) : (_toDate ?? DateTime.now()),
+      initialDate:
+          isFrom ? (_fromDate ?? DateTime.now()) : (_toDate ?? DateTime.now()),
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
@@ -277,7 +276,8 @@ class _LogsScreenState extends State<LogsScreen> {
       }
 
       final sb = StringBuffer();
-      sb.writeln('التاريخ,المستوى,الفئة,الإجراء,الوصف,المحاسب,معرّف مرتبط,مسار الصوت,تم الاعتراف');
+      sb.writeln(
+          'التاريخ,المستوى,الفئة,الإجراء,الوصف,المحاسب,معرّف مرتبط,مسار الصوت,تم الاعتراف');
       for (final e in _logs) {
         sb.writeln([
           e.createdAt,
@@ -295,7 +295,7 @@ class _LogsScreenState extends State<LogsScreen> {
       final dir = await getTemporaryDirectory();
       final f = File(
           '${dir.path}/logs_${DateTime.now().millisecondsSinceEpoch}.csv');
-      await f.writeAsString('\uFEFF${sb.toString()}'); // BOM للعربية
+      await f.writeAsString('\uFEFF${sb.toString()}');
 
       await Share.shareXFiles([XFile(f.path)], text: 'سجل الأحداث');
     } catch (e) {
@@ -451,7 +451,6 @@ class _LogsScreenState extends State<LogsScreen> {
         ),
         body: Column(
           children: [
-            // ===== الإحصائيات =====
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
@@ -494,8 +493,6 @@ class _LogsScreenState extends State<LogsScreen> {
                 ],
               ),
             ),
-
-            // ===== البحث =====
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: TextField(
@@ -526,16 +523,12 @@ class _LogsScreenState extends State<LogsScreen> {
                 },
               ),
             ),
-
             const SizedBox(height: 8),
-
-            // ===== الفلاتر السريعة =====
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
                 children: [
-                  // المعلقة فقط
                   FilterChip(
                     avatar: pendingCount > 0
                         ? CircleAvatar(
@@ -558,7 +551,6 @@ class _LogsScreenState extends State<LogsScreen> {
                     },
                   ),
                   const SizedBox(width: 6),
-                  // الفئة
                   ...LogCategory.values.map((cat) {
                     final selected = _categoryFilter == cat;
                     final label = _categoryLabel(cat);
@@ -580,15 +572,11 @@ class _LogsScreenState extends State<LogsScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 4),
-
-            // ===== فلاتر المستوى والتاريخ =====
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
                 children: [
-                  // المستوى
                   Expanded(
                     child: DropdownButtonFormField<LogLevel?>(
                       value: _levelFilter,
@@ -616,7 +604,6 @@ class _LogsScreenState extends State<LogsScreen> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // من تاريخ
                   IconButton.filledTonal(
                     icon: const Icon(Icons.calendar_today, size: 18),
                     tooltip: _fromDate == null
@@ -624,7 +611,6 @@ class _LogsScreenState extends State<LogsScreen> {
                         : 'من: ${_fromDate!.year}/${_fromDate!.month}/${_fromDate!.day}',
                     onPressed: () => _pickDate(isFrom: true),
                   ),
-                  // إلى تاريخ
                   IconButton.filledTonal(
                     icon: const Icon(Icons.event, size: 18),
                     tooltip: _toDate == null
@@ -632,7 +618,6 @@ class _LogsScreenState extends State<LogsScreen> {
                         : 'إلى: ${_toDate!.year}/${_toDate!.month}/${_toDate!.day}',
                     onPressed: () => _pickDate(isFrom: false),
                   ),
-                  // مسح الفلاتر
                   IconButton(
                     icon: const Icon(Icons.clear_all),
                     tooltip: 'مسح الفلاتر',
@@ -641,11 +626,8 @@ class _LogsScreenState extends State<LogsScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 8),
             const Divider(height: 1),
-
-            // ===== القائمة =====
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -681,9 +663,6 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
-  // ============================================================
-  // ============ بطاقة الحدث ============================
-  // ============================================================
   Widget _buildLogCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
     final needsAck = e.needsAcknowledgement;
@@ -697,10 +676,8 @@ class _LogsScreenState extends State<LogsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ═══ السطر 1: الإيموجي + الإجراء + الوقت ═══
             Row(
               children: [
-                // المستوى + الفئة
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 2),
@@ -728,7 +705,6 @@ class _LogsScreenState extends State<LogsScreen> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                // الفئة
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 2),
@@ -754,10 +730,7 @@ class _LogsScreenState extends State<LogsScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 8),
-
-            // ═══ السطر 2: الإجراء ═══
             Text(
               e.action,
               style: const TextStyle(
@@ -766,8 +739,6 @@ class _LogsScreenState extends State<LogsScreen> {
               ),
             ),
             const SizedBox(height: 4),
-
-            // ═══ السطر 3: الوصف ═══
             Text(
               e.description,
               style: TextStyle(
@@ -775,8 +746,6 @@ class _LogsScreenState extends State<LogsScreen> {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-
-            // ═══ السطر 4: المحاسب + المعرّف ═══
             if ((e.accountant != null && e.accountant!.isNotEmpty) ||
                 (e.relatedId != null && e.relatedId!.isNotEmpty)) ...[
               const SizedBox(height: 6),
@@ -829,15 +798,11 @@ class _LogsScreenState extends State<LogsScreen> {
                 ],
               ),
             ],
-
-            // ═══ السطر 5: أزرار التشغيل والاعتراف ═══
             if (e.audioPath != null || needsAck) ...[
               const SizedBox(height: 10),
               Row(
                 children: [
-                  // زر التشغيل
-                  if (e.audioPath != null &&
-                      e.audioPath!.isNotEmpty)
+                  if (e.audioPath != null && e.audioPath!.isNotEmpty)
                     OutlinedButton.icon(
                       onPressed: () => _togglePlay(e),
                       icon: Icon(
@@ -856,7 +821,6 @@ class _LogsScreenState extends State<LogsScreen> {
                     ),
                   if (e.audioPath != null && needsAck)
                     const SizedBox(width: 8),
-                  // زر الاعتراف
                   if (needsAck)
                     FilledButton.icon(
                       onPressed: () => _acknowledge(e),
@@ -873,7 +837,6 @@ class _LogsScreenState extends State<LogsScreen> {
                       ),
                     ),
                   const Spacer(),
-                  // زر الحذف
                   IconButton(
                     icon: const Icon(Icons.delete_outline, size: 18),
                     tooltip: 'حذف',
@@ -902,9 +865,6 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
-  // ============================================================
-  // ============ أدوات مساعدة ============================
-  // ============================================================
   Widget _statCard(String label, int value, Color color, bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
