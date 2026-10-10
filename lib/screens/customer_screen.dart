@@ -10,6 +10,7 @@ import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/export_service.dart';
+import '../services/logger_service.dart';
 import '../services/pdf_service.dart';
 import '../services/whatsapp_service.dart';
 import 'add_account_screen.dart';
@@ -59,6 +60,14 @@ class _CustomerScreenState extends State<CustomerScreen> {
         _customer.isOverLimit(bal) &&
         _customer.maxBalance != null) {
       _alertShown = true;
+
+      // 🆕 تسجيل تجاوز الحد الأقصى
+      await LoggerService.logCustomerLimitExceeded(
+        name: _customer.name,
+        balance: bal,
+        maxBalance: _customer.maxBalance!,
+      );
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _showLimitWarning();
@@ -267,7 +276,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
-    // تحقق من حالة الحساب
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
         context: context,
@@ -303,7 +311,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
       if (proceed != true) return;
     }
 
-    // 🆕 جلب اسم المحاسب
     final accountant = await AccountantService.getAccountantName();
 
     final amountCtrl = TextEditingController();
@@ -327,7 +334,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           ? 'مرتجع جديد'
                           : 'دفعة سداد'),
                 ),
-                // 🆕 عرض اسم المحاسب
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -430,17 +436,32 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             extraText = itemsCtrl.text.trim();
                           }
 
-                          // 🆕 حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: _customer.id!,
                             code: code,
                             accountant: accountant,
-                            source: 'customer_screen', // ← 🆕
+                            source: 'customer_screen',
                             amount: amt,
                             type: storedType,
                             items: extraText,
                             createdAt: DateTime.now().toIso8601String(),
                           ));
+
+                          // 🆕 تسجيل الحدث
+                          final typeLabel = {
+                            'debt': 'دين',
+                            'payment': 'سداد',
+                            'return': 'مرتجع',
+                          }[type]!;
+                          await LoggerService.logTransactionAdded(
+                            typeLabel: typeLabel,
+                            customerName: _customer.name,
+                            amount: amt,
+                            currency: 'YER',
+                            code: code,
+                            accountant: accountant,
+                            source: 'customer_screen',
+                          );
 
                           final newBalance =
                               await db.customerBalance(_customer.id!);
@@ -637,6 +658,14 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
     if (confirmed == true) {
       await db.deleteTransaction(t.id!);
+
+      // 🆕 تسجيل الحدث
+      await LoggerService.logTransactionDeleted(
+        customerName: _customer.name,
+        amount: t.amount,
+        code: t.code,
+      );
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -663,7 +692,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    // الرمز
                     if (t.code != null && t.code!.isNotEmpty) ...[
                       InkWell(
                         onTap: () => _copyCode(t.code!),
@@ -698,7 +726,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
                       const SizedBox(height: 8),
                     ],
-                    // المحاسب
                     if (t.accountant != null && t.accountant!.isNotEmpty) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -726,7 +753,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ),
                       const SizedBox(height: 8),
                     ],
-                    // 🆕 المصدر
                     if (t.source != null && t.source!.isNotEmpty) ...[
                       Builder(builder: (_) {
                         final info = Transaction.sourceInfo(t.source);
@@ -892,7 +918,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     await ExportService.shareFile(f, text: 'كشف حساب ${_customer.name}');
   }
 
-  // ============ PDF مع فلترة التاريخ ============
+  // ============ PDF ============
   Future<void> _exportPdf() async {
     DateTime? fromDate;
     DateTime? toDate;
@@ -1037,7 +1063,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }
   }
 
-  // ============ ألوان الرصيد ============
   Color _getBalanceColor(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
 
@@ -1089,7 +1114,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     return isDark ? Colors.red.shade900.withOpacity(0.3) : Colors.red.shade50;
   }
 
-  // ============ Header ============
   Widget _buildHeader(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final catColor = Color(CustomerCategory.color(_customer.category));
@@ -1400,7 +1424,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }[t] ?? 'عميل';
   }
 
-  // ============ تبديل حالة الحساب ============
   Future<void> _toggleCustomerActive() async {
     final willStop = _customer.isActive;
 
@@ -1447,6 +1470,13 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     if (confirmed != true) return;
 
     await db.setCustomerActive(_customer.id!, !_customer.isActive);
+
+    // 🆕 تسجيل الحدث
+    await LoggerService.logCustomerStatusChanged(
+      name: _customer.name,
+      isActive: !_customer.isActive,
+    );
+
     await _load();
 
     if (!mounted) return;
@@ -1460,9 +1490,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
   }
 
-  // ============================================================
-  // بطاقة العملية (بنفس تصميم debts_tab مع المصدر)
-  // ============================================================
   Widget _buildTransactionCard(
       Transaction t, ThemeData theme, bool isDark) {
     final isDebt = t.type == 'debt';
@@ -1495,7 +1522,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ═══ السطر 1: الوقت (يمين) + المصدر + المحاسب + الرمز (يسار) ═══
               Row(
                 children: [
                   Text(
@@ -1506,7 +1532,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                     ),
                   ),
                   const Spacer(),
-                  // المصدر
                   if (t.source != null && t.source!.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1525,7 +1550,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         style: const TextStyle(fontSize: 11),
                       ),
                     ),
-                  // المحاسب
                   if (t.accountant != null && t.accountant!.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1556,7 +1580,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         ],
                       ),
                     ),
-                  // الرمز
                   if (t.code != null && t.code!.isNotEmpty)
                     InkWell(
                       onTap: () => _copyCode(t.code!),
@@ -1596,7 +1619,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 ],
               ),
               const SizedBox(height: 8),
-              // ═══ السطر 2: أيقونة + مبلغ ═══
               Row(
                 children: [
                   Container(
@@ -1629,7 +1651,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   ),
                 ],
               ),
-              // ═══ السطر 3: الأصناف ═══
               if (t.items.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Padding(
@@ -1912,6 +1933,10 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed == true) {
       await db.deleteCustomer(_customer.id!);
+
+      // 🆕 تسجيل الحدث
+      await LoggerService.logCustomerDeleted(_customer.name);
+
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
