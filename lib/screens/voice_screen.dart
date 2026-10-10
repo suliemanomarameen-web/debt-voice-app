@@ -23,8 +23,10 @@ class VoiceScreen extends StatefulWidget {
 class _VoiceScreenState extends State<VoiceScreen> {
   final _speech = SpeechService();
   final _audioService = AudioRecorderService();
+
   String _text = '';
   bool _listening = false;
+  bool _recording = false;
   ParsedEntry? _parsed;
   QueryResult? _queryResult;
   Customer? _foundCustomer;
@@ -37,7 +39,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   bool _isSavingAccount = false;
   bool _isProcessing = false;
 
-  // 🆕 مسار التسجيل الصوتي الحالي
   String? _currentAudioPath;
 
   @override
@@ -52,15 +53,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  Future<void> _toggle() async {
+  // ============================================================
+  // 🎤 زر التحدث (Speech-to-Text)
+  // ============================================================
+  Future<void> _toggleSpeech() async {
+    if (_recording) {
+      await _audioService.stopRecording();
+      setState(() => _recording = false);
+    }
+
     if (_listening) {
       await _speech.stop();
-      // 🆕 إيقاف التسجيل الصوتي
-      final path = await _audioService.stopRecording();
-      setState(() {
-        _listening = false;
-        _currentAudioPath = path;
-      });
+      setState(() => _listening = false);
       if (_text.isNotEmpty) _process();
       return;
     }
@@ -78,24 +82,86 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _currentAudioPath = null;
     });
 
-    // 🆕 بدء التسجيل الصوتي بالتوازي
-    try {
-      await _audioService.startRecording();
-    } catch (e) {
-      debugPrint('⚠️ [Voice] Could not start audio recording: $e');
-    }
-
     await _speech.listen(onResult: (text, isFinal) {
       if (!mounted) return;
       setState(() => _text = text);
       if (isFinal) {
         setState(() => _listening = false);
-        _audioService.stopRecording().then((path) {
-          if (mounted) setState(() => _currentAudioPath = path);
-          _process();
-        });
+        _process();
       }
     });
+  }
+
+  // ============================================================
+  // 🔴 زر التسجيل (Record فقط)
+  // ============================================================
+  Future<void> _toggleRecording() async {
+    if (_listening) {
+      await _speech.stop();
+      setState(() => _listening = false);
+    }
+
+    if (_recording) {
+      final path = await _audioService.stopRecording();
+      if (!mounted) return;
+      setState(() {
+        _recording = false;
+        _currentAudioPath = path;
+      });
+
+      if (path != null) {
+        await LoggerService.logVoiceSuccess(
+          text: '(تسجيل صوتي محفوظ - بدون تعرف)',
+          audioPath: path,
+          parsedAction: 'تسجيل صوتي',
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                      '✅ تم حفظ التسجيل — يمكنك الاستماع إليه من السجل'),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ فشل حفظ التسجيل'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _errorMessage = null;
+      _recording = true;
+      _currentAudioPath = null;
+    });
+
+    final ok = await _audioService.startRecording();
+    if (!ok) {
+      if (!mounted) return;
+      setState(() => _recording = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ فشل بدء التسجيل — تأكد من إذن الميكروفون'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   // ============================================================
@@ -111,7 +177,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final audioPath = _currentAudioPath;
 
     try {
-      // 1) استعلام
       if (QueryService.isQuery(_text)) {
         final result = await QueryService.query(_text);
         if (!mounted) return;
@@ -125,7 +190,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         return;
       }
 
-      // 2) معاملة
       final parsed = ParserService.parse(_text);
       if (parsed == null) {
         if (!mounted) return;
@@ -135,7 +199,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _isProcessing = false;
         });
 
-        // 🆕 تسجيل حدث فاشل
         await LoggerService.logVoiceFail(
           reason: 'لم يُفهم النص',
           text: _text,
@@ -172,7 +235,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _isProcessing = false;
         });
 
-        // 🆕 تسجيل حدث فاشل
         await LoggerService.logVoiceFail(
           reason: 'لا يوجد حساب بهذا الاسم',
           text: _text,
@@ -191,7 +253,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         }
       }
 
-      // 🆕 تسجيل حدث ناجح
       await LoggerService.logVoiceSuccess(
         text: _text,
         audioPath: audioPath,
@@ -252,7 +313,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // ============ حفظ حساب جديد ============
   Future<void> _saveAccount() async {
     if (_isSavingAccount) return;
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
@@ -279,7 +339,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         createdAt: DateTime.now().toIso8601String(),
       ));
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logCustomerAdded(_parsed!.customerName);
 
       if (!mounted) return;
@@ -302,9 +361,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  // ============================================================
-  // حفظ معاملة
-  // ============================================================
   Future<void> _saveTransaction() async {
     if (_isSavingTransaction) return;
 
@@ -352,7 +408,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
         customerId: c.id!,
         code: code,
         accountant: accountant,
-        source: 'voice', // ✅ من شاشة التسجيل
+        source: 'voice',
         amount: p.amount,
         currency: p.currency,
         type: storedType,
@@ -371,7 +427,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         'return': 'مرتجع',
       }[normalizedType] ?? 'عملية';
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logTransactionAdded(
         typeLabel: label,
         customerName: c.name,
@@ -380,7 +435,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         code: code,
         accountant: accountant,
         source: 'voice',
-        audioPath: _currentAudioPath,
       );
 
       TtsService.confirmTransaction(
@@ -461,6 +515,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    // ===== النص المكتشف =====
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
@@ -484,7 +539,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
                             _text.isEmpty
                                 ? (_listening
                                     ? '🎙️ أستمع...'
-                                    : 'اضغط الزر وتحدّث')
+                                    : _recording
+                                        ? '🔴 جاري التسجيل...'
+                                        : 'اختر: تحدث (STT) أو سجّل (ملف)')
                                 : _text,
                             style: TextStyle(
                                 fontSize: 16,
@@ -494,46 +551,162 @@ class _VoiceScreenState extends State<VoiceScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    GestureDetector(
-                      onTap: _isProcessing ? null : _toggle,
-                      child: Container(
-                        width: 120,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _listening
-                              ? Colors.red
-                              : theme.colorScheme.primary,
-                          boxShadow: [
-                            BoxShadow(
-                              color: (_listening
+                    const SizedBox(height: 24),
+
+                    // ===== 🆕 زرّان: التحدث + التسجيل =====
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // 🎤 زر التحدث
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: _isProcessing ? null : _toggleSpeech,
+                              child: Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _listening
                                       ? Colors.red
-                                      : theme.colorScheme.primary)
-                                  .withOpacity(0.4),
-                              blurRadius: 20,
-                              spreadRadius: 5,
+                                      : theme.colorScheme.primary,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: (_listening
+                                              ? Colors.red
+                                              : theme.colorScheme.primary)
+                                          .withOpacity(0.4),
+                                      blurRadius: 15,
+                                      spreadRadius: 3,
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  _listening ? Icons.stop : Icons.mic,
+                                  color: Colors.white,
+                                  size: 45,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _listening ? 'إيقاف' : 'تحدث',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: _listening
+                                    ? Colors.red
+                                    : theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            const Text(
+                              '(يتعرف على النص)',
+                              style: TextStyle(
+                                  fontSize: 10, color: Colors.grey),
                             ),
                           ],
                         ),
-                        child: Icon(
-                          _isProcessing
-                              ? Icons.hourglass_top
-                              : (_listening ? Icons.stop : Icons.mic),
-                          color: Colors.white,
-                          size: 50,
+
+                        // 🔴 زر التسجيل
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: _isProcessing ? null : _toggleRecording,
+                              child: Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _recording
+                                      ? Colors.red
+                                      : Colors.deepOrange,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: (_recording
+                                              ? Colors.red
+                                              : Colors.deepOrange)
+                                          .withOpacity(0.4),
+                                      blurRadius: 15,
+                                      spreadRadius: 3,
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  _recording
+                                      ? Icons.stop_circle
+                                      : Icons.fiber_manual_record,
+                                  color: Colors.white,
+                                  size: 45,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _recording ? 'إيقاف التسجيل' : 'سجّل',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: _recording
+                                    ? Colors.red
+                                    : theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            const Text(
+                              '(يحفظ ملف صوتي)',
+                              style: TextStyle(
+                                  fontSize: 10, color: Colors.grey),
+                            ),
+                          ],
                         ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ===== رسالة الحالة =====
+                    Text(
+                      _isProcessing
+                          ? '⏳ جاري المعالجة...'
+                          : _listening
+                              ? '🎙️ أستمع... تحدث بوضوح'
+                              : _recording
+                                  ? '🔴 جاري التسجيل... اضغط ⏹️ للحفظ'
+                                  : 'اضغط "تحدث" للتعرف، أو "سجّل" لحفظ الصوت',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                        _isProcessing
-                            ? 'جاري المعالجة...'
-                            : (_listening ? 'أستمع...' : 'اضغط للتحدث'),
-                        style: TextStyle(
-                            fontSize: 16,
-                            color: theme.colorScheme.onSurface)),
 
+                    // ===== معاينة الصوت =====
+                    if (_currentAudioPath != null && !_recording) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: Colors.green.withOpacity(0.4)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.check_circle,
+                                color: Colors.green, size: 20),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'تم حفظ التسجيل — يمكنك الاستماع إليه من السجل',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    // ===== الأخطاء =====
                     if (_errorMessage != null) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -557,6 +730,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
+                    // ===== الإجابة =====
                     if (_queryResult != null) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -605,6 +779,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
+                    // ===== اختيار العميل =====
                     if (_askingWhich && _matches.isNotEmpty) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -657,6 +832,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
+                    // ===== تأكيد العملية =====
                     if (_parsed != null && _foundCustomer != null) ...[
                       const SizedBox(height: 24),
                       Card(
@@ -727,6 +903,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
+                    // ===== إنشاء حساب =====
                     if (_parsed != null &&
                         _parsed!.intent == 'add_account' &&
                         _foundCustomer == null) ...[
