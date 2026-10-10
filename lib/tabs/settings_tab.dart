@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
+import '../models/log_event.dart';
 import '../services/accountant_service.dart';
 import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
@@ -13,12 +14,14 @@ import '../services/cloud_backup_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
+import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
 import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/theme_service.dart';
 import '../screens/gdrive_screen.dart';
+import '../screens/logs_screen.dart';
 import '../screens/stats_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -38,10 +41,8 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _gdriveSignedIn = false;
   bool _autoWhatsApp = false;
 
-  // 🆕 اسم المحاسب
   String? _accountantName;
 
-  // ===== إعدادات الرموز =====
   bool _codeEnabled = true;
   String _debtPrefix = 'D';
   String _paymentPrefix = 'P';
@@ -49,12 +50,10 @@ class _SettingsTabState extends State<SettingsTab> {
   int _codeDigits = 4;
   String _codeMode = 'sequential';
 
-  // ===== إعدادات PDF =====
   bool _pdfShowCodes = true;
   bool _pdfHideCategory = false;
   bool _pdfHideAccountType = false;
 
-  // ===== إعدادات النسخ السحابي =====
   bool _cloudBackupEnabled = false;
   BackupFrequency _cloudFrequency = BackupFrequency.daily;
   int _cloudMaxBackups = 10;
@@ -73,7 +72,6 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadAccountantName();
   }
 
-  // ========== تحميل الإعدادات ==========
   Future<void> _loadAccountantName() async {
     final name = await AccountantService.getAccountantName();
     if (!mounted) return;
@@ -221,8 +219,9 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== 🆕 اسم المحاسب ==============
+  // ============== اسم المحاسب ==============
   Future<void> _editAccountantName() async {
+    final oldName = _accountantName;
     final ctrl = TextEditingController(text: _accountantName ?? '');
     final result = await showDialog<String>(
       context: context,
@@ -289,6 +288,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == '__CLEAR__') {
       await AccountantService.clearAccountantName();
+      // 🆕 تسجيل الحدث
+      await LoggerService.info(
+        'حذف اسم المحاسب',
+        'الاسم السابق: "${oldName ?? ""}"',
+        category: LogCategory.settings,
+      );
       if (!mounted) return;
       setState(() => _accountantName = null);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -301,14 +306,24 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     if (result.isEmpty) {
-      // إذا الحقل فارغ، احذف الاسم
       await AccountantService.clearAccountantName();
+      await LoggerService.info(
+        'حذف اسم المحاسب',
+        'الاسم السابق: "${oldName ?? ""}"',
+        category: LogCategory.settings,
+      );
       if (!mounted) return;
       setState(() => _accountantName = null);
       return;
     }
 
     await AccountantService.setAccountantName(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.info(
+      oldName == null || oldName.isEmpty ? 'إضافة اسم محاسب' : 'تغيير اسم المحاسب',
+      'الاسم: "$result"${oldName != null ? ' (السابق: "$oldName")' : ''}',
+      category: LogCategory.settings,
+    );
     if (!mounted) return;
     setState(() => _accountantName = result);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -327,6 +342,13 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _backupBusy = false);
 
     if (result.success) {
+      // 🆕 تسجيل الحدث
+      await LoggerService.logBackupCreated(
+        customersCount: result.customersCount,
+        transactionsCount: result.transactionsCount,
+        cloud: false,
+      );
+
       await showDialog(
         context: context,
         builder: (ctx) => Directionality(
@@ -525,6 +547,13 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
+    // 🆕 تسجيل الحدث
+    await LoggerService.logBackupRestored(
+      customersAdded: result.customersAdded,
+      transactionsAdded: result.transactionsAdded,
+      mode: mode,
+    );
+
     showDialog(
       context: context,
       builder: (ctx) => Directionality(
@@ -561,6 +590,12 @@ class _SettingsTabState extends State<SettingsTab> {
   // ============== النسخ التلقائي المحلي ==============
   Future<void> _toggleAutoBackup(bool v) async {
     await AutoBackupService.setEnabled(v);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'النسخ التلقائي المحلي',
+      oldValue: _autoEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
     if (!mounted) return;
     setState(() => _autoEnabled = v);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -619,6 +654,12 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (result == null) return;
     await AutoBackupService.setFrequency(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'تكرار النسخ التلقائي',
+      oldValue: _freqLabel(_autoFreq),
+      newValue: _freqLabel(result),
+    );
     if (!mounted) return;
     setState(() => _autoFreq = result);
   }
@@ -642,6 +683,12 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     await CloudBackupService.setEnabled(v);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'النسخ السحابي التلقائي',
+      oldValue: _cloudBackupEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
     if (!mounted) return;
     setState(() => _cloudBackupEnabled = v);
 
@@ -683,6 +730,12 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (result == null) return;
     await CloudBackupService.setFrequency(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'تكرار النسخ السحابي',
+      oldValue: CloudBackupService.frequencyLabel(_cloudFrequency),
+      newValue: CloudBackupService.frequencyLabel(result),
+    );
     if (!mounted) return;
     setState(() => _cloudFrequency = result);
   }
@@ -747,6 +800,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CloudBackupService.setMaxBackups(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'عدد النسخ السحابية المحفوظة',
+      oldValue: _cloudMaxBackups < 0 ? 'غير نهائي' : '$_cloudMaxBackups',
+      newValue: result < 0 ? 'غير نهائي' : '$result',
+    );
     if (!mounted) return;
     setState(() => _cloudMaxBackups = result);
   }
@@ -768,6 +827,8 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
+    // 🆕 تسجيل الحدث (النسخ السحابي التلقائي في CloudBackupService يسجل بنفسه)
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('تم تشغيل النسخ السحابي'),
@@ -779,6 +840,12 @@ class _SettingsTabState extends State<SettingsTab> {
   // ============== إعدادات الرموز ==============
   Future<void> _toggleCodeEnabled(bool v) async {
     await CodeService.setEnabled(v);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'تفعيل رموز العمليات',
+      oldValue: _codeEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
     if (!mounted) return;
     setState(() => _codeEnabled = v);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -909,6 +976,14 @@ class _SettingsTabState extends State<SettingsTab> {
         );
       }
 
+      // 🆕 تسجيل الحدث
+      await LoggerService.logCodeChanged(
+        type: label,
+        oldPrefix: oldPrefix,
+        newPrefix: newPrefix,
+        updatedCount: updateOld == true ? 0 : 0,
+      );
+
       // حفظ البادئة الجديدة
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
@@ -977,6 +1052,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CodeService.setDigits(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'عدد أرقام الرموز',
+      oldValue: '$_codeDigits',
+      newValue: '$result',
+    );
     if (!mounted) return;
     setState(() => _codeDigits = result);
   }
@@ -1044,6 +1125,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CodeService.setMode(result);
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSettingChanged(
+      settingName: 'طريقة توليد الرمز',
+      oldValue: CodeService.describeMode(_codeMode),
+      newValue: CodeService.describeMode(result),
+    );
     if (!mounted) return;
     setState(() => _codeMode = result);
   }
@@ -1058,6 +1145,22 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _togglePdfSetting(String key, bool v) async {
     final sp = await SharedPreferences.getInstance();
     await sp.setBool(key, v);
+
+    // 🆕 تسجيل الحدث
+    String settingName;
+    if (key == 'pdf_show_codes') {
+      settingName = 'إظهار رموز العمليات في PDF';
+    } else if (key == 'pdf_hide_category') {
+      settingName = 'إخفاء التصنيف من PDF';
+    } else {
+      settingName = 'إخفاء نوع الحساب من PDF';
+    }
+    await LoggerService.logSettingChanged(
+      settingName: settingName,
+      oldValue: v ? 'مُعطّل' : 'مُفعّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
+
     if (!mounted) return;
     setState(() {
       if (key == 'pdf_show_codes') _pdfShowCodes = v;
@@ -1075,7 +1178,7 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ========== 🆕 قسم المحاسب ==========
+          // ========== قسم المحاسب ==========
           const _SectionHeader('المحاسب'),
           ListTile(
             leading: Icon(
@@ -1122,6 +1225,21 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 8),
 
+          // ========== 🆕 قسم السجل ==========
+          const _SectionHeader('سجل الأحداث'),
+          ListTile(
+            leading: const Icon(Icons.history, color: Colors.deepPurple),
+            title: const Text('عرض سجل الأحداث'),
+            subtitle: const Text('كل ما يحدث داخل التطبيق'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LogsScreen()),
+              );
+            },
+          ),
+
           // ========== التهيئة ==========
           const _SectionHeader('التهيئة'),
           ListTile(
@@ -1161,6 +1279,12 @@ class _SettingsTabState extends State<SettingsTab> {
               setState(() => _autoWhatsApp = v);
               final sp = await SharedPreferences.getInstance();
               await sp.setBool('auto_whatsapp', v);
+              // 🆕 تسجيل الحدث
+              await LoggerService.logSettingChanged(
+                settingName: 'إرسال واتساب تلقائياً',
+                oldValue: v ? 'مُعطّل' : 'مُفعّل',
+                newValue: v ? 'مُفعّل' : 'مُعطّل',
+              );
             },
           ),
 
@@ -1786,6 +1910,13 @@ class _SettingsTabState extends State<SettingsTab> {
     await AuthService.setSecurity(
         question: result['q']!, answer: result['a']!);
     await AuthService.setEnabled(true);
+
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSecurityEvent(
+      action: 'تفعيل القفل',
+      description: 'تم تفعيل قفل التطبيق بكلمة مرور',
+    );
+
     if (mounted) setState(() {});
   }
 
@@ -1835,6 +1966,13 @@ class _SettingsTabState extends State<SettingsTab> {
     if (ok != true) return;
     await AuthService.setEnabled(false);
     await AuthService.removePassword();
+
+    // 🆕 تسجيل الحدث
+    await LoggerService.logSecurityEvent(
+      action: 'تعطيل القفل',
+      description: 'تم تعطيل قفل التطبيق',
+    );
+
     if (mounted) setState(() {});
   }
 }
