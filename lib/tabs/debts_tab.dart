@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
+import '../services/logger_service.dart';
 import '../services/sync_service.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
@@ -367,6 +368,9 @@ class _DebtsTabState extends State<DebtsTab> {
     if (!mounted) return;
 
     if (!result.success) {
+      // 🆕 تسجيل فشل المزامنة
+      await LoggerService.logSyncError(result.message);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result.message),
@@ -374,15 +378,24 @@ class _DebtsTabState extends State<DebtsTab> {
           duration: const Duration(seconds: 2),
         ),
       );
-    } else if (result.transactionsAdded == 0 &&
-        result.customersAdded == 0 &&
-        result.message == 'لا توجد تغييرات') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد تغييرات'),
-          duration: Duration(seconds: 1),
-        ),
+    } else {
+      // 🆕 تسجيل نجاح المزامنة
+      await LoggerService.logSyncSuccess(
+        transactionsAdded: result.transactionsAdded,
+        customersAdded: result.customersAdded,
+        hasConflict: result.hasConflict,
       );
+
+      if (result.transactionsAdded == 0 &&
+          result.customersAdded == 0 &&
+          result.message == 'لا توجد تغييرات') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا توجد تغييرات'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
     }
 
     await _loadSyncInfo();
@@ -404,7 +417,6 @@ class _DebtsTabState extends State<DebtsTab> {
       return;
     }
 
-    // 🆕 جلب اسم المحاسب مسبقاً
     final accountant = await AccountantService.getAccountantName();
 
     String type = 'debt';
@@ -427,7 +439,6 @@ class _DebtsTabState extends State<DebtsTab> {
                 const Icon(Icons.add_card, color: Colors.teal),
                 const SizedBox(width: 8),
                 const Expanded(child: Text('عملية جديدة')),
-                // 🆕 عرض اسم المحاسب
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -774,7 +785,6 @@ class _DebtsTabState extends State<DebtsTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
-                          // 🆕 حفظ مع المحاسب والمصدر
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
@@ -785,6 +795,22 @@ class _DebtsTabState extends State<DebtsTab> {
                             items: extraText,
                             createdAt: DateTime.now().toIso8601String(),
                           ));
+
+                          // 🆕 تسجيل الحدث
+                          final typeLabelForLog = {
+                            'debt': 'دين',
+                            'payment': 'سداد',
+                            'return': 'مرتجع',
+                          }[type]!;
+                          await LoggerService.logTransactionAdded(
+                            typeLabel: typeLabelForLog,
+                            customerName: selectedCustomer!.name,
+                            amount: amt,
+                            currency: 'YER',
+                            code: code,
+                            accountant: accountant,
+                            source: 'manual',
+                          );
 
                           if (!dialogContext.mounted) return;
                           Navigator.pop(dialogContext);
@@ -988,7 +1014,6 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
-  // ============ ألوان الرصيد ============
   Color _balanceColor(Customer c, double bal, ThemeData theme) {
     if (c.maxBalance != null && c.maxBalance! > 0) {
       if (bal >= c.maxBalance!) {
@@ -1006,7 +1031,6 @@ class _DebtsTabState extends State<DebtsTab> {
     return c.maxBalance != null && c.maxBalance! > 0 && bal >= c.maxBalance!;
   }
 
-  // ============ قسم أعلى المدينين ============
   Widget _buildTopDebtorsSection(ThemeData theme) {
     if (_topDebtors.isEmpty) return const SizedBox.shrink();
 
@@ -1170,9 +1194,6 @@ class _DebtsTabState extends State<DebtsTab> {
     );
   }
 
-  // ============================================================
-  // بطاقة العملية (الرمز + المحاسب + المصدر في أعلى اليسار)
-  // ============================================================
   Widget _buildTransactionCard(
       Customer c, Transaction t, ThemeData theme, bool isDark) {
     final isDebt = t.type == 'debt';
@@ -1191,7 +1212,6 @@ class _DebtsTabState extends State<DebtsTab> {
       typeIcon = Icons.arrow_downward;
     }
 
-    // 🆕 معلومات المصدر
     final sourceInfo = Transaction.sourceInfo(t.source);
     final sourceColor = Color(sourceInfo.color);
 
@@ -1210,7 +1230,6 @@ class _DebtsTabState extends State<DebtsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ═══ السطر 1: الوقت (يمين) + المصدر + المحاسب + الرمز (يسار) ═══
               Row(
                 children: [
                   Text(
@@ -1221,7 +1240,6 @@ class _DebtsTabState extends State<DebtsTab> {
                     ),
                   ),
                   const Spacer(),
-                  // 🆕 المصدر
                   if (t.source != null && t.source!.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1302,7 +1320,6 @@ class _DebtsTabState extends State<DebtsTab> {
                 ],
               ),
               const SizedBox(height: 8),
-              // ═══ السطر 2: أيقونة + عميل + مبلغ ═══
               Row(
                 children: [
                   Container(
@@ -1333,7 +1350,6 @@ class _DebtsTabState extends State<DebtsTab> {
                   ),
                 ],
               ),
-              // ═══ السطر 3: الأصناف ═══
               if (t.items.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Padding(
