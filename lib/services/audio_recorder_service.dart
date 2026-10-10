@@ -5,15 +5,13 @@ import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// خدمة تسجيل الصوت وإعادة تشغيله
 class AudioRecorderService {
   static final AudioRecorderService _instance =
       AudioRecorderService._internal();
   factory AudioRecorderService() => _instance;
   AudioRecorderService._internal();
 
-  // ⚠️ record 4.x يستخدم Record وليس AudioRecorder
-  final Record _recorder = Record();
+  final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
 
   bool _isRecording = false;
@@ -31,7 +29,6 @@ class AudioRecorderService {
     return DateTime.now().difference(_recordingStartTime!);
   }
 
-  // ========== التهيئة ==========
   static Future<void> init() async {
     try {
       await _getRecordingsDir();
@@ -49,7 +46,6 @@ class AudioRecorderService {
     return dir;
   }
 
-  // ========== بدء التسجيل ==========
   Future<bool> startRecording() async {
     try {
       if (_isRecording) {
@@ -69,12 +65,13 @@ class AudioRecorderService {
           .replaceAll('.', '-');
       final path = '${dir.path}/rec_$timestamp.m4a';
 
-      // ⚠️ record 4.x API: path positional + named config
       await _recorder.start(
-        path,
-        encoder: AudioEncoder.aacLc,
-        bitRate: 64000,
-        sampleRate: 44100,
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+        ),
+        path: path,
       );
 
       _isRecording = true;
@@ -92,7 +89,6 @@ class AudioRecorderService {
     }
   }
 
-  // ========== إيقاف التسجيل ==========
   Future<String?> stopRecording() async {
     try {
       if (!_isRecording) return null;
@@ -146,7 +142,6 @@ class AudioRecorderService {
     }
   }
 
-  // ========== تشغيل ==========
   Future<bool> play(String filePath) async {
     try {
       final file = File(filePath);
@@ -176,15 +171,9 @@ class AudioRecorderService {
     if (_isRecording) await stopRecording();
   }
 
-  // ========== Streams ==========
-  /// 🆕 Stream<bool> - true عندما يكون التشغيل نشطاً
-  Stream<bool> get isPlayingStream => _player.onPlayerStateChanged
-      .map((s) => s == PlayerState.playing);
-
   Stream<bool> get isCompletedStream => _player.onPlayerStateChanged
       .map((s) => s == PlayerState.completed || s == PlayerState.stopped);
 
-  // ========== معلومات ==========
   static Future<bool> fileExists(String path) async {
     try {
       return await File(path).exists();
@@ -214,7 +203,6 @@ class AudioRecorderService {
     return false;
   }
 
-  // ========== التنظيف ==========
   static Future<int> getRetentionDays() async {
     final sp = await SharedPreferences.getInstance();
     return sp.getInt(_keyRetentionDays) ?? _defaultRetentionDays;
