@@ -4,45 +4,33 @@ import '../db/database_helper.dart';
 import '../models/log_event.dart';
 import 'accountant_service.dart';
 
-/// خدمة تسجيل الأحداث
-/// - تحفظ كل حدث في قاعدة البيانات
-/// - تبث الأحداث الجديدة لمن يستمع (Stream)
-/// - تدير التنظيف التلقائي
 class LoggerService {
   static final LoggerService _instance = LoggerService._internal();
   factory LoggerService() => _instance;
   LoggerService._internal();
 
-  // ========== الحد الأدنى للحدث ==========
   static const int _maxLogs = 5000;
   static const int _retentionDays = 30;
 
-  // ========== Stream للأحداث الجديدة ==========
   static final _eventController = StreamController<LogEvent>.broadcast();
   static Stream<LogEvent> get eventStream => _eventController.stream;
 
-  // ========== بث عدد التنبيهات المعلقة ==========
   static final _pendingCountController = StreamController<int>.broadcast();
   static Stream<int> get pendingCountStream => _pendingCountController.stream;
 
-  // ========== المفاتيح ==========
   static const String _keyRetentionDays = 'log_retention_days';
   static const String _keyMaxLogs = 'log_max_count';
-  static const String _keyNotificationsEnabled = 'log_notifications_enabled';
 
-  /// 🆕 ضبط مدة الاحتفاظ (بالأيام) — 0 = لا تحذف
   static Future<void> setRetentionDays(int days) async {
-    final db = await DatabaseHelper.instance.database;
-    // حفظ في قاعدة البيانات (جدول settings بسيط)
     try {
-      await db.insert('settings', {
-        'key': _keyRetentionDays,
-        'value': days.toString(),
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      final db = await DatabaseHelper.instance.database;
+      await db.rawInsert(
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+        [_keyRetentionDays, days.toString()],
+      );
     } catch (_) {}
   }
 
-  /// 🆕 جلب مدة الاحتفاظ
   static Future<int> getRetentionDays() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -55,9 +43,6 @@ class LoggerService {
     }
   }
 
-  // ============================================================
-  // ============ 🆕 حفظ حدث جديد ============================
-  // ============================================================
   static Future<int> log({
     required String action,
     required String description,
@@ -69,7 +54,6 @@ class LoggerService {
     String? audioPath,
   }) async {
     try {
-      // جلب اسم المحاسب إذا لم يُمرَّر
       if (accountant == null) {
         try {
           accountant = await AccountantService.getAccountantName();
@@ -85,23 +69,21 @@ class LoggerService {
         relatedId: relatedId,
         metadata: LogEvent.encodeMetadata(metadata),
         audioPath: audioPath,
-        isAcknowledged: !(level == LogLevel.error || level == LogLevel.warning),
+        isAcknowledged:
+            !(level == LogLevel.error || level == LogLevel.warning),
         createdAt: DateTime.now().toIso8601String(),
       );
 
       final db = await DatabaseHelper.instance.database;
       final id = await db.insert('log_events', event.toMap());
 
-      // بث الحدث لمن يستمع
       final saved = event.copyWith(id: id);
       if (!_eventController.isClosed) {
         _eventController.add(saved);
       }
 
-      // تحديث عدد التنبيهات المعلقة
       _notifyPendingCount();
 
-      // تنظيف دوري (كل 100 حدث مثلاً — خفيف)
       if (id % 50 == 0) {
         unawaited(_autoCleanup());
       }
@@ -113,17 +95,13 @@ class LoggerService {
     }
   }
 
-  // ============================================================
-  // ============ 🆕 دوال مختصرة (Helpers) =====================
-  // ============================================================
-
-  /// حدث معلومة
   static Future<void> info(
     String action,
     String description, {
     LogCategory category = LogCategory.system,
     String? relatedId,
     Map<String, dynamic>? metadata,
+    String? audioPath,
   }) =>
       log(
         action: action,
@@ -132,15 +110,16 @@ class LoggerService {
         category: category,
         relatedId: relatedId,
         metadata: metadata,
+        audioPath: audioPath,
       );
 
-  /// حدث نجاح
   static Future<void> success(
     String action,
     String description, {
     LogCategory category = LogCategory.system,
     String? relatedId,
     Map<String, dynamic>? metadata,
+    String? audioPath,
   }) =>
       log(
         action: action,
@@ -149,9 +128,9 @@ class LoggerService {
         category: category,
         relatedId: relatedId,
         metadata: metadata,
+        audioPath: audioPath,
       );
 
-  /// حدث تحذير
   static Future<void> warning(
     String action,
     String description, {
@@ -170,8 +149,7 @@ class LoggerService {
         audioPath: audioPath,
       );
 
-  /// حدث خطأ
-  static Future<void> error(
+  static Future<void> logError(
     String action,
     String description, {
     LogCategory category = LogCategory.system,
@@ -189,11 +167,6 @@ class LoggerService {
         audioPath: audioPath,
       );
 
-  // ============================================================
-  // ============ قراءة الأحداث ============================
-  // ============================================================
-
-  /// جلب الأحداث مع فلاتر
   static Future<List<LogEvent>> getLogs({
     LogLevel? level,
     LogCategory? category,
@@ -206,7 +179,6 @@ class LoggerService {
   }) async {
     try {
       final db = await DatabaseHelper.instance.database;
-
       final where = <String>[];
       final args = <dynamic>[];
 
@@ -238,11 +210,9 @@ class LoggerService {
         args.add(q);
       }
 
-      final whereStr = where.isEmpty ? null : where.join(' AND ');
-
       final r = await db.query(
         'log_events',
-        where: whereStr,
+        where: where.isEmpty ? null : where.join(' AND '),
         whereArgs: args.isEmpty ? null : args,
         orderBy: 'created_at DESC',
         limit: limit,
@@ -256,18 +226,15 @@ class LoggerService {
     }
   }
 
-  /// جلب كل الأحداث (بدون فلتر)
   static Future<List<LogEvent>> getAllLogs({int limit = 2000}) async {
     return getLogs(limit: limit);
   }
 
-  /// عدد التنبيهات المعلقة (للشارة على التبويب)
   static Future<int> getPendingCount() async {
     try {
       final db = await DatabaseHelper.instance.database;
       final r = await db.rawQuery('''
-        SELECT COUNT(*) AS cnt
-        FROM log_events
+        SELECT COUNT(*) AS cnt FROM log_events
         WHERE is_acknowledged = 0
           AND (level = 'error' OR level = 'warning')
       ''');
@@ -277,13 +244,11 @@ class LoggerService {
     }
   }
 
-  /// 🆕 عدد التنبيهات لكل فئة (إحصائية)
   static Future<Map<String, int>> getPendingCountByCategory() async {
     try {
       final db = await DatabaseHelper.instance.database;
       final r = await db.rawQuery('''
-        SELECT category, COUNT(*) AS cnt
-        FROM log_events
+        SELECT category, COUNT(*) AS cnt FROM log_events
         WHERE is_acknowledged = 0
           AND (level = 'error' OR level = 'warning')
         GROUP BY category
@@ -299,11 +264,6 @@ class LoggerService {
     }
   }
 
-  // ============================================================
-  // ============ 🆕 الاعتراف بالأحداث ============================
-  // ============================================================
-
-  /// الاعتراف بحدث واحد (إيقاف التنبيه)
   static Future<bool> acknowledge(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -318,13 +278,11 @@ class LoggerService {
         return true;
       }
       return false;
-    } catch (e) {
-      debugPrint('❌ [Logger] acknowledge error: $e');
+    } catch (_) {
       return false;
     }
   }
 
-  /// الاعتراف بكل الأحداث المعلقة
   static Future<int> acknowledgeAll() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -335,30 +293,24 @@ class LoggerService {
       );
       _notifyPendingCount();
       return r;
-    } catch (e) {
-      debugPrint('❌ [Logger] acknowledgeAll error: $e');
+    } catch (_) {
       return 0;
     }
   }
 
-  // ============================================================
-  // ============ إحصائيات ============================
-  // ============================================================
-
-  /// إحصائيات عامة للسجل
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
-
       final total = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
       final errors = await db.rawQuery(
           "SELECT COUNT(*) AS c FROM log_events WHERE level = 'error'");
       final warnings = await db.rawQuery(
           "SELECT COUNT(*) AS c FROM log_events WHERE level = 'warning'");
       final today = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM log_events WHERE created_at >= ?",
-          [DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
-              .toIso8601String()]);
+          "SELECT COUNT(*) AS c FROM log_events WHERE created_at >= ?", [
+        DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+            .toIso8601String()
+      ]);
       final pending = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
@@ -372,35 +324,22 @@ class LoggerService {
         'today': (today.first['c'] as int?) ?? 0,
         'pending': (pending.first['c'] as int?) ?? 0,
       };
-    } catch (e) {
-      debugPrint('❌ [Logger] getStats error: $e');
-      return {
-        'total': 0,
-        'errors': 0,
-        'warnings': 0,
-        'today': 0,
-        'pending': 0,
-      };
+    } catch (_) {
+      return {'total': 0, 'errors': 0, 'warnings': 0, 'today': 0, 'pending': 0};
     }
   }
 
-  // ============================================================
-  // ============ حذف ============================
-  // ============================================================
-
-  /// حذف حدث واحد
   static Future<bool> deleteLog(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
       await db.delete('log_events', where: 'id = ?', whereArgs: [id]);
       _notifyPendingCount();
       return true;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
 
-  /// حذف كل الأحداث
   static Future<void> clearAll() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -411,40 +350,27 @@ class LoggerService {
     }
   }
 
-  /// حذف الأحداث الأقدم من X يوم
   static Future<int> deleteOlderThan(int days) async {
     try {
-      final cutoff = DateTime.now()
-          .subtract(Duration(days: days))
-          .toIso8601String();
+      final cutoff =
+          DateTime.now().subtract(Duration(days: days)).toIso8601String();
       final db = await DatabaseHelper.instance.database;
-      final r = await db.delete(
-        'log_events',
-        where: 'created_at < ?',
-        whereArgs: [cutoff],
-      );
+      final r = await db.delete('log_events',
+          where: 'created_at < ?', whereArgs: [cutoff]);
       _notifyPendingCount();
       return r;
-    } catch (e) {
-      debugPrint('❌ [Logger] deleteOlderThan error: $e');
+    } catch (_) {
       return 0;
     }
   }
 
-  // ============================================================
-  // ============ تنظيف تلقائي ============================
-  // ============================================================
-
-  /// يُستدعى تلقائياً بعد كل 50 حدث
   static Future<void> _autoCleanup() async {
     try {
       final days = await getRetentionDays();
-      if (days <= 0) return; // لا تحذف
+      if (days > 0) {
+        await deleteOlderThan(days);
+      }
 
-      // حذف الأقدم من X يوم
-      await deleteOlderThan(days);
-
-      // حذف الأقدم إذا تجاوز الحد الأقصى
       final db = await DatabaseHelper.instance.database;
       final count = await db.rawQuery('SELECT COUNT(*) AS c FROM log_events');
       final total = (count.first['c'] as int?) ?? 0;
@@ -452,11 +378,8 @@ class LoggerService {
       if (total > _maxLogs) {
         final excess = total - _maxLogs;
         await db.rawQuery('''
-          DELETE FROM log_events
-          WHERE id IN (
-            SELECT id FROM log_events
-            ORDER BY created_at ASC
-            LIMIT $excess
+          DELETE FROM log_events WHERE id IN (
+            SELECT id FROM log_events ORDER BY created_at ASC LIMIT $excess
           )
         ''');
         _notifyPendingCount();
@@ -466,14 +389,9 @@ class LoggerService {
     }
   }
 
-  /// تنظيف يدوي (للاستخدام من الإعدادات)
   static Future<void> cleanup() async {
     await _autoCleanup();
   }
-
-  // ============================================================
-  // ============ بث عدد التنبيهات ============================
-  // ============================================================
 
   static Future<void> _notifyPendingCount() async {
     try {
@@ -484,18 +402,12 @@ class LoggerService {
     } catch (_) {}
   }
 
-  /// طلب تحديث عدد التنبيهات يدوياً
   static Future<void> refreshPendingCount() async {
     await _notifyPendingCount();
   }
 
-  // ============================================================
-  // ============ 🆕 دوال مختصرة للأحداث الشائعة ==================
-  // ============================================================
-
-  // ===== العمليات =====
   static Future<void> logTransactionAdded({
-    required String typeLabel, // دين / سداد / مرتجع
+    required String typeLabel,
     required String customerName,
     required double amount,
     required String currency,
@@ -510,6 +422,7 @@ class LoggerService {
         'تم تسجيل $typeLabel بمبلغ ${amount.toStringAsFixed(0)} $currency للعميل "$customerName"',
         category: LogCategory.transaction,
         relatedId: relatedId,
+        audioPath: audioPath,
         metadata: {
           'customer': customerName,
           'amount': amount,
@@ -518,7 +431,6 @@ class LoggerService {
           'code': code,
           'accountant': accountant,
           'source': source,
-          'audio_path': audioPath,
         },
       );
 
@@ -533,7 +445,6 @@ class LoggerService {
         category: LogCategory.transaction,
       );
 
-  // ===== العملاء =====
   static Future<void> logCustomerAdded(String name) => success(
         'إضافة عميل',
         'تم إنشاء حساب جديد: "$name"',
@@ -551,16 +462,10 @@ class LoggerService {
     required bool isActive,
   }) =>
       isActive
-          ? success(
-              'تفعيل حساب',
-              'تم تفعيل حساب "$name"',
-              category: LogCategory.customer,
-            )
-          : warning(
-              'إيقاف حساب',
-              'تم إيقاف حساب "$name"',
-              category: LogCategory.customer,
-            );
+          ? success('تفعيل حساب', 'تم تفعيل حساب "$name"',
+              category: LogCategory.customer)
+          : warning('إيقاف حساب', 'تم إيقاف حساب "$name"',
+              category: LogCategory.customer);
 
   static Future<void> logCustomerLimitExceeded({
     required String name,
@@ -569,16 +474,10 @@ class LoggerService {
   }) =>
       warning(
         'تجاوز الحد الأقصى',
-        'العميل "$name" تجاوز الحد الأقصى. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
+        'العميل "$name" تجاوز الحد. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
         category: LogCategory.customer,
-        metadata: {
-          'customer': name,
-          'balance': balance,
-          'max_balance': maxBalance,
-        },
       );
 
-  // ===== المزامنة =====
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
@@ -591,32 +490,14 @@ class LoggerService {
             '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
             '${transactionsAdded == 0 && customersAdded == 0 ? " (لا تغييرات)" : ""}',
         category: LogCategory.sync,
-        metadata: {
-          'transactions_added': transactionsAdded,
-          'customers_added': customersAdded,
-          'conflict': hasConflict,
-        },
       );
 
-  static Future<void> logSyncError(String error) => error(
+  static Future<void> logSyncError(String errMsg) => logError(
         'فشل المزامنة',
-        'خطأ: $error',
+        'خطأ: $errMsg',
         category: LogCategory.sync,
       );
 
-  static Future<void> logSyncUpload(String fileName) => info(
-        'رفع مزامنة',
-        'تم رفع ملف المزامنة: $fileName',
-        category: LogCategory.sync,
-      );
-
-  static Future<void> logSyncDownload(String fileName) => info(
-        'تنزيل مزامنة',
-        'تم تنزيل ملف المزامنة: $fileName',
-        category: LogCategory.sync,
-      );
-
-  // ===== النسخ الاحتياطي =====
   static Future<void> logBackupCreated({
     required int customersCount,
     required int transactionsCount,
@@ -624,22 +505,10 @@ class LoggerService {
   }) =>
       success(
         cloud ? 'نسخة سحابية' : 'نسخة محلية',
-        'تم إنشاء نسخة احتياطية (${cloud ? "Google Drive" : "محلية"}): $customersCount حساب، $transactionsCount عملية',
+        'تم إنشاء نسخة احتياطية (${cloud ? "Drive" : "محلية"}): $customersCount حساب، $transactionsCount عملية',
         category: LogCategory.backup,
       );
 
-  static Future<void> logBackupRestored({
-    required int customersAdded,
-    required int transactionsAdded,
-    required String mode,
-  }) =>
-      warning(
-        'استعادة نسخة',
-        'تمت الاستعادة ($mode): +$customersAdded حساب، +$transactionsAdded عملية',
-        category: LogCategory.backup,
-      );
-
-  // ===== الصوت =====
   static Future<void> logVoiceSuccess({
     required String text,
     String? audioPath,
@@ -647,13 +516,9 @@ class LoggerService {
   }) =>
       success(
         'تسجيل صوتي ناجح',
-        'تم التعرف على النص: "$text"${parsedAction != null ? " → $parsedAction" : ""}',
+        'تم التعرف: "$text"${parsedAction != null ? " → $parsedAction" : ""}',
         category: LogCategory.voice,
         audioPath: audioPath,
-        metadata: {
-          'text': text,
-          'parsed_action': parsedAction,
-        },
       );
 
   static Future<void> logVoiceFail({
@@ -666,20 +531,15 @@ class LoggerService {
         'لم يتم التعرف: $reason\nالنص: "$text"',
         category: LogCategory.voice,
         audioPath: audioPath,
-        metadata: {
-          'reason': reason,
-          'text': text,
-        },
       );
 
   static Future<void> logVoiceEmpty({String? audioPath}) => warning(
         'تسجيل صوتي فارغ',
-        'لم أسمع شيئاً — اضغط مطولاً وتحدث بوضوح',
+        'لم أسمع شيئاً',
         category: LogCategory.voice,
         audioPath: audioPath,
       );
 
-  // ===== الإعدادات =====
   static Future<void> logSettingChanged({
     required String settingName,
     required String oldValue,
@@ -689,21 +549,14 @@ class LoggerService {
         'تغيير إعداد',
         '$settingName: "$oldValue" → "$newValue"',
         category: LogCategory.settings,
-        metadata: {
-          'setting': settingName,
-          'old': oldValue,
-          'new': newValue,
-        },
       );
 
-  // ===== الأمان =====
   static Future<void> logSecurityEvent({
     required String action,
     required String description,
   }) =>
       info(action, description, category: LogCategory.security);
 
-  // ===== الرموز =====
   static Future<void> logCodeChanged({
     required String type,
     required String oldPrefix,
@@ -712,13 +565,7 @@ class LoggerService {
   }) =>
       info(
         'تغيير رموز',
-        'تغيير بادئة "$type": "$oldPrefix" → "$newPrefix" (تم تحديث $updatedCount عملية)',
+        '$type: "$oldPrefix" → "$newPrefix" (تم تحديث $updatedCount)',
         category: LogCategory.code,
-        metadata: {
-          'type': type,
-          'old': oldPrefix,
-          'new': newPrefix,
-          'updated_count': updatedCount,
-        },
       );
 }
