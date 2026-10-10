@@ -4,7 +4,9 @@ import '../models/account_type.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../services/accountant_service.dart';
+import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
+import '../services/logger_service.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
@@ -20,6 +22,7 @@ class VoiceScreen extends StatefulWidget {
 
 class _VoiceScreenState extends State<VoiceScreen> {
   final _speech = SpeechService();
+  final _audioService = AudioRecorderService();
   String _text = '';
   bool _listening = false;
   ParsedEntry? _parsed;
@@ -30,12 +33,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
   bool _askingWhich = false;
   bool _autoProcessed = false;
 
-  // منع النقر المزدوج
   bool _isSavingTransaction = false;
   bool _isSavingAccount = false;
-
-  // 🆕 مؤشر التحميل أثناء معالجة النص
   bool _isProcessing = false;
+
+  // 🆕 مسار التسجيل الصوتي الحالي
+  String? _currentAudioPath;
 
   @override
   void initState() {
@@ -52,7 +55,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Future<void> _toggle() async {
     if (_listening) {
       await _speech.stop();
-      setState(() => _listening = false);
+      // 🆕 إيقاف التسجيل الصوتي
+      final path = await _audioService.stopRecording();
+      setState(() {
+        _listening = false;
+        _currentAudioPath = path;
+      });
       if (_text.isNotEmpty) _process();
       return;
     }
@@ -67,20 +75,31 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _askingWhich = false;
       _listening = true;
       _autoProcessed = false;
+      _currentAudioPath = null;
     });
+
+    // 🆕 بدء التسجيل الصوتي بالتوازي
+    try {
+      await _audioService.startRecording();
+    } catch (e) {
+      debugPrint('⚠️ [Voice] Could not start audio recording: $e');
+    }
 
     await _speech.listen(onResult: (text, isFinal) {
       if (!mounted) return;
       setState(() => _text = text);
       if (isFinal) {
         setState(() => _listening = false);
-        _process();
+        _audioService.stopRecording().then((path) {
+          if (mounted) setState(() => _currentAudioPath = path);
+          _process();
+        });
       }
     });
   }
 
   // ============================================================
-  // 🆕 معالجة النص - محسّنة
+  // معالجة النص
   // ============================================================
   Future<void> _process() async {
     if (_autoProcessed) return;
@@ -88,6 +107,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     if (!mounted) return;
     setState(() => _isProcessing = true);
+
+    final audioPath = _currentAudioPath;
 
     try {
       // 1) استعلام
@@ -113,6 +134,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _errorMessage = 'لم أفهم الجملة. جرّب: "سجل على محمد 1500 ريال"';
           _isProcessing = false;
         });
+
+        // 🆕 تسجيل حدث فاشل
+        await LoggerService.logVoiceFail(
+          reason: 'لم يُفهم النص',
+          text: _text,
+          audioPath: audioPath,
+        );
+
         TtsService.speakDidNotUnderstand();
         return;
       }
@@ -131,8 +160,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       }
 
       final db = DatabaseHelper.instance;
-
-      // 🆕 استعلام واحد بدلاً من اثنين
       final matches = await db.findCustomersContaining(parsed.customerName);
 
       if (matches.isEmpty) {
@@ -144,11 +171,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"';
           _isProcessing = false;
         });
+
+        // 🆕 تسجيل حدث فاشل
+        await LoggerService.logVoiceFail(
+          reason: 'لا يوجد حساب بهذا الاسم',
+          text: _text,
+          audioPath: audioPath,
+        );
+
         TtsService.speakNoAccount(parsed.customerName);
         return;
       }
 
-      // البحث عن مطابقة تامة
       Customer? exact;
       for (final m in matches) {
         if (m.name == parsed.customerName) {
@@ -156,6 +190,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
           break;
         }
       }
+
+      // 🆕 تسجيل حدث ناجح
+      await LoggerService.logVoiceSuccess(
+        text: _text,
+        audioPath: audioPath,
+        parsedAction: _typeLabel(parsed.intent),
+      );
 
       if (exact != null) {
         if (!mounted) return;
@@ -183,7 +224,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         return;
       }
 
-      // أكثر من مطابقة → اعرض القائمة
       if (!mounted) return;
       setState(() {
         _parsed = parsed;
@@ -239,6 +279,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
         createdAt: DateTime.now().toIso8601String(),
       ));
 
+      // 🆕 تسجيل الحدث
+      await LoggerService.logCustomerAdded(_parsed!.customerName);
+
       if (!mounted) return;
       TtsService.speakAccountCreated(_parsed!.customerName);
       if (!mounted) return;
@@ -260,7 +303,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   // ============================================================
-  // 🆕 حفظ معاملة - محسّن بـ Future.wait
+  // حفظ معاملة
   // ============================================================
   Future<void> _saveTransaction() async {
     if (_isSavingTransaction) return;
@@ -278,7 +321,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       final storedType =
           (normalizedType == 'return') ? 'payment' : normalizedType;
 
-      // ⚡ تشغيل 3 عمليات بالتوازي (توفير كبير في الوقت)
       final results = await Future.wait([
         db.transactionExistsRecent(
           customerId: c.id!,
@@ -306,12 +348,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
         return;
       }
 
-      // حفظ المعاملة
       await db.insertTransaction(Transaction(
         customerId: c.id!,
         code: code,
         accountant: accountant,
-        source: 'voice', // 🆕
+        source: 'voice', // ✅ من شاشة التسجيل
         amount: p.amount,
         currency: p.currency,
         type: storedType,
@@ -330,7 +371,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
         'return': 'مرتجع',
       }[normalizedType] ?? 'عملية';
 
-      // 🔊 TTS في الخلفية (بدون await)
+      // 🆕 تسجيل الحدث
+      await LoggerService.logTransactionAdded(
+        typeLabel: label,
+        customerName: c.name,
+        amount: p.amount,
+        currency: p.currency,
+        code: code,
+        accountant: accountant,
+        source: 'voice',
+        audioPath: _currentAudioPath,
+      );
+
       TtsService.confirmTransaction(
         type: label,
         amount: p.amount,
@@ -402,7 +454,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         appBar: AppBar(title: const Text('تسجيل بالصوت')),
         body: Column(
           children: [
-            // 🆕 شريط التحميل أثناء المعالجة
             if (_isProcessing)
               const LinearProgressIndicator(minHeight: 3),
             Expanded(
