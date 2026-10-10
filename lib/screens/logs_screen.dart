@@ -20,7 +20,6 @@ class _LogsScreenState extends State<LogsScreen> {
   List<LogEvent> _logs = [];
   bool _loading = true;
 
-  // فلاتر
   LogLevel? _levelFilter;
   LogCategory? _categoryFilter;
   DateTime? _fromDate;
@@ -28,10 +27,8 @@ class _LogsScreenState extends State<LogsScreen> {
   String _searchQuery = '';
   bool _onlyPending = false;
 
-  // تشغيل الصوت
   String? _playingPath;
 
-  // إحصائيات
   Map<String, dynamic> _stats = {};
 
   @override
@@ -40,7 +37,6 @@ class _LogsScreenState extends State<LogsScreen> {
     _loadStats();
     _loadLogs();
 
-    // الاستماع لاكتمال التشغيل
     _audioService.isCompletedStream.listen((isCompleted) {
       if (isCompleted && mounted) {
         setState(() => _playingPath = null);
@@ -98,7 +94,42 @@ class _LogsScreenState extends State<LogsScreen> {
 
   // ============ تشغيل الصوت ============
   Future<void> _togglePlay(LogEvent e) async {
-    if (e.audioPath == null || e.audioPath!.isEmpty) return;
+    // 🆕 إذا لم يوجد مسار صوت → نبه المستخدم
+    if (e.audioPath == null || e.audioPath!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text('التسجيل الصوتي غير متوفر لهذا الحدث'),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 🆕 التحقق من وجود الملف فعلياً
+    final fileExists = await AudioRecorderService.fileExists(e.audioPath!);
+    if (!fileExists) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ الملف الصوتي غير موجود'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
 
     if (_playingPath == e.audioPath) {
       await _audioService.stopPlayback();
@@ -663,10 +694,17 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
+  // ============================================================
+  // ============ بطاقة الحدث ============================
+  // ============================================================
   Widget _buildLogCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
     final needsAck = e.needsAcknowledgement;
     final isPlaying = _playingPath != null && _playingPath == e.audioPath;
+
+    // 🆕 هل هذا حدث صوتي؟ (يظهر زر التشغيل دائماً)
+    final isVoiceLog = e.category == LogCategory.voice;
+    final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -798,29 +836,43 @@ class _LogsScreenState extends State<LogsScreen> {
                 ],
               ),
             ],
-            if (e.audioPath != null || needsAck) ...[
+
+            // ═══ 🆕 الأزرار: يظهر زر التشغيل دائماً للأحداث الصوتية ═══
+            if (isVoiceLog || needsAck) ...[
               const SizedBox(height: 10),
               Row(
                 children: [
-                  if (e.audioPath != null && e.audioPath!.isNotEmpty)
+                  // 🆕 زر التشغيل (يظهر دائماً لأحداث "صوتي")
+                  if (isVoiceLog)
                     OutlinedButton.icon(
                       onPressed: () => _togglePlay(e),
                       icon: Icon(
                         isPlaying ? Icons.stop : Icons.play_arrow,
                         size: 16,
+                        color: hasAudio ? null : Colors.grey,
                       ),
                       label: Text(
-                        isPlaying ? 'إيقاف' : 'تشغيل',
-                        style: const TextStyle(fontSize: 12),
+                        isPlaying
+                            ? 'إيقاف'
+                            : (hasAudio ? 'تشغيل' : 'لا يوجد صوت'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: hasAudio ? null : Colors.grey,
+                        ),
                       ),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         minimumSize: const Size(0, 32),
+                        side: BorderSide(
+                          color: hasAudio
+                              ? theme.colorScheme.outline
+                              : Colors.grey.shade400,
+                        ),
                       ),
                     ),
-                  if (e.audioPath != null && needsAck)
-                    const SizedBox(width: 8),
+                  if (isVoiceLog && needsAck) const SizedBox(width: 8),
+                  // زر الاعتراف (إذا كان الحدث يحتاج اعترافاً)
                   if (needsAck)
                     FilledButton.icon(
                       onPressed: () => _acknowledge(e),
