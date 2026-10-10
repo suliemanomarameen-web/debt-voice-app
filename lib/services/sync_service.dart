@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import 'gdrive_service.dart';
+import 'logger_service.dart';
 
 /// حالة المزامنة
 enum SyncStatus {
@@ -61,11 +62,9 @@ class SyncService {
   static Timer? _debounceTimer;
   static Timer? _periodicTimer;
 
-  /// 🛡️ يمنع تشغيل أكثر من مزامنة في وقت واحد
   static bool _isSyncing = false;
   static bool get isSyncing => _isSyncing;
 
-  /// 🆕 Future للمزامنة الجارية (لمن يريد الانتظار)
   static Future<SyncResult>? _currentSyncFuture;
 
   static final _statusController = StreamController<SyncStatus>.broadcast();
@@ -199,10 +198,7 @@ class SyncService {
   }
 
   // ========== دالة موحدة للتحكم في التزامن ==========
-  /// تمنع تشغيل أكثر من مزامنة في وقت واحد.
-  /// إذا كانت هناك مزامنة جارية، تنتظرها وترجع نتيجتها.
   static Future<SyncResult> _runSync({required bool silent}) async {
-    // إذا كانت هناك مزامنة جارية، انتظر نتيجتها
     if (_isSyncing && _currentSyncFuture != null) {
       debugPrint('⏳ [Sync] Waiting for current sync to finish...');
       try {
@@ -215,7 +211,6 @@ class SyncService {
       }
     }
 
-    // ابدأ مزامنة جديدة
     try {
       _isSyncing = true;
       final future = _performSync(silent: silent);
@@ -255,7 +250,7 @@ class SyncService {
           (lastSync == null || cloudModified.isAfter(lastSync));
 
       // ============================================================
-      // 4. إذا لا يوجد أي تغيير - نُحدّث وقت آخر مزامنة
+      // 4. إذا لا يوجد أي تغيير
       // ============================================================
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
@@ -322,6 +317,15 @@ class SyncService {
 
       if (!silent) _setStatus(SyncStatus.idle);
 
+      // 🆕 تسجيل نجاح المزامنة (فقط للعمليات غير الصامتة - لتجنب الإزعاج)
+      if (!silent) {
+        await LoggerService.logSyncSuccess(
+          transactionsAdded: addedTransactions,
+          customersAdded: addedCustomers,
+          hasConflict: conflict,
+        );
+      }
+
       final finalResult = SyncResult(
         success: true,
         message: conflict
@@ -341,6 +345,11 @@ class SyncService {
     } catch (e) {
       debugPrint('❌ [Sync] Error: $e');
       if (!silent) _setStatus(SyncStatus.error);
+
+      // 🆕 تسجيل فشل المزامنة
+      if (!silent) {
+        await LoggerService.logSyncError(e.toString());
+      }
 
       final errResult = SyncResult(
         success: false,
