@@ -66,13 +66,8 @@ class AudioRecorderService {
           .replaceAll('.', '-');
       final path = '${dir.path}/rec_$timestamp.m4a';
 
-      // ✅ path كـ named parameter
-      await _recorder.start(
-        path: path,
-        encoder: AudioEncoder.aacLc,
-        bitRate: 64000,
-        sampleRate: 44100,
-      );
+      // ✅ استخدام path فقط (أبسط وأكثر توافقاً)
+      await _recorder.start(path: path);
 
       _isRecording = true;
       _currentRecordingPath = path;
