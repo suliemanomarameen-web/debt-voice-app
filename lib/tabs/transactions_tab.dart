@@ -59,31 +59,75 @@ class TransactionsTabState extends State<TransactionsTab> {
     await _load();
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 استخدام JOIN واحد بدلاً من N+1 Query
+  // ═══════════════════════════════════════════════════════════
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => _loading = true);
 
-    final customers = await db.allCustomers();
-    final list = <MapEntry<Customer, Transaction>>[];
+    try {
+      // 1) جلب كل المعاملات مع بيانات العميل في استعلام واحد
+      final rows = await db.getAllTransactionsWithCustomer();
 
-    for (final c in customers) {
-      final tx = await db.customerTransactions(c.id!);
-      for (final t in tx) {
-        list.add(MapEntry(c, t));
+      // 2) بناء قائمة Customer منفصلة (لتفادي التكرار)
+      final customersMap = <int, Customer>{};
+
+      final list = <MapEntry<Customer, Transaction>>[];
+
+      for (final row in rows) {
+        final customerId = row['customer_id'] as int?;
+        if (customerId == null) continue;
+
+        // إنشاء / إعادة استخدام Customer
+        final customer = customersMap.putIfAbsent(
+          customerId,
+          () => Customer(
+            id: customerId,
+            name: (row['customer_name'] as String?) ?? '—',
+            phone: row['customer_phone'] as String?,
+            accountType: 'customer',
+            category: 'normal',
+            isActive: true,
+            createdAt: '',
+          ),
+        );
+
+        // إنشاء Transaction من الصف
+        final transaction = Transaction(
+          id: row['id'] as int?,
+          customerId: customerId,
+          code: row['code'] as String?,
+          accountant: row['accountant'] as String?,
+          source: row['source'] as String?,
+          amount: (row['amount'] as num).toDouble(),
+          currency: (row['currency'] as String?) ?? 'YER',
+          type: (row['type'] as String?) ?? 'debt',
+          items: (row['items'] as String?) ?? '',
+          createdAt: (row['created_at'] as String?) ?? '',
+        );
+
+        list.add(MapEntry(customer, transaction));
       }
+
+      // 3) ترتيب حسب الأحدث
+      list.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
+
+      // 4) جلب قائمة المحاسبين
+      final accountants = await db.getAllAccountants();
+
+      if (!mounted) return;
+      setState(() {
+        _allTx = list;
+        _availableAccountants = accountants;
+        _loading = false;
+        _applyFilters();
+      });
+    } catch (e) {
+      debugPrint('❌ [TransactionsTab] load error: $e');
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
-
-    list.sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
-
-    final accountants = await db.getAllAccountants();
-
-    if (!mounted) return;
-    setState(() {
-      _allTx = list;
-      _availableAccountants = accountants;
-      _loading = false;
-      _applyFilters();
-    });
   }
 
   void _applyFilters() {
@@ -131,7 +175,7 @@ class TransactionsTabState extends State<TransactionsTab> {
         if (acc != _accountantFilter) return false;
       }
 
-      // 🆕 فلتر المصدر
+      // فلتر المصدر
       if (_sourceFilter != null) {
         final src = entry.value.source ?? 'manual';
         if (src != _sourceFilter) return false;
@@ -264,7 +308,7 @@ class TransactionsTabState extends State<TransactionsTab> {
     });
   }
 
-  // ============ 🆕 نافذة فلتر المصدر ============
+  // ============ نافذة فلتر المصدر ============
   Future<void> _showSourceFilterSheet() async {
     final sources = ['voice', 'overlay', 'manual', 'customer_screen'];
 
@@ -283,7 +327,6 @@ class TransactionsTabState extends State<TransactionsTab> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
-              // الكل
               ListTile(
                 leading: const Icon(Icons.all_inclusive),
                 title: const Text('الكل'),
@@ -293,7 +336,6 @@ class TransactionsTabState extends State<TransactionsTab> {
                 onTap: () => Navigator.pop(context, '__ALL__'),
               ),
               const Divider(height: 1),
-              // المصادر
               ...sources.map((key) {
                 final info = Transaction.sourceInfo(key);
                 final selected = _sourceFilter == key;
@@ -460,7 +502,7 @@ class TransactionsTabState extends State<TransactionsTab> {
       appBar: AppBar(
         title: const Text('العمليات'),
         actions: [
-          // 🆕 فلتر المصدر
+          // فلتر المصدر
           IconButton(
             icon: Icon(
               _sourceFilter == null
@@ -597,7 +639,6 @@ class TransactionsTabState extends State<TransactionsTab> {
                                     });
                                   },
                                 ),
-                              // 🆕 شريحة المصدر
                               if (_sourceFilter != null)
                                 _activeChip(
                                   icon: Icons.input,
@@ -681,7 +722,6 @@ class TransactionsTabState extends State<TransactionsTab> {
                             final isDebt = t.type == 'debt';
                             final isReturn = t.items.startsWith('مرتجع');
 
-                            // 🆕 معلومات المصدر
                             final srcInfo = Transaction.sourceInfo(t.source);
                             final srcColor = Color(srcInfo.color);
 
@@ -747,7 +787,7 @@ class TransactionsTabState extends State<TransactionsTab> {
                                           ],
                                         ),
                                       ),
-                                    // 🆕 المصدر (إيموجي فقط)
+                                    // المصدر
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 6, vertical: 2),
