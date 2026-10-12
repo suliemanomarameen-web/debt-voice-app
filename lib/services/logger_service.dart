@@ -42,7 +42,7 @@ class LoggerService {
     }
   }
 
-  // ============ 🆕 اسم المصدر بالعربي ============
+  // ============ اسم المصدر بالعربي ============
   static String _sourceLabel(String? source) {
     switch (source) {
       case 'voice':
@@ -58,6 +58,18 @@ class LoggerService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 استخراج accountant من metadata (إن وُجد)
+  // ═══════════════════════════════════════════════════════════
+  static String? _extractAccountantFromMetadata(
+      Map<String, dynamic>? metadata) {
+    if (metadata == null) return null;
+    final acc = metadata['accountant'];
+    if (acc == null) return null;
+    final s = acc.toString().trim();
+    return s.isEmpty ? null : s;
+  }
+
   // ============ حفظ حدث ============
   static Future<int> log({
     required String action,
@@ -70,6 +82,9 @@ class LoggerService {
     String? audioPath,
   }) async {
     try {
+      // 🆕 أولوية: accountant الصريح > metadata.accountant > الحالة الحالية
+      accountant ??= _extractAccountantFromMetadata(metadata);
+
       if (accountant == null) {
         try {
           accountant = await AccountantService.getAccountantName();
@@ -116,6 +131,7 @@ class LoggerService {
     String action,
     String description, {
     LogCategory category = LogCategory.system,
+    String? accountant,
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
@@ -125,6 +141,7 @@ class LoggerService {
         description: description,
         level: LogLevel.info,
         category: category,
+        accountant: accountant,
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
@@ -134,6 +151,7 @@ class LoggerService {
     String action,
     String description, {
     LogCategory category = LogCategory.system,
+    String? accountant,
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
@@ -143,6 +161,7 @@ class LoggerService {
         description: description,
         level: LogLevel.success,
         category: category,
+        accountant: accountant,
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
@@ -152,6 +171,7 @@ class LoggerService {
     String action,
     String description, {
     LogCategory category = LogCategory.system,
+    String? accountant,
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
@@ -161,6 +181,7 @@ class LoggerService {
         description: description,
         level: LogLevel.warning,
         category: category,
+        accountant: accountant,
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
@@ -170,6 +191,7 @@ class LoggerService {
     String action,
     String description, {
     LogCategory category = LogCategory.system,
+    String? accountant,
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
@@ -179,6 +201,7 @@ class LoggerService {
         description: description,
         level: LogLevel.error,
         category: category,
+        accountant: accountant,
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
@@ -430,7 +453,7 @@ class LoggerService {
 
   // ============ دوال مختصرة للأحداث ============
 
-  // 🆕 إضافة عملية (مع عرض المصدر)
+  // إضافة عملية (مع عرض المصدر + accountant)
   static Future<void> logTransactionAdded({
     required String typeLabel,
     required String customerName,
@@ -442,7 +465,6 @@ class LoggerService {
     String? relatedId,
     String? audioPath,
   }) {
-    // 🆕 بناء وصف يظهر فيه المصدر
     final sourceText = _sourceLabel(source);
     final sourcePart = sourceText.isNotEmpty ? ' • المصدر: $sourceText' : '';
 
@@ -452,6 +474,8 @@ class LoggerService {
       category: LogCategory.transaction,
       relatedId: relatedId,
       audioPath: audioPath,
+      // 🆕 accountant يُمرَّر في المستوى العلوي أيضاً
+      accountant: accountant,
       metadata: {
         'customer': customerName,
         'amount': amount,
@@ -468,44 +492,53 @@ class LoggerService {
     required String customerName,
     required double amount,
     String? code,
+    String? accountant,
   }) =>
       warning(
         'حذف عملية',
         'تم حذف عملية بمبلغ ${amount.toStringAsFixed(0)} للعميل "$customerName"${code != null ? " (رمز: $code)" : ""}',
         category: LogCategory.transaction,
+        accountant: accountant,
       );
 
-  static Future<void> logCustomerAdded(String name) => success(
+  static Future<void> logCustomerAdded(String name, {String? accountant}) =>
+      success(
         'إضافة عميل',
         'تم إنشاء حساب جديد: "$name"',
         category: LogCategory.customer,
+        accountant: accountant,
       );
 
-  static Future<void> logCustomerDeleted(String name) => warning(
+  static Future<void> logCustomerDeleted(String name, {String? accountant}) =>
+      warning(
         'حذف عميل',
         'تم حذف الحساب: "$name"',
         category: LogCategory.customer,
+        accountant: accountant,
       );
 
   static Future<void> logCustomerStatusChanged({
     required String name,
     required bool isActive,
+    String? accountant,
   }) =>
       isActive
           ? success('تفعيل حساب', 'تم تفعيل حساب "$name"',
-              category: LogCategory.customer)
+              category: LogCategory.customer, accountant: accountant)
           : warning('إيقاف حساب', 'تم إيقاف حساب "$name"',
-              category: LogCategory.customer);
+              category: LogCategory.customer, accountant: accountant);
 
   static Future<void> logCustomerLimitExceeded({
     required String name,
     required double balance,
     required double maxBalance,
+    String? accountant,
   }) =>
       warning(
         'تجاوز الحد الأقصى',
         'العميل "$name" تجاوز الحد. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
         category: LogCategory.customer,
+        accountant: accountant,
       );
 
   // ============ المزامنة ============
@@ -514,6 +547,7 @@ class LoggerService {
     int customersAdded = 0,
     int customersUpdated = 0,
     bool hasConflict = false,
+    String? accountant,
   }) =>
       success(
         hasConflict ? 'مزامنة مع تعارض' : 'مزامنة ناجحة',
@@ -523,24 +557,31 @@ class LoggerService {
             '${customersUpdated > 0 ? " ~$customersUpdated حساب محدّث" : ""}'
             '${transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات)" : ""}',
         category: LogCategory.sync,
+        accountant: accountant,
       );
 
-  static Future<void> logSyncError(String errMsg) => logError(
+  static Future<void> logSyncError(String errMsg, {String? accountant}) =>
+      logError(
         'فشل المزامنة',
         'خطأ: $errMsg',
         category: LogCategory.sync,
+        accountant: accountant,
       );
 
-  static Future<void> logSyncUpload(String fileName) => info(
+  static Future<void> logSyncUpload(String fileName, {String? accountant}) =>
+      info(
         'رفع مزامنة',
         'تم رفع ملف المزامنة: $fileName',
         category: LogCategory.sync,
+        accountant: accountant,
       );
 
-  static Future<void> logSyncDownload(String fileName) => info(
+  static Future<void> logSyncDownload(String fileName, {String? accountant}) =>
+      info(
         'تنزيل مزامنة',
         'تم تنزيل ملف المزامنة: $fileName',
         category: LogCategory.sync,
+        accountant: accountant,
       );
 
   // ============ النسخ الاحتياطي ============
@@ -548,22 +589,26 @@ class LoggerService {
     required int customersCount,
     required int transactionsCount,
     bool cloud = false,
+    String? accountant,
   }) =>
       success(
         cloud ? 'نسخة سحابية' : 'نسخة محلية',
         'تم إنشاء نسخة احتياطية (${cloud ? "Drive" : "محلية"}): $customersCount حساب، $transactionsCount عملية',
         category: LogCategory.backup,
+        accountant: accountant,
       );
 
   static Future<void> logBackupRestored({
     required int customersAdded,
     required int transactionsAdded,
     required String mode,
+    String? accountant,
   }) =>
       warning(
         'استعادة نسخة',
         'تمت الاستعادة ($mode): +$customersAdded حساب، +$transactionsAdded عملية',
         category: LogCategory.backup,
+        accountant: accountant,
       );
 
   // ============ الصوت ============
@@ -571,31 +616,40 @@ class LoggerService {
     required String text,
     String? audioPath,
     String? parsedAction,
+    String? accountant,
   }) =>
       success(
         'تسجيل صوتي ناجح',
         'تم التعرف: "$text"${parsedAction != null ? " → $parsedAction" : ""}',
         category: LogCategory.voice,
         audioPath: audioPath,
+        accountant: accountant,
       );
 
   static Future<void> logVoiceFail({
     required String reason,
     required String text,
     String? audioPath,
+    String? accountant,
   }) =>
       warning(
         'تسجيل صوتي فاشل',
         'لم يتم التعرف: $reason\nالنص: "$text"',
         category: LogCategory.voice,
         audioPath: audioPath,
+        accountant: accountant,
       );
 
-  static Future<void> logVoiceEmpty({String? audioPath}) => warning(
+  static Future<void> logVoiceEmpty({
+    String? audioPath,
+    String? accountant,
+  }) =>
+      warning(
         'تسجيل صوتي فارغ',
         'لم أسمع شيئاً',
         category: LogCategory.voice,
         audioPath: audioPath,
+        accountant: accountant,
       );
 
   // ============ الإعدادات ============
@@ -603,19 +657,23 @@ class LoggerService {
     required String settingName,
     required String oldValue,
     required String newValue,
+    String? accountant,
   }) =>
       info(
         'تغيير إعداد',
         '$settingName: "$oldValue" → "$newValue"',
         category: LogCategory.settings,
+        accountant: accountant,
       );
 
   // ============ الأمان ============
   static Future<void> logSecurityEvent({
     required String action,
     required String description,
+    String? accountant,
   }) =>
-      info(action, description, category: LogCategory.security);
+      info(action, description,
+          category: LogCategory.security, accountant: accountant);
 
   // ============ الرموز ============
   static Future<void> logCodeChanged({
@@ -623,10 +681,12 @@ class LoggerService {
     required String oldPrefix,
     required String newPrefix,
     required int updatedCount,
+    String? accountant,
   }) =>
       info(
         'تغيير رموز',
         '$type: "$oldPrefix" → "$newPrefix" (تم تحديث $updatedCount)',
         category: LogCategory.code,
+        accountant: accountant,
       );
 }
