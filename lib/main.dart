@@ -11,6 +11,7 @@ import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
 import 'services/code_service.dart';
 import 'services/logger_service.dart';
+import 'services/notification_dispatcher.dart'; // 🆕
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -289,7 +290,7 @@ Future<void> _saveTransactionFor(
     'return': 'مرتجع',
   }[normalizedType] ?? 'عملية';
 
-  // 🆕 تسجيل الحدث
+  // تسجيل الحدث
   await LoggerService.logTransactionAdded(
     typeLabel: label,
     customerName: customer.name,
@@ -328,6 +329,19 @@ Future<void> _saveTransactionFor(
   detail.write('\nالرصيد: ${newBalance.toStringAsFixed(0)} ${parsed.currency}');
 
   await NotificationService.show('تم تسجيل $label', detail.toString());
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
+  // ═══════════════════════════════════════════════════════════
+  await NotificationDispatcher.afterTransactionAdded(
+    customerId: customer.id!,
+    customerName: customer.name,
+    phone: customer.phone,
+    type: normalizedType,
+    amount: parsed.amount,
+    newBalance: newBalance,
+    source: source,
+  );
 }
 
 class DebtApp extends StatefulWidget {
