@@ -347,7 +347,7 @@ class DatabaseHelper {
     }
   }
 
-  /// 🆕 تحديث حقول محددة للعميل (للمزامنة)
+  /// تحديث حقول محددة للعميل (للمزامنة)
   Future<int> updateCustomerFields(
       int id, Map<String, dynamic> fields) async {
     if (fields.isEmpty) return 0;
@@ -507,6 +507,39 @@ class DatabaseHelper {
         'created_at': DateTime.now().toIso8601String(),
       });
     } catch (_) {}
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 getMaxCodeSequence — استعلام SQL واحد سريع
+  // ═══════════════════════════════════════════════════════════
+  /// إيجاد أقصى رقم تسلسلي لبادئة معينة
+  /// مثال: prefix = "D" → يعيد أعلى رقم في D-0001, D-0002, ...
+  Future<int> getMaxCodeSequence(String prefix) async {
+    try {
+      final db = await database;
+      // نفترض أن الرمز بالشكل: PREFIX-NNNN
+      // طول البادئة + 1 (للشرطة)
+      final prefixWithDash = '$prefix-';
+      final r = await db.rawQuery('''
+        SELECT MAX(
+          CAST(
+            SUBSTR(code, ?) AS INTEGER
+          )
+        ) AS max_seq
+        FROM used_codes
+        WHERE code LIKE ?
+      ''', [prefixWithDash.length + 1, '$prefixWithDash%']);
+
+      if (r.isEmpty) return 0;
+      final v = r.first['max_seq'];
+      if (v == null) return 0;
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString()) ?? 0;
+    } catch (e) {
+      debugPrint('❌ getMaxCodeSequence error: $e');
+      return 0;
+    }
   }
 
   Future<int> updateCodesPrefix({
