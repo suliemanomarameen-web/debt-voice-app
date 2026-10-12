@@ -24,8 +24,10 @@ class _TabsScreenState extends State<TabsScreen> {
           children: [
             const DebtsTab(),
             const CustomersTab(),
-            TransactionsTab(key: _transactionsKey),
-            LogsTab(key: _logsKey), // 🆕 تبويب السجل
+            // 🆕 استخدام globalKey الموحّد
+            TransactionsTab(key: TransactionsTab.globalKey),
+            // 🆕 استخدام globalKey الموحّد
+            LogsTab(key: LogsTab.globalKey),
             const SettingsTab(),
           ],
         ),
@@ -37,7 +39,7 @@ class _TabsScreenState extends State<TabsScreen> {
             // تحديث تبويب العمليات عند اختياره
             if (i == 2) {
               Future.delayed(const Duration(milliseconds: 100), () {
-                final state = _transactionsKey.currentState;
+                final state = TransactionsTab.globalKey.currentState;
                 if (state != null && state.mounted) {
                   state.reload();
                 }
@@ -46,7 +48,7 @@ class _TabsScreenState extends State<TabsScreen> {
             // تحديث تبويب السجل عند اختياره
             if (i == 3) {
               Future.delayed(const Duration(milliseconds: 100), () {
-                final state = _logsKey.currentState;
+                final state = LogsTab.globalKey.currentState;
                 if (state != null && state.mounted) {
                   state.reload();
                 }
@@ -86,10 +88,3 @@ class _TabsScreenState extends State<TabsScreen> {
     );
   }
 }
-
-/// 🆕 مفتاح عالمي لتبويب العمليات
-final GlobalKey<TransactionsTabState> _transactionsKey =
-    GlobalKey<TransactionsTabState>();
-
-/// 🆕 مفتاح عالمي لتبويب السجل
-final GlobalKey<LogsTabState> _logsKey = GlobalKey<LogsTabState>();
