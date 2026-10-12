@@ -118,29 +118,39 @@ class CodeService {
       }
       return await _generateSequential(db, prefix, digits);
     } catch (e) {
+      // fallback: توليد عشوائي محلي
       final r = Random().nextInt(pow(10, digits).toInt());
       return '$prefix-${r.toString().padLeft(digits, '0')}';
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 _generateSequential — الآن بـ SQL سريع
+  // ═══════════════════════════════════════════════════════════
   static Future<String?> _generateSequential(
     DatabaseHelper db,
     String prefix,
     int digits,
   ) async {
-    final maxSeq = await _getMaxSequenceByPrefix(db, prefix);
+    // 🆕 استعلام SQL واحد بدلاً من جلب كل الرموز
+    final maxSeq = await db.getMaxCodeSequence(prefix);
     final maxAttempts = pow(10, digits).toInt();
     int nextSeq = maxSeq + 1;
     if (nextSeq < 1) nextSeq = 1;
 
-    for (int i = 0; i < maxAttempts; i++) {
+    // محاولات محدودة فقط (عادة 1-2 محاولات تكفي)
+    final maxTries = (maxAttempts < 10) ? maxAttempts : 10;
+
+    for (int i = 0; i < maxTries; i++) {
       final candidate = nextSeq + i;
       if (candidate > maxAttempts) break;
       final code = _format(prefix, candidate, digits);
       final exists = await db.codeExists(code);
       if (!exists) return code;
     }
-    return null;
+
+    // إذا فشل التسلسل، جرّب عشوائي
+    return await _generateRandom(db, prefix, digits);
   }
 
   static Future<String?> _generateRandom(
@@ -158,22 +168,6 @@ class CodeService {
       if (!exists) return code;
     }
     return null;
-  }
-
-  static Future<int> _getMaxSequenceByPrefix(
-      DatabaseHelper db, String prefix) async {
-    final allCodes = await db.allUsedCodesRaw();
-    int maxSeq = 0;
-    for (final row in allCodes) {
-      final code = row['code'] as String? ?? '';
-      if (!code.startsWith('$prefix-')) continue;
-      final parts = code.split('-');
-      if (parts.length >= 2) {
-        final numPart = int.tryParse(parts.sublist(1).join('-'));
-        if (numPart != null && numPart > maxSeq) maxSeq = numPart;
-      }
-    }
-    return maxSeq;
   }
 
   static String _format(String prefix, int number, int digits) {
