@@ -14,6 +14,7 @@ import '../services/cloud_backup_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
+import '../services/keywords_service.dart'; // 🆕
 import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
@@ -21,6 +22,7 @@ import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/theme_service.dart';
 import '../screens/gdrive_screen.dart';
+import '../screens/keywords_screen.dart'; // 🆕
 import '../screens/logs_screen.dart';
 import '../screens/stats_screen.dart';
 
@@ -288,7 +290,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == '__CLEAR__') {
       await AccountantService.clearAccountantName();
-      // 🆕 تسجيل الحدث
       await LoggerService.info(
         'حذف اسم المحاسب',
         'الاسم السابق: "${oldName ?? ""}"',
@@ -318,7 +319,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     await AccountantService.setAccountantName(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.info(
       oldName == null || oldName.isEmpty ? 'إضافة اسم محاسب' : 'تغيير اسم المحاسب',
       'الاسم: "$result"${oldName != null ? ' (السابق: "$oldName")' : ''}',
@@ -342,7 +342,6 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _backupBusy = false);
 
     if (result.success) {
-      // 🆕 تسجيل الحدث
       await LoggerService.logBackupCreated(
         customersCount: result.customersCount,
         transactionsCount: result.transactionsCount,
@@ -547,7 +546,6 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
-    // 🆕 تسجيل الحدث
     await LoggerService.logBackupRestored(
       customersAdded: result.customersAdded,
       transactionsAdded: result.transactionsAdded,
@@ -590,7 +588,6 @@ class _SettingsTabState extends State<SettingsTab> {
   // ============== النسخ التلقائي المحلي ==============
   Future<void> _toggleAutoBackup(bool v) async {
     await AutoBackupService.setEnabled(v);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'النسخ التلقائي المحلي',
       oldValue: _autoEnabled ? 'مُفعّل' : 'مُعطّل',
@@ -654,7 +651,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (result == null) return;
     await AutoBackupService.setFrequency(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'تكرار النسخ التلقائي',
       oldValue: _freqLabel(_autoFreq),
@@ -683,7 +679,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     await CloudBackupService.setEnabled(v);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'النسخ السحابي التلقائي',
       oldValue: _cloudBackupEnabled ? 'مُفعّل' : 'مُعطّل',
@@ -730,7 +725,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (result == null) return;
     await CloudBackupService.setFrequency(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'تكرار النسخ السحابي',
       oldValue: CloudBackupService.frequencyLabel(_cloudFrequency),
@@ -800,7 +794,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CloudBackupService.setMaxBackups(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'عدد النسخ السحابية المحفوظة',
       oldValue: _cloudMaxBackups < 0 ? 'غير نهائي' : '$_cloudMaxBackups',
@@ -827,8 +820,6 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
-    // 🆕 تسجيل الحدث (النسخ السحابي التلقائي في CloudBackupService يسجل بنفسه)
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('تم تشغيل النسخ السحابي'),
@@ -840,7 +831,6 @@ class _SettingsTabState extends State<SettingsTab> {
   // ============== إعدادات الرموز ==============
   Future<void> _toggleCodeEnabled(bool v) async {
     await CodeService.setEnabled(v);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'تفعيل رموز العمليات',
       oldValue: _codeEnabled ? 'مُفعّل' : 'مُعطّل',
@@ -958,7 +948,6 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       );
 
-      // تحديث الرموز القديمة أولاً
       if (updateOld == true && mounted) {
         setState(() => _backupBusy = true);
         final count = await CodeService.updateOldCodes(
@@ -976,7 +965,6 @@ class _SettingsTabState extends State<SettingsTab> {
         );
       }
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logCodeChanged(
         type: label,
         oldPrefix: oldPrefix,
@@ -984,7 +972,6 @@ class _SettingsTabState extends State<SettingsTab> {
         updatedCount: updateOld == true ? 0 : 0,
       );
 
-      // حفظ البادئة الجديدة
       if (type == 'debt') {
         await CodeService.setDebtPrefix(newPrefix);
         if (mounted) setState(() => _debtPrefix = newPrefix);
@@ -1052,7 +1039,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CodeService.setDigits(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'عدد أرقام الرموز',
       oldValue: '$_codeDigits',
@@ -1125,7 +1111,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (result == null) return;
     await CodeService.setMode(result);
-    // 🆕 تسجيل الحدث
     await LoggerService.logSettingChanged(
       settingName: 'طريقة توليد الرمز',
       oldValue: CodeService.describeMode(_codeMode),
@@ -1146,7 +1131,6 @@ class _SettingsTabState extends State<SettingsTab> {
     final sp = await SharedPreferences.getInstance();
     await sp.setBool(key, v);
 
-    // 🆕 تسجيل الحدث
     String settingName;
     if (key == 'pdf_show_codes') {
       settingName = 'إظهار رموز العمليات في PDF';
@@ -1225,7 +1209,57 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 8),
 
-          // ========== 🆕 قسم السجل ==========
+          // ========== 🆕 قسم الفهم الصوتي ==========
+          const _SectionHeader('الفهم الصوتي'),
+          ListTile(
+            leading: const Icon(Icons.record_voice_over,
+                color: Colors.deepPurple),
+            title: const Text('كلمات الفهم الصوتي'),
+            subtitle: const Text(
+                'عدّل الكلمات التي يفهمها التطبيق من صوتك'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const KeywordsScreen()),
+              ).then((_) {
+                // إعادة تحميل الكلمات عند العودة
+                if (mounted) setState(() {});
+              });
+            },
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.deepPurple.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+              border:
+                  Border.all(color: Colors.deepPurple.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.tips_and_updates,
+                    size: 16, color: Colors.deepPurple),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'أضف كلمات حسب لهجتك لتحسين الفهم. '
+                    'التعديلات تُطبَّق فوراً — بدون إعادة بناء.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark
+                          ? Colors.deepPurple.shade200
+                          : Colors.deepPurple.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // ========== قسم السجل ==========
           const _SectionHeader('سجل الأحداث'),
           ListTile(
             leading: const Icon(Icons.history, color: Colors.deepPurple),
@@ -1279,7 +1313,6 @@ class _SettingsTabState extends State<SettingsTab> {
               setState(() => _autoWhatsApp = v);
               final sp = await SharedPreferences.getInstance();
               await sp.setBool('auto_whatsapp', v);
-              // 🆕 تسجيل الحدث
               await LoggerService.logSettingChanged(
                 settingName: 'إرسال واتساب تلقائياً',
                 oldValue: v ? 'مُعطّل' : 'مُفعّل',
@@ -1911,7 +1944,6 @@ class _SettingsTabState extends State<SettingsTab> {
         question: result['q']!, answer: result['a']!);
     await AuthService.setEnabled(true);
 
-    // 🆕 تسجيل الحدث
     await LoggerService.logSecurityEvent(
       action: 'تفعيل القفل',
       description: 'تم تفعيل قفل التطبيق بكلمة مرور',
@@ -1967,7 +1999,6 @@ class _SettingsTabState extends State<SettingsTab> {
     await AuthService.setEnabled(false);
     await AuthService.removePassword();
 
-    // 🆕 تسجيل الحدث
     await LoggerService.logSecurityEvent(
       action: 'تعطيل القفل',
       description: 'تم تعطيل قفل التطبيق',
