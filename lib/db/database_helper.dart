@@ -347,7 +347,6 @@ class DatabaseHelper {
     }
   }
 
-  /// تحديث حقول محددة للعميل (للمزامنة)
   Future<int> updateCustomerFields(
       int id, Map<String, dynamic> fields) async {
     if (fields.isEmpty) return 0;
@@ -509,16 +508,10 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
-  // ═══════════════════════════════════════════════════════════
   // 🆕 getMaxCodeSequence — استعلام SQL واحد سريع
-  // ═══════════════════════════════════════════════════════════
-  /// إيجاد أقصى رقم تسلسلي لبادئة معينة
-  /// مثال: prefix = "D" → يعيد أعلى رقم في D-0001, D-0002, ...
   Future<int> getMaxCodeSequence(String prefix) async {
     try {
       final db = await database;
-      // نفترض أن الرمز بالشكل: PREFIX-NNNN
-      // طول البادئة + 1 (للشرطة)
       final prefixWithDash = '$prefix-';
       final r = await db.rawQuery('''
         SELECT MAX(
@@ -635,6 +628,61 @@ class DatabaseHelper {
   Future<int> insertLog(Map<String, dynamic> data) async {
     final db = await database;
     return db.insert('log_events', data);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 دالة إدراج من السحابة (بدون تعديل)
+  // ═══════════════════════════════════════════════════════════
+  Future<int> insertLogEventRaw(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('log_events', data);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 فحص وجود حدث مطابق (لتجنب التكرار عند المزامنة)
+  // ═══════════════════════════════════════════════════════════
+  Future<bool> logEventExists({
+    required String action,
+    required String createdAt,
+    String? accountant,
+  }) async {
+    try {
+      final db = await database;
+      final where = StringBuffer('action = ? AND created_at = ?');
+      final args = <dynamic>[action, createdAt];
+
+      if (accountant != null && accountant.isNotEmpty) {
+        where.write(' AND accountant = ?');
+        args.add(accountant);
+      }
+
+      final r = await db.query(
+        'log_events',
+        where: where.toString(),
+        whereArgs: args,
+        limit: 1,
+      );
+      return r.isNotEmpty;
+    } catch (e) {
+      debugPrint('❌ logEventExists error: $e');
+      return false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 جلب كل الأحداث للمزامنة
+  // ═══════════════════════════════════════════════════════════
+  Future<List<Map<String, dynamic>>> allLogEventsRaw() async {
+    final db = await database;
+    return db.query('log_events', orderBy: 'created_at ASC');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حذف كل الأحداث (للاستبدال الكامل)
+  // ═══════════════════════════════════════════════════════════
+  Future<int> clearAllLogEvents() async {
+    final db = await database;
+    return db.delete('log_events');
   }
 
   Future<List<Map<String, dynamic>>> getLogsRaw({
