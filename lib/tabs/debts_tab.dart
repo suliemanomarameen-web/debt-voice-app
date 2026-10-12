@@ -7,6 +7,7 @@ import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/date_filter.dart';
 import '../services/logger_service.dart';
+import '../services/notification_dispatcher.dart'; // 🆕
 import '../services/sync_service.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
@@ -368,7 +369,6 @@ class _DebtsTabState extends State<DebtsTab> {
     if (!mounted) return;
 
     if (!result.success) {
-      // 🆕 تسجيل فشل المزامنة
       await LoggerService.logSyncError(result.message);
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -379,7 +379,6 @@ class _DebtsTabState extends State<DebtsTab> {
         ),
       );
     } else {
-      // 🆕 تسجيل نجاح المزامنة
       await LoggerService.logSyncSuccess(
         transactionsAdded: result.transactionsAdded,
         customersAdded: result.customersAdded,
@@ -796,7 +795,7 @@ class _DebtsTabState extends State<DebtsTab> {
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          // 🆕 تسجيل الحدث
+                          // تسجيل الحدث
                           final typeLabelForLog = {
                             'debt': 'دين',
                             'payment': 'سداد',
@@ -809,6 +808,24 @@ class _DebtsTabState extends State<DebtsTab> {
                             currency: 'YER',
                             code: code,
                             accountant: accountant,
+                            source: 'manual',
+                          );
+
+                          // ═══════════════════════════════════════════
+                          // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
+                          // ═══════════════════════════════════════════
+                          final newBalance = await db
+                              .customerBalance(selectedCustomer!.id!);
+
+                          final normalizedType = CodeService.normalizeType(type);
+
+                          await NotificationDispatcher.afterTransactionAdded(
+                            customerId: selectedCustomer!.id!,
+                            customerName: selectedCustomer!.name,
+                            phone: selectedCustomer!.phone,
+                            type: normalizedType,
+                            amount: amt,
+                            newBalance: newBalance,
                             source: 'manual',
                           );
 
