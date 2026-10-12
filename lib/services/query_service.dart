@@ -1,6 +1,7 @@
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import 'keywords_service.dart';
 
 class QueryResult {
   final String customerName;
@@ -23,44 +24,37 @@ class QueryService {
   static bool isQuery(String text) {
     final t = text.toLowerCase().trim();
 
-    // 🔑 إذا كانت الجملة تحتوي على فعل تسجيل → ليست استعلاماً
-    const recordVerbs = [
-      'سجل على', 'سجل ل', 'سجل',
-      'دفع', 'وصل',
-      'مرتجع', 'استلم', 'استلمت', 'سدد',
-    ];
-    final hasRecordVerb = recordVerbs.any((v) => t.contains(v));
+    // 🆕 نجلب الكلمات من KeywordsService
+    final recordVerbs = <String>{
+      ...KeywordsService.get(KeywordsService.catDebt),
+      ...KeywordsService.get(KeywordsService.catPayment),
+      ...KeywordsService.get(KeywordsService.catReturn),
+    }.toList();
 
-    // إذا كانت جملة تسجيل → نتحقق من "كم" أولاً
+    final queryBalanceWords =
+        KeywordsService.get(KeywordsService.catQueryBalance);
+    final queryStatementWords =
+        KeywordsService.get(KeywordsService.catQueryStatement);
+    final queryAllWords = KeywordsService.get(KeywordsService.catQueryAll);
+
+    // 🔑 إذا كانت الجملة تحتوي على فعل تسجيل → ليست استعلاماً
+    final hasRecordVerb = _containsAny(t, recordVerbs);
+
     if (hasRecordVerb) {
-      const queryOnlyWords = [
-        'كم عنده', 'كم عندها', 'كم عند',
-        'كم عليه', 'كم عليها',
-        'كم له', 'كم لها',
-        'كم باقي', 'ماذا مع',
-        'how much', 'what does',
-      ];
-      if (queryOnlyWords.any((w) => t.contains(w))) return true;
+      // إذا كانت جملة تسجيل → نتحقق من كلمات الاستعلام أولاً
+      if (_containsAny(t, queryBalanceWords)) return true;
       return false; // جملة تسجيل
     }
 
     // 🔑 كلمات الاستعلام الواضحة
-    const queryWords = [
-      'كم عنده', 'كم عندها', 'كم عند',
-      'كم عليه', 'كم عليها',
-      'كم له', 'كم لها',
-      'كم باقي', 'كم باقي له', 'كم باقي عليها',
-      'ماذا معه', 'ماذا معها', 'ماذا مع',
-      'معه كم', 'معها كم',
-      'how much', 'what does', 'balance',
-    ];
-    if (queryWords.any((w) => t.contains(w))) return true;
+    if (_containsAny(t, queryBalanceWords)) return true;
+    if (_containsAny(t, queryAllWords)) return true;
 
     // 🔑 "رصيد" أو "كشف" — نتحقق: قد تكون صنفاً
     final words = t.split(RegExp(r'\s+'));
     if (words.isNotEmpty) {
       final lastWord = words.last;
-      if (['رصيد', 'كشف'].contains(lastWord)) {
+      if (queryStatementWords.contains(lastWord)) {
         // إذا كان قبلها رقم → فهي صنف (وليس استعلاماً)
         if (words.length >= 2) {
           final beforeLast = words[words.length - 2];
@@ -72,10 +66,8 @@ class QueryService {
     }
 
     // "رصيد محمد" أو "كشف حساب محمد" → استعلام
-    if (t.startsWith('رصيد ') ||
-        t.startsWith('كشف ') ||
-        t.startsWith('حساب ')) {
-      return true;
+    for (final kw in queryStatementWords) {
+      if (t.startsWith('$kw ')) return true;
     }
 
     return false;
@@ -198,5 +190,15 @@ class QueryService {
       spokenAnswer: answer,
       transactions: txs,
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 أداة مساعدة
+  // ═══════════════════════════════════════════════════════════
+  static bool _containsAny(String text, List<String> keywords) {
+    for (final kw in keywords) {
+      if (text.contains(kw.toLowerCase())) return true;
+    }
+    return false;
   }
 }
