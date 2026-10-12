@@ -22,6 +22,7 @@ class SyncResult {
   final int customersAdded;
   final int transactionsAdded;
   final int customersUpdated;
+  final int logsAdded; // 🆕
   final bool hasConflict;
   final DateTime? timestamp;
 
@@ -31,6 +32,7 @@ class SyncResult {
     this.customersAdded = 0,
     this.transactionsAdded = 0,
     this.customersUpdated = 0,
+    this.logsAdded = 0, // 🆕
     this.hasConflict = false,
     this.timestamp,
   });
@@ -258,6 +260,7 @@ class SyncService {
       int addedCustomers = 0;
       int addedTransactions = 0;
       int updatedCustomers = 0;
+      int addedLogs = 0;
 
       // نزّل ودمج
       if (hasCloudChanges && cloudData != null) {
@@ -266,6 +269,7 @@ class SyncService {
         addedCustomers = result['customers'] ?? 0;
         addedTransactions = result['transactions'] ?? 0;
         updatedCustomers = result['updated'] ?? 0;
+        addedLogs = result['logs'] ?? 0;
       }
 
       // ارفع الحالة الحالية
@@ -319,6 +323,7 @@ class SyncService {
         customersAdded: addedCustomers,
         transactionsAdded: addedTransactions,
         customersUpdated: updatedCustomers,
+        logsAdded: addedLogs, // 🆕
         hasConflict: conflict,
         timestamp: now,
       );
@@ -349,18 +354,21 @@ class SyncService {
     }
   }
 
-  // ========== دمج البيانات السحابية (مُحسّن) ==========
+  // ========== دمج البيانات السحابية ==========
   static Future<Map<String, int>> _mergeCloudData(
       Map<String, dynamic> cloudData) async {
     final db = DatabaseHelper.instance;
     int addedCustomers = 0;
     int addedTransactions = 0;
     int updatedCustomers = 0;
+    int addedLogs = 0;
 
     try {
       final customers = (cloudData['customers'] as List?) ?? [];
       final transactions = (cloudData['transactions'] as List?) ?? [];
       final usedCodes = (cloudData['used_codes'] as List?) ?? [];
+      // 🆕 الأحداث
+      final logEvents = (cloudData['log_events'] as List?) ?? [];
 
       // 1. الرموز
       for (final uc in usedCodes) {
@@ -374,7 +382,7 @@ class SyncService {
         }
       }
 
-      // 2. العملاء (مع تحديث البيانات الموجودة)
+      // 2. العملاء
       final Map<int, int> idMap = {};
 
       for (final c in customers) {
@@ -384,14 +392,12 @@ class SyncService {
         final name = c['name'] as String? ?? '';
         final createdAt = c['created_at'] as String? ?? '';
 
-        // البحث عن عميل بنفس الاسم + التاريخ
         final existingId =
             await db.findCustomerIdByNameAndDate(name, createdAt);
 
         if (existingId != null) {
           idMap[cloudId] = existingId;
 
-          // 🆕 تحديث بيانات العميل (بما فيها max_balance و is_active)
           final cloudMaxBalance = c['max_balance'];
           final cloudIsActive = c['is_active'];
           final cloudPhone = c['phone'];
@@ -427,7 +433,6 @@ class SyncService {
             if (updated > 0) updatedCustomers++;
           }
         } else {
-          // عميل جديد
           final newMap = Map<String, dynamic>.from(c);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -464,8 +469,33 @@ class SyncService {
         }
       }
 
+      // ═══════════════════════════════════════════════════════
+      // 🆕 4. الأحداث (log_events)
+      // ═══════════════════════════════════════════════════════
+      for (final log in logEvents) {
+        final action = log['action'] as String? ?? '';
+        final createdAt = log['created_at'] as String? ?? '';
+        if (action.isEmpty || createdAt.isEmpty) continue;
+
+        final accountant = log['accountant'] as String?;
+
+        // فحص وجود حدث مطابق (action + createdAt + accountant)
+        final exists = await db.logEventExists(
+          action: action,
+          createdAt: createdAt,
+          accountant: accountant,
+        );
+
+        if (!exists) {
+          final newMap = Map<String, dynamic>.from(log);
+          newMap.remove('id'); // لا نستورد id من السحابة
+          await db.insertLogEventRaw(newMap);
+          addedLogs++;
+        }
+      }
+
       debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, +$addedTransactions transactions');
+          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, +$addedTransactions transactions, +$addedLogs logs');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
     }
@@ -474,6 +504,7 @@ class SyncService {
       'customers': addedCustomers,
       'transactions': addedTransactions,
       'updated': updatedCustomers,
+      'logs': addedLogs, // 🆕
     };
   }
 
@@ -484,14 +515,17 @@ class SyncService {
       final customers = await db.allCustomersRaw();
       final transactions = await db.allTransactionsRaw();
       final usedCodes = await db.allUsedCodesRaw();
+      // 🆕 الأحداث
+      final logEvents = await db.allLogEventsRaw();
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 2,
+        'version': 3, // 🆕 ترقية من 2 إلى 3
         'created_at': DateTime.now().toIso8601String(),
         'customers': customers,
         'transactions': transactions,
         'used_codes': usedCodes,
+        'log_events': logEvents, // 🆕
       };
 
       return await GDriveService.uploadSyncFile(data);
