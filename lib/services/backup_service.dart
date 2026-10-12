@@ -168,9 +168,11 @@ class BackupService {
       int addedTransactions = 0;
 
       if (mode == 'replace') {
-        // حذف كل شيء
+        // 🆕 حذف كل شيء (بما فيها used_codes و log_events)
         await dbi.delete('transactions');
         await dbi.delete('customers');
+        await dbi.delete('used_codes'); // 🆕 منع تعارض الرموز
+        // ✅ ملاحظة: لا نحذف log_events (السجل مهم)
       }
 
       // خريطة المعرفات القديمة → الجديدة
@@ -183,6 +185,9 @@ class BackupService {
         final accountType = c['account_type'] as String? ?? 'customer';
         final phone = c['phone'] as String?;
         final note = c['note'] as String?;
+        final category = c['category'] as String? ?? 'normal';
+        final maxBalance = c['max_balance'];
+        final isActive = c['is_active'] ?? 1;
         final createdAt = c['created_at'] as String;
 
         if (mode == 'merge') {
@@ -201,6 +206,9 @@ class BackupService {
           'phone': phone,
           'account_type': accountType,
           'note': note,
+          'category': category,
+          'max_balance': maxBalance,
+          'is_active': isActive,
           'created_at': createdAt,
         });
         idMap[oldId] = newId;
@@ -226,12 +234,31 @@ class BackupService {
 
         await dbi.insert('transactions', {
           'customer_id': newCustomerId,
+          'code': t['code'] as String?,
+          'accountant': t['accountant'] as String?,
+          'source': t['source'] as String?,
           'amount': (t['amount'] as num).toDouble(),
           'currency': t['currency'] as String? ?? 'YER',
           'type': t['type'] as String,
           'items': t['items'] as String? ?? '',
           'created_at': t['created_at'] as String,
         });
+
+        // 🆕 إعادة إضافة الرمز المستخدم
+        final code = t['code'] as String?;
+        if (code != null && code.isNotEmpty) {
+          try {
+            await dbi.insert('used_codes', {
+              'code': code,
+              'type': t['type'] as String? ?? 'debt',
+              'created_at':
+                  t['created_at'] as String? ?? DateTime.now().toIso8601String(),
+            });
+          } catch (_) {
+            // الرمز موجود مسبقاً — تجاهل
+          }
+        }
+
         addedTransactions++;
       }
 
