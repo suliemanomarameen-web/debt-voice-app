@@ -10,8 +10,9 @@ import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
 import 'services/code_service.dart';
+import 'services/keywords_service.dart'; // 🆕
 import 'services/logger_service.dart';
-import 'services/notification_dispatcher.dart'; // 🆕
+import 'services/notification_dispatcher.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
@@ -40,6 +41,9 @@ void main() async {
   await speech.init();
 
   await TtsService.init();
+
+  // 🆕 تحميل الكلمات المفتاحية قبل تحليل أي نص
+  await KeywordsService.init();
 
   final theme = ThemeService();
   await theme.load();
@@ -331,7 +335,7 @@ Future<void> _saveTransactionFor(
   await NotificationService.show('تم تسجيل $label', detail.toString());
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
+  // إرسال الإشعارات (واتساب إن مُفعّل)
   // ═══════════════════════════════════════════════════════════
   await NotificationDispatcher.afterTransactionAdded(
     customerId: customer.id!,
