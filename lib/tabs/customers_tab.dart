@@ -7,6 +7,7 @@ import '../services/accountant_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../services/logger_service.dart';
+import '../services/notification_dispatcher.dart'; // 🆕
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
@@ -582,7 +583,7 @@ class _CustomersTabState extends State<CustomersTab> {
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          // 🆕 تسجيل الحدث
+                          // تسجيل الحدث
                           final typeLabel = {
                             'debt': 'دين',
                             'payment': 'سداد',
@@ -595,6 +596,24 @@ class _CustomersTabState extends State<CustomersTab> {
                             currency: 'YER',
                             code: code,
                             accountant: accountant,
+                            source: 'manual',
+                          );
+
+                          // ═══════════════════════════════════════════
+                          // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
+                          // ═══════════════════════════════════════════
+                          final newBalance = await db
+                              .customerBalance(selectedCustomer!.id!);
+
+                          final normalizedType = CodeService.normalizeType(type);
+
+                          await NotificationDispatcher.afterTransactionAdded(
+                            customerId: selectedCustomer!.id!,
+                            customerName: selectedCustomer!.name,
+                            phone: selectedCustomer!.phone,
+                            type: normalizedType,
+                            amount: amt,
+                            newBalance: newBalance,
                             source: 'manual',
                           );
 
