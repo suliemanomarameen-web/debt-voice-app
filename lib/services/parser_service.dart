@@ -1,3 +1,5 @@
+import 'keywords_service.dart';
+
 class ParsedEntry {
   final String intent;
   final String customerName;
@@ -22,7 +24,6 @@ class ParsedEntry {
 
 class ParserService {
   /// حذف التشكيل من النص (للتحليل فقط)
-  /// يحذف: الفتحة، الضمة، الكسرة، السكون، الشدة، التنوين، الألف الخنجرية، التطويل
   static String _stripTashkeel(String text) {
     return text
         .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
@@ -33,7 +34,7 @@ class ParserService {
     final original = text.trim();
     if (original.isEmpty) return null;
 
-    // ⚠️ نظّف النص من التشكيل للتحليل
+    // نظّف النص من التشكيل للتحليل
     final clean = _stripTashkeel(original);
     final t = clean.toLowerCase();
 
@@ -45,24 +46,37 @@ class ParserService {
     String intent = 'debt';
     String? warning;
 
-    if (t.contains('مرتجع') || t.contains('رجع')) {
+    // 🆕 نستخدم KeywordsService بدلاً من const
+    final returnKeywords = KeywordsService.get(KeywordsService.catReturn);
+    final debtKeywords = KeywordsService.get(KeywordsService.catDebt);
+    final paymentKeywords = KeywordsService.get(KeywordsService.catPayment);
+
+    // فحص المرتجع أولاً (لأنه خاص)
+    if (_containsAny(t, returnKeywords)) {
       intent = 'return';
-    } else if (t.contains('سجل') || t.contains('دين') ||
-               t.contains('عليه') || t.contains('عليها')) {
+    }
+    // فحص الدين
+    else if (_containsAny(t, debtKeywords)) {
       intent = 'debt';
-    } else if (t.contains('دفع') && !t.contains('دفع ل')) {
+    }
+    // فحص السداد (مع استثناء "دفع لـ")
+    else if (_containsAny(t, ['دفع']) && !t.contains('دفع ل')) {
       intent = 'payment';
-    } else if (t.contains('وصل من') || t.contains('وصلني') ||
-               t.contains('استلمت') || t.contains('استلم')) {
+    }
+    // فحص "وصل من" و "استلمت"
+    else if (_containsAny(t, ['وصل من', 'وصلني', 'استلمت', 'استلم'])) {
       intent = 'payment';
-    } else if (t.contains('وصل')) {
+    }
+    // فحص "وصل" (مع تحذير)
+    else if (_containsAny(t, ['وصل'])) {
       intent = 'payment';
       if (t.contains('وصل ل')) {
         warning = '⚠️ "وصل لـ" غامضة. استخدم "دفع محمد 500" للسداد '
             'أو "سجل على محمد 500" للدين.';
       }
-    } else if (t.contains('سدد') || t.contains('سداد') ||
-               t.contains('paid') || t.contains('payment')) {
+    }
+    // فحص بقية كلمات السداد
+    else if (_containsAny(t, paymentKeywords)) {
       intent = 'payment';
     }
 
@@ -85,24 +99,37 @@ class ParserService {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 أدوات مساعدة للبحث في قوائم الكلمات
+  // ═══════════════════════════════════════════════════════════
+  static bool _containsAny(String text, List<String> keywords) {
+    for (final kw in keywords) {
+      if (text.contains(kw.toLowerCase())) return true;
+    }
+    return false;
+  }
+
   // ============================================================
   // استخراج الاسم + المبلغ
   // ============================================================
   static _NameAmount? _extractNameAndAmount(String text) {
-    const keywords = [
-      'سجل على', 'سجل ل', 'سجل',
-      'وصل من', 'وصل ل', 'وصل',
-      'دفع من', 'دفع ل', 'دفع',
-      'سدد', 'استلمت', 'استلم',
-      'مرتجع من', 'مرتجع ل', 'مرتجع',
+    // 🆕 نستخدم كلمات KeywordsService
+    final debtKw = KeywordsService.get(KeywordsService.catDebt);
+    final paymentKw = KeywordsService.get(KeywordsService.catPayment);
+    final returnKw = KeywordsService.get(KeywordsService.catReturn);
+
+    // دمج كل الكلمات (مع كلمات إضافية)
+    final keywords = <String>{
+      ...debtKw,
+      ...paymentKw,
+      ...returnKw,
       'على', 'عليه', 'عليها',
-      'record for', 'record',
-    ];
+    }.toList();
 
-    final sortedKeywords = List<String>.from(keywords)
-      ..sort((a, b) => b.length.compareTo(a.length));
+    // ترتيب من الأطول للأقصر (لتجنب "سجل" قبل "سجل على")
+    keywords.sort((a, b) => b.length.compareTo(a.length));
 
-    for (final kw in sortedKeywords) {
+    for (final kw in keywords) {
       final idx = text.toLowerCase().indexOf(kw.toLowerCase());
       if (idx == -1) continue;
 
@@ -176,32 +203,28 @@ class ParserService {
   }
 
   static ParsedEntry? _detectAddAccountIntent(String t, String original) {
-    const addVerbs = [
-      'أضف', 'اضف', 'أضيف', 'اضيف', 'أضيفي',
-      'أنشئ', 'انشئ', 'أنشيء', 'انشيء',
-      'سجل حساب', 'افتح حساب', 'افتحي حساب',
-      'انشاء حساب', 'إنشاء حساب',
-      'create account', 'add account',
+    // 🆕 نستخدم KeywordsService
+    final addAccountKeywords =
+        KeywordsService.get(KeywordsService.catAddAccount);
+
+    // فحص فعلي: هل يحتوي على فعل إضافة + كلمة "حساب" أو "عميل"؟
+    const hasAccountWords = [
+      'حساب', 'عميل', 'مورد', 'أخرى', 'اخرى',
+      'account', 'customer', 'supplier',
     ];
 
-    final hasAddVerb = addVerbs.any((v) => t.contains(v));
+    final hasAddVerb = _containsAny(t, addAccountKeywords);
     if (!hasAddVerb) return null;
 
-    final hasAccountWord = t.contains('حساب') ||
-        t.contains('عميل') ||
-        t.contains('مورد') ||
-        t.contains('أخرى') ||
-        t.contains('اخرى') ||
-        t.contains('account') ||
-        t.contains('customer') ||
-        t.contains('supplier');
-
+    final hasAccountWord = hasAccountWords.any((w) => t.contains(w));
     if (!hasAccountWord) return null;
 
     String accountType = 'customer';
     if (t.contains('مورد') || t.contains('supplier')) {
       accountType = 'supplier';
-    } else if (t.contains('أخرى') || t.contains('اخرى') || t.contains('other')) {
+    } else if (t.contains('أخرى') ||
+        t.contains('اخرى') ||
+        t.contains('other')) {
       accountType = 'other';
     }
 
