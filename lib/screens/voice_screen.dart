@@ -7,6 +7,7 @@ import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
+import '../services/notification_dispatcher.dart'; // 🆕
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
@@ -490,6 +491,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
             ],
           ),
         ),
+      );
+
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
+      // ═══════════════════════════════════════════════════════════
+      await NotificationDispatcher.afterTransactionAdded(
+        customerId: c.id!,
+        customerName: c.name,
+        phone: c.phone,
+        type: normalizedType,
+        amount: p.amount,
+        newBalance: newBalance,
+        source: 'voice',
       );
     } finally {
       if (mounted) {
