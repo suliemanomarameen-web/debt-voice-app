@@ -10,7 +10,7 @@ import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
 import 'services/code_service.dart';
-import 'services/keywords_service.dart'; // 🆕
+import 'services/keywords_service.dart';
 import 'services/logger_service.dart';
 import 'services/notification_dispatcher.dart';
 import 'services/notification_service.dart';
@@ -42,7 +42,6 @@ void main() async {
 
   await TtsService.init();
 
-  // 🆕 تحميل الكلمات المفتاحية قبل تحليل أي نص
   await KeywordsService.init();
 
   final theme = ThemeService();
@@ -92,13 +91,15 @@ void _setupOverlayListener() {
       final text = data['text'] as String? ?? '';
       String? audioPath;
 
-      // محاولة جلب آخر تسجيل صوتي
       try {
         audioPath = AudioRecorderService().currentRecordingPath;
       } catch (_) {}
 
       if (text == '__EMPTY__') {
-        await LoggerService.logVoiceEmpty(audioPath: audioPath);
+        await LoggerService.logVoicePending(
+          rawText: '',
+          audioPath: audioPath,
+        );
         await TtsService.speakDidNotHear();
         await NotificationService.show(
           'لم أسمع شيئا',
@@ -122,22 +123,30 @@ void _setupOverlayListener() {
 
       final parsed = ParserService.parse(text);
       if (parsed == null) {
-        await LoggerService.logVoiceFail(
-          reason: 'لم يُفهم النص',
-          text: text,
+        // ═══════════════════════════════════════════════════════
+        // 🆕 حفظ كتسجيل معلّق بدلاً من فشل صامت
+        // ═══════════════════════════════════════════════════════
+        await LoggerService.logVoicePending(
+          rawText: text,
           audioPath: audioPath,
         );
         await TtsService.speakDidNotUnderstand();
-        await NotificationService.show('لم أفهم', 'النص: "$text"');
+        await NotificationService.show(
+          '🔴 تسجيل معلّق',
+          'لم أفهم: "$text"\nافتح السجل → المعلقات للمراجعة',
+        );
         return;
       }
 
       if (parsed.intent == 'add_account') {
         if (parsed.customerName.isEmpty) {
-          await LoggerService.logVoiceFail(
-            reason: 'لم يُذكر اسم الحساب',
-            text: text,
+          await LoggerService.logVoicePending(
+            rawText: text,
             audioPath: audioPath,
+            partialParse: {
+              'intent': 'add_account',
+              'customerName': '',
+            },
           );
           await TtsService.speak('لم أفهم الاسم');
           await NotificationService.show('لم أفهم الاسم', '');
@@ -191,13 +200,21 @@ void _setupOverlayListener() {
       }
       final partial = await db.findCustomersContaining(parsed.customerName);
       if (partial.isEmpty) {
-        await LoggerService.logVoiceFail(
-          reason: 'لا يوجد حساب بهذا الاسم',
-          text: text,
+        await LoggerService.logVoicePending(
+          rawText: text,
           audioPath: audioPath,
+          partialParse: {
+            'intent': parsed.intent,
+            'amount': parsed.amount,
+            'customerName': parsed.customerName,
+            'items': parsed.items,
+          },
         );
         await TtsService.speakNoAccount(parsed.customerName);
-        await NotificationService.show('لا يوجد حساب', parsed.customerName);
+        await NotificationService.show(
+          '🔴 تسجيل معلّق',
+          'لا يوجد حساب باسم "${parsed.customerName}"\nافتح السجل → المعلقات',
+        );
         return;
       }
       if (partial.length > 1) {
@@ -257,7 +274,6 @@ Future<void> _saveTransactionFor(
     debugPrint('Duplicate check error: $e');
   }
 
-  // جلب اسم المحاسب
   String? accountant;
   try {
     accountant = await AccountantService.getAccountantName();
@@ -265,7 +281,6 @@ Future<void> _saveTransactionFor(
     debugPrint('❌ Accountant name error: $e');
   }
 
-  // توليد الرمز
   String? code;
   try {
     code = await CodeService.generateCode(normalizedType);
@@ -294,7 +309,6 @@ Future<void> _saveTransactionFor(
     'return': 'مرتجع',
   }[normalizedType] ?? 'عملية';
 
-  // تسجيل الحدث
   await LoggerService.logTransactionAdded(
     typeLabel: label,
     customerName: customer.name,
@@ -334,9 +348,6 @@ Future<void> _saveTransactionFor(
 
   await NotificationService.show('تم تسجيل $label', detail.toString());
 
-  // ═══════════════════════════════════════════════════════════
-  // إرسال الإشعارات (واتساب إن مُفعّل)
-  // ═══════════════════════════════════════════════════════════
   await NotificationDispatcher.afterTransactionAdded(
     customerId: customer.id!,
     customerName: customer.name,
