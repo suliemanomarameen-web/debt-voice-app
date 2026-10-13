@@ -7,7 +7,7 @@ import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
-import '../services/notification_dispatcher.dart'; // 🆕
+import '../services/notification_dispatcher.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
@@ -111,10 +111,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
       });
 
       if (path != null) {
-        await LoggerService.logVoiceSuccess(
-          text: '(تسجيل صوتي محفوظ - بدون تعرف)',
+        // ═══════════════════════════════════════════════════════
+        // 🆕 حفظ كـ "معلّق" بدلاً من "ناجح"
+        // لأن الملف الصوتي لا يُفهم آلياً
+        // ═══════════════════════════════════════════════════════
+        await LoggerService.logVoicePending(
+          rawText: '(تسجيل صوتي محفوظ - بانتظار المراجعة)',
           audioPath: path,
-          parsedAction: 'تسجيل صوتي',
         );
 
         if (!mounted) return;
@@ -126,12 +129,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                      '✅ تم حفظ التسجيل — يمكنك الاستماع إليه من السجل'),
+                      '✅ تم حفظ التسجيل — راجعه من السجل → المعلقات'),
                 ),
               ],
             ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
           ),
         );
       } else {
@@ -196,13 +199,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
         if (!mounted) return;
         setState(() {
           _parsed = null;
-          _errorMessage = 'لم أفهم الجملة. جرّب: "سجل على محمد 1500 ريال"';
+          _errorMessage =
+              'لم أفهم الجملة. جرّب: "سجل على محمد 1500 ريال"\n\n'
+              '💡 تم حفظ التسجيل في السجل → المعلقات للمراجعة';
           _isProcessing = false;
         });
 
-        await LoggerService.logVoiceFail(
-          reason: 'لم يُفهم النص',
-          text: _text,
+        // ═══════════════════════════════════════════════════════
+        // 🆕 حفظ كـ معلّق
+        // ═══════════════════════════════════════════════════════
+        await LoggerService.logVoicePending(
+          rawText: _text,
           audioPath: audioPath,
         );
 
@@ -232,14 +239,24 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _parsed = null;
           _foundCustomer = null;
           _matches = [];
-          _errorMessage = '❌ لا يوجد حساب باسم "${parsed.customerName}"';
+          _errorMessage =
+              '❌ لا يوجد حساب باسم "${parsed.customerName}"\n\n'
+              '💡 تم حفظ التسجيل في السجل → المعلقات';
           _isProcessing = false;
         });
 
-        await LoggerService.logVoiceFail(
-          reason: 'لا يوجد حساب بهذا الاسم',
-          text: _text,
+        // ═══════════════════════════════════════════════════════
+        // 🆕 حفظ كـ معلّق مع partial parse
+        // ═══════════════════════════════════════════════════════
+        await LoggerService.logVoicePending(
+          rawText: _text,
           audioPath: audioPath,
+          partialParse: {
+            'intent': parsed.intent,
+            'amount': parsed.amount,
+            'customerName': parsed.customerName,
+            'items': parsed.items,
+          },
         );
 
         TtsService.speakNoAccount(parsed.customerName);
@@ -493,9 +510,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         ),
       );
 
-      // ═══════════════════════════════════════════════════════════
-      // 🆕 إرسال الإشعارات (واتساب إن مُفعّل)
-      // ═══════════════════════════════════════════════════════════
       await NotificationDispatcher.afterTransactionAdded(
         customerId: c.id!,
         customerName: c.name,
@@ -567,7 +581,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // ===== 🆕 زرّان: التحدث + التسجيل =====
+                    // ===== زرّان: التحدث + التسجيل =====
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -699,19 +713,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.1),
+                          color: Colors.orange.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: Colors.green.withOpacity(0.4)),
+                              color: Colors.orange.withOpacity(0.4)),
                         ),
                         child: const Row(
                           children: [
-                            Icon(Icons.check_circle,
-                                color: Colors.green, size: 20),
+                            Icon(Icons.pending_actions,
+                                color: Colors.orange, size: 20),
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'تم حفظ التسجيل — يمكنك الاستماع إليه من السجل',
+                                'تم حفظ التسجيل — راجعه من السجل → المعلقات',
                                 style: TextStyle(fontSize: 12),
                               ),
                             ),
