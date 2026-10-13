@@ -59,7 +59,7 @@ class LoggerService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 استخراج accountant من metadata (إن وُجد)
+  // استخراج accountant من metadata (إن وُجد)
   // ═══════════════════════════════════════════════════════════
   static String? _extractAccountantFromMetadata(
       Map<String, dynamic>? metadata) {
@@ -82,7 +82,6 @@ class LoggerService {
     String? audioPath,
   }) async {
     try {
-      // 🆕 أولوية: accountant الصريح > metadata.accountant > الحالة الحالية
       accountant ??= _extractAccountantFromMetadata(metadata);
 
       if (accountant == null) {
@@ -269,6 +268,42 @@ class LoggerService {
 
   static Future<List<LogEvent>> getAllLogs({int limit = 2000}) async {
     return getLogs(limit: limit);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 جلب التسجيلات المعلّقة فقط
+  // ═══════════════════════════════════════════════════════════
+  static Future<List<LogEvent>> getPendingVoiceLogs({
+    int limit = 200,
+  }) async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      // جلب كل الأحداث الصوتية غير المُعالجة
+      final r = await db.query(
+        'log_events',
+        where: "category = 'voice' AND is_acknowledged = 0",
+        orderBy: 'created_at DESC',
+        limit: limit,
+      );
+
+      return r.map((e) => LogEvent.fromMap(e)).toList();
+    } catch (e) {
+      debugPrint('❌ [Logger] getPendingVoiceLogs error: $e');
+      return [];
+    }
+  }
+
+  static Future<int> getPendingVoiceCount() async {
+    try {
+      final db = await DatabaseHelper.instance.database;
+      final r = await db.rawQuery('''
+        SELECT COUNT(*) AS cnt FROM log_events
+        WHERE category = 'voice' AND is_acknowledged = 0
+      ''');
+      return (r.first['cnt'] as int?) ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   static Future<int> getPendingCount() async {
@@ -474,7 +509,6 @@ class LoggerService {
       category: LogCategory.transaction,
       relatedId: relatedId,
       audioPath: audioPath,
-      // 🆕 accountant يُمرَّر في المستوى العلوي أيضاً
       accountant: accountant,
       metadata: {
         'customer': customerName,
@@ -651,6 +685,34 @@ class LoggerService {
         audioPath: audioPath,
         accountant: accountant,
       );
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حفظ تسجيل معلّق (بانتظار المراجعة)
+  // ═══════════════════════════════════════════════════════════
+  static Future<int> logVoicePending({
+    required String rawText,
+    String? audioPath,
+    Map<String, dynamic>? partialParse,
+    String? accountant,
+  }) async {
+    // مستوى warning + is_acknowledged = 0 (يحتاج مراجعة)
+    return await log(
+      action: 'تسجيل بانتظار المراجعة',
+      description: rawText.isEmpty
+          ? 'تسجيل صوتي بدون نص واضح'
+          : 'لم يُفهم النص: "$rawText"',
+      level: LogLevel.warning,
+      category: LogCategory.voice,
+      audioPath: audioPath,
+      accountant: accountant,
+      metadata: {
+        'pending': true,
+        'raw_text': rawText,
+        if (partialParse != null) 'partial': partialParse,
+        'is_pending_voice': true, // علامة سريعة للفلترة
+      },
+    );
+  }
 
   // ============ الإعدادات ============
   static Future<void> logSettingChanged({
