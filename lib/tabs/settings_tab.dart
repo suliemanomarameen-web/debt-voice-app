@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../db/database_helper.dart';
 import '../models/log_event.dart';
 import '../services/accountant_service.dart';
@@ -68,11 +67,9 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _filterOtherErrors = true;
   bool _filterOtherWarnings = true;
 
-  // 🆕 الاستعادة
+  // 🆕 الاستعادة (بدون واتساب)
   bool _hasRecoveryCode = false;
   bool _hasSecurityQuestion = false;
-  bool _hasWhatsAppNumber = false;
-  String? _whatsappNumber;
 
   @override
   void initState() {
@@ -128,14 +125,10 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _loadRecoveryInfo() async {
     final hasCode = await RecoveryService.hasRecoveryCode();
     final hasQ = await RecoveryService.hasSecurityQuestion();
-    final hasNum = await RecoveryService.hasWhatsAppNumber();
-    final num = await RecoveryService.getWhatsAppNumber();
     if (!mounted) return;
     setState(() {
       _hasRecoveryCode = hasCode;
       _hasSecurityQuestion = hasQ;
-      _hasWhatsAppNumber = hasNum;
-      _whatsappNumber = num;
     });
   }
 
@@ -159,603 +152,540 @@ class _SettingsTabState extends State<SettingsTab> {
       if (key == 'pending_filter_warnings') _filterOtherWarnings = v;
     });
   }
+Future<void> _loadCodeSettings() async {
+  final enabled = await CodeService.isEnabled();
+  final d = await CodeService.getDebtPrefix();
+  final p = await CodeService.getPaymentPrefix();
+  final r = await CodeService.getReturnPrefix();
+  final digits = await CodeService.getDigits();
+  final mode = await CodeService.getMode();
+  if (!mounted) return;
+  setState(() {
+    _codeEnabled = enabled;
+    _debtPrefix = d;
+    _paymentPrefix = p;
+    _returnPrefix = r;
+    _codeDigits = digits;
+    _codeMode = mode;
+  });
+}
 
-  Future<void> _loadCodeSettings() async {
-    final enabled = await CodeService.isEnabled();
-    final d = await CodeService.getDebtPrefix();
-    final p = await CodeService.getPaymentPrefix();
-    final r = await CodeService.getReturnPrefix();
-    final digits = await CodeService.getDigits();
-    final mode = await CodeService.getMode();
+Future<void> _loadCloudBackupSettings() async {
+  final enabled = await CloudBackupService.isEnabled();
+  final freq = await CloudBackupService.getFrequency();
+  final max = await CloudBackupService.getMaxBackups();
+  if (!mounted) return;
+  setState(() {
+    _cloudBackupEnabled = enabled;
+    _cloudFrequency = freq;
+    _cloudMaxBackups = max;
+  });
+}
+
+Future<void> _checkGDrive() async {
+  final signed = GDriveService.isSignedIn;
+  if (!mounted) return;
+  setState(() => _gdriveSignedIn = signed);
+}
+
+Future<void> _loadAutoBackup() async {
+  final enabled = await AutoBackupService.isEnabled();
+  final freq = await AutoBackupService.getFrequency();
+  if (!mounted) return;
+  setState(() {
+    _autoEnabled = enabled;
+    _autoFreq = freq;
+  });
+}
+
+Future<void> _loadVersion() async {
+  try {
+    final info = await PackageInfo.fromPlatform();
     if (!mounted) return;
-    setState(() {
-      _codeEnabled = enabled;
-      _debtPrefix = d;
-      _paymentPrefix = p;
-      _returnPrefix = r;
-      _codeDigits = digits;
-      _codeMode = mode;
-    });
+    setState(() => _version = '${info.version} (${info.buildNumber})');
+  } catch (_) {
+    if (mounted) setState(() => _version = '1.0.0');
   }
+}
 
-  Future<void> _loadCloudBackupSettings() async {
-    final enabled = await CloudBackupService.isEnabled();
-    final freq = await CloudBackupService.getFrequency();
-    final max = await CloudBackupService.getMaxBackups();
-    if (!mounted) return;
-    setState(() {
-      _cloudBackupEnabled = enabled;
-      _cloudFrequency = freq;
-      _cloudMaxBackups = max;
-    });
-  }
+Future<void> _checkStatus() async {
+  final mic = await PermissionService.allGranted();
+  if (!_speechReady) _speechReady = await _speech.init();
+  if (!mounted) return;
+  setState(() {
+    _micReady = mic;
+    _speechReady = _speechReady;
+  });
+}
 
-  Future<void> _checkGDrive() async {
-    final signed = GDriveService.isSignedIn;
-    if (!mounted) return;
-    setState(() => _gdriveSignedIn = signed);
-  }
-
-  Future<void> _loadAutoBackup() async {
-    final enabled = await AutoBackupService.isEnabled();
-    final freq = await AutoBackupService.getFrequency();
-    if (!mounted) return;
-    setState(() {
-      _autoEnabled = enabled;
-      _autoFreq = freq;
-    });
-  }
-
-  Future<void> _loadVersion() async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      if (!mounted) return;
-      setState(() => _version = '${info.version} (${info.buildNumber})');
-    } catch (_) {
-      if (mounted) setState(() => _version = '1.0.0');
-    }
-  }
-
-  Future<void> _checkStatus() async {
-    final mic = await PermissionService.allGranted();
-    if (!_speechReady) _speechReady = await _speech.init();
-    if (!mounted) return;
-    setState(() {
-      _micReady = mic;
-      _speechReady = _speechReady;
-    });
-  }
-
-  Future<void> _enableAll() async {
-    await PermissionService.requestAll();
-    _speechReady = await _speech.init();
-    await _checkStatus();
-    if (!mounted) return;
-    if (_micReady && _speechReady) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('كل شيء جاهز'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-  }
-
-  Future<void> _startOverlay() async {
-    if (!_micReady || !_speechReady) {
-      await _enableAll();
-      if (!_micReady || !_speechReady) return;
-    }
-    final ok = await OverlayService.show();
-    if (!mounted) return;
-    if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تشغيل الزر العائم'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-  }
-
-  Future<void> _exportAllCsv() async {
-    final f = await ExportService.exportAllToCsv();
-    await ExportService.shareFile(f, text: 'كل الحسابات CSV');
-  }
-
-  Future<void> _exportAllExcel() async {
-    final f = await ExportService.exportAllToExcel();
-    await ExportService.shareFile(f, text: 'كل الحسابات Excel');
-  }
-
-  Future<void> _scheduleDaily() async {
-    final db = DatabaseHelper.instance;
-    final total = await db.totalDebts();
-    await ReminderService.scheduleDaily(
-      summary: 'إجمالي المتبقي: ${total.toStringAsFixed(0)} ريال',
-    );
-    if (!mounted) return;
+Future<void> _enableAll() async {
+  await PermissionService.requestAll();
+  _speechReady = await _speech.init();
+  await _checkStatus();
+  if (!mounted) return;
+  if (_micReady && _speechReady) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('تم تفعيل التذكير اليومي'),
+        content: Text('كل شيء جاهز'),
         backgroundColor: Colors.green,
       ),
     );
   }
+}
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 إدارة الاستعادة
-  // ═══════════════════════════════════════════════════════════
+Future<void> _startOverlay() async {
+  if (!_micReady || !_speechReady) {
+    await _enableAll();
+    if (!_micReady || !_speechReady) return;
+  }
+  final ok = await OverlayService.show();
+  if (!mounted) return;
+  if (ok) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم تشغيل الزر العائم'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+}
 
-  /// عرض رمز الاسترداد الحالي
-  Future<void> _showRecoveryCode() async {
-    final code = await RecoveryService.getRecoveryCodePlain();
-    if (!mounted || code == null) return;
+Future<void> _exportAllCsv() async {
+  final f = await ExportService.exportAllToCsv();
+  await ExportService.shareFile(f, text: 'كل الحسابات CSV');
+}
 
-    await showDialog(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
+Future<void> _exportAllExcel() async {
+  final f = await ExportService.exportAllToExcel();
+  await ExportService.shareFile(f, text: 'كل الحسابات Excel');
+}
+
+Future<void> _scheduleDaily() async {
+  final db = DatabaseHelper.instance;
+  final total = await db.totalDebts();
+  await ReminderService.scheduleDaily(
+    summary: 'إجمالي المتبقي: ${total.toStringAsFixed(0)} ريال',
+  );
+  if (!mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('تم تفعيل التذكير اليومي'),
+      backgroundColor: Colors.green,
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🆕 طلب كلمة المرور (للإجراءات الحساسة)
+// ═══════════════════════════════════════════════════════════
+Future<String?> _askForPassword() async {
+  final ctrl = TextEditingController();
+  String? error;
+
+  final result = await showDialog<String>(
+    context: context,
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.vpn_key, color: Colors.deepPurple),
+              Icon(Icons.lock_outline, color: Colors.orange),
               SizedBox(width: 8),
-              Text('رمز الاسترداد'),
+              Text('تأكيد الهوية'),
             ],
           ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.deepPurple.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.deepPurple.withOpacity(0.4)),
-                ),
-                child: SelectableText(
-                  code,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
-                    color: Colors.deepPurple,
-                    fontFamily: 'monospace',
-                  ),
-                ),
+              const Text(
+                'أدخل كلمة المرور الحالية للمتابعة',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
               const SizedBox(height: 12),
-              const Text(
-                '📌 احفظ هذا الرمز في مكان آمن\n'
-                'سيُستخدم لاستعادة كلمة المرور إذا نسيتها.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: code));
-                if (!ctx.mounted) return;
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ تم نسخ الرمز'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              },
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('نسخ'),
-            ),
-            FilledButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _sendRecoveryCodeViaWhatsApp();
-              },
-              icon: const Icon(Icons.send, size: 16),
-              label: const Text('إرسال للواتساب'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// توليد رمز استرداد جديد
-  Future<void> _generateNewRecoveryCode() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.refresh, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('توليد رمز جديد'),
-            ],
-          ),
-          content: const Text(
-            'سيتم إنشاء رمز استرداد جديد.\n\n'
-            '⚠️ الرمز القديم سيتوقف عن العمل.',
-            style: TextStyle(fontSize: 12),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('توليد'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (ok != true) return;
-
-    final newCode = RecoveryService.generateRecoveryCode();
-    await RecoveryService.setRecoveryCode(newCode);
-    await _loadRecoveryInfo();
-
-    if (!mounted) return;
-    await _showRecoveryCode();
-  }
-
-  /// إرسال رمز الاسترداد عبر واتساب
-  Future<void> _sendRecoveryCodeViaWhatsApp() async {
-    final code = await RecoveryService.getRecoveryCodePlain();
-    if (code == null || code.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا يوجد رمز استرداد'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    // إذا كان هناك رقم محفوظ → إرسال إليه
-    // إذا لا → فتح واتساب عام
-    final url = _hasWhatsAppNumber && _whatsappNumber != null
-        ? RecoveryService.buildWhatsAppNumberUrl(
-            phoneNumber: _whatsappNumber!,
-            recoveryCode: code,
-          )
-        : RecoveryService.buildWhatsAppRecoveryUrl(recoveryCode: code);
-
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر فتح واتساب'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ: $e')),
-      );
-    }
-  }
-
-  /// تغيير رقم واتساب
-  Future<void> _editWhatsAppNumber() async {
-    final ctrl = TextEditingController(text: _whatsappNumber ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.phone_android, color: Colors.green),
-              SizedBox(width: 8),
-              Text('رقم واتساب للاستعادة'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
               TextField(
                 controller: ctrl,
-                keyboardType: TextInputType.phone,
+                obscureText: true,
+                keyboardType: TextInputType.number,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'الرقم (مع كود الدولة)',
-                  hintText: 'مثال: 967771234567',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.phone),
+                textAlign: TextAlign.center,
+                decoration: InputDecoration(
+                  labelText: 'كلمة المرور',
+                  border: const OutlineInputBorder(),
+                  errorText: error,
+                  prefixIcon: const Icon(Icons.lock),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 16, color: Colors.amber),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'أدخل الرقم مع كود الدولة (بدون + أو 00)\n'
-                        'مثال: 967771234567 لليمن',
-                        style: TextStyle(fontSize: 11),
-                      ),
-                    ),
-                  ],
-                ),
+                onSubmitted: (v) async {
+                  final ok = await AuthService.verifyPassword(v.trim());
+                  if (ok) {
+                    Navigator.pop(ctx, v.trim());
+                  } else {
+                    setSt(() => error = 'كلمة المرور غير صحيحة');
+                  }
+                },
               ),
             ],
           ),
           actions: [
-            if (_whatsappNumber != null)
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, '__DELETE__'),
-                child: const Text(
-                  'حذف',
-                  style: TextStyle(color: Colors.red),
-                ),
-              ),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text('إلغاء'),
             ),
             FilledButton(
-              onPressed: () {
-                final v = ctrl.text.trim();
-                if (v.isEmpty) return;
-                Navigator.pop(ctx, v);
+              onPressed: () async {
+                final pwd = ctrl.text.trim();
+                if (pwd.isEmpty) {
+                  setSt(() => error = 'أدخل كلمة المرور');
+                  return;
+                }
+                final ok = await AuthService.verifyPassword(pwd);
+                if (ok) {
+                  if (ctx.mounted) Navigator.pop(ctx, pwd);
+                } else {
+                  setSt(() => error = 'كلمة المرور غير صحيحة');
+                  ctrl.clear();
+                }
+              },
+              child: const Text('تأكيد'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🆕 عرض رمز الاسترداد (يتطلب كلمة المرور)
+// ═══════════════════════════════════════════════════════════
+Future<void> _showRecoveryCode() async {
+  // 1. اطلب كلمة المرور أولاً
+  final pwd = await _askForPassword();
+  if (pwd == null) return;
+
+  // 2. جلب الرمز
+  final code = await RecoveryService.getRecoveryCodePlain();
+  if (!mounted || code == null) return;
+
+  await showDialog(
+    context: context,
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.vpn_key, color: Colors.deepPurple),
+            SizedBox(width: 8),
+            Text('رمز الاسترداد'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.deepPurple.withOpacity(0.4)),
+              ),
+              child: SelectableText(
+                code,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                  color: Colors.deepPurple,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '📌 احفظ هذا الرمز في مكان آمن\n'
+              'سيُستخدم لاستعادة كلمة المرور إذا نسيتها.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: code));
+              if (!ctx.mounted) return;
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(
+                  content: Text('✅ تم نسخ الرمز'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('نسخ'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx),
+            icon: const Icon(Icons.check, size: 16),
+            label: const Text('تم'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🆕 توليد رمز جديد (يتطلب كلمة المرور)
+// ═══════════════════════════════════════════════════════════
+Future<void> _generateNewRecoveryCode() async {
+  // 1. اطلب كلمة المرور أولاً
+  final pwd = await _askForPassword();
+  if (pwd == null) return;
+
+  // 2. اطلب تأكيد
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.refresh, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('توليد رمز جديد'),
+          ],
+        ),
+        content: const Text(
+          'سيتم إنشاء رمز استرداد جديد.\n\n'
+          '⚠️ الرمز القديم سيتوقف عن العمل.',
+          style: TextStyle(fontSize: 12),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('توليد'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  if (ok != true) return;
+
+  final newCode = RecoveryService.generateRecoveryCode();
+  await RecoveryService.setRecoveryCode(newCode);
+  await LoggerService.logSecurityEvent(
+    action: 'توليد رمز استرداد جديد',
+    description: 'تم إنشاء رمز استرداد جديد',
+  );
+  await _loadRecoveryInfo();
+
+  if (!mounted) return;
+  await _showRecoveryCode();
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🆕 تغيير سؤال الأمان (يتطلب كلمة المرور)
+// ═══════════════════════════════════════════════════════════
+Future<void> _editSecurityQuestion() async {
+  final currentQuestion = await RecoveryService.getSecurityQuestion();
+  final isCustom = await RecoveryService.isQuestionCustom();
+
+  final pwdCtrl = TextEditingController();
+  final answerCtrl = TextEditingController();
+  final customQuestionCtrl = TextEditingController(
+    text: isCustom ? (currentQuestion ?? '') : '',
+  );
+
+  String selectedQuestion = isCustom
+      ? '__CUSTOM__'
+      : (currentQuestion ?? RecoveryService.presetQuestions.first);
+
+  bool showCustomField = isCustom;
+
+  final result = await showDialog<Map<String, dynamic>>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.help_outline, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('تغيير سؤال الأمان'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: pwdCtrl,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'كلمة المرور الحالية',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.lock_outline),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    'سؤال الأمان الجديد:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selectedQuestion,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  isExpanded: true,
+                  items: [
+                    ...RecoveryService.presetQuestions.map((q) =>
+                        DropdownMenuItem(value: q, child: Text(q))),
+                    const DropdownMenuItem(
+                      value: '__CUSTOM__',
+                      child: Text('✏️ سؤال مخصص (أكتبه بنفسي)'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setSt(() {
+                      selectedQuestion = v;
+                      showCustomField = (v == '__CUSTOM__');
+                    });
+                  },
+                ),
+                if (showCustomField) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: customQuestionCtrl,
+                    maxLength: 100,
+                    decoration: const InputDecoration(
+                      labelText: 'اكتب سؤالك المخصص',
+                      hintText: 'مثال: ما اسم قطتك الأولى؟',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.edit),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                TextField(
+                  controller: answerCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'الإجابة',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.check),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final pwd = pwdCtrl.text.trim();
+                if (pwd.isEmpty) return;
+                final valid = await AuthService.verifyPassword(pwd);
+                if (!valid) {
+                  if (!ctx.mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('كلمة المرور غير صحيحة'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final finalQuestion = showCustomField
+                    ? customQuestionCtrl.text.trim()
+                    : selectedQuestion;
+
+                if (finalQuestion.isEmpty) {
+                  if (!ctx.mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('أدخل السؤال'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                final answer = answerCtrl.text.trim();
+                if (answer.isEmpty) {
+                  if (!ctx.mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('أدخل الإجابة'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                Navigator.pop(ctx, {
+                  'question': finalQuestion,
+                  'answer': answer,
+                  'isCustom': showCustomField,
+                });
               },
               child: const Text('حفظ'),
             ),
           ],
         ),
       ),
-    );
+    ),
+  );
 
-    if (result == null) return;
+  if (result == null) return;
 
-    if (result == '__DELETE__') {
-      await RecoveryService.removeWhatsAppNumber();
-      await _loadRecoveryInfo();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم حذف الرقم'),
-          backgroundColor: Colors.grey,
-        ),
-      );
-      return;
-    }
+  await RecoveryService.setSecurityQuestion(
+    question: result['question'] as String,
+    answer: result['answer'] as String,
+    isCustom: result['isCustom'] as bool,
+  );
 
-    await RecoveryService.setWhatsAppNumber(result);
-    await LoggerService.logSecurityEvent(
-      action: 'تغيير رقم واتساب للاستعادة',
-      description: 'الرقم: $result',
-    );
-    await _loadRecoveryInfo();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✅ تم حفظ الرقم: $result'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
+  await LoggerService.logSecurityEvent(
+    action: 'تغيير سؤال الأمان',
+    description: result['isCustom'] == true
+        ? 'سؤال مخصص'
+        : 'سؤال جاهز',
+  );
 
-  /// تغيير سؤال الأمان
-  Future<void> _editSecurityQuestion() async {
-    final currentQuestion = await RecoveryService.getSecurityQuestion();
-    final isCustom = await RecoveryService.isQuestionCustom();
+  await _loadRecoveryInfo();
+  if (!mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('✅ تم حفظ سؤال الأمان'),
+      backgroundColor: Colors.green,
+    ),
+  );
+}
 
-    final pwdCtrl = TextEditingController();
-    final answerCtrl = TextEditingController();
-    final customQuestionCtrl = TextEditingController(
-      text: isCustom ? (currentQuestion ?? '') : '',
-    );
-
-    String selectedQuestion = isCustom
-        ? '__CUSTOM__'
-        : (currentQuestion ?? RecoveryService.presetQuestions.first);
-
-    bool showCustomField = isCustom;
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: StatefulBuilder(
-          builder: (ctx, setSt) => AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.help_outline, color: Colors.blue),
-                SizedBox(width: 8),
-                Text('تغيير سؤال الأمان'),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // كلمة المرور الحالية (للتحقق)
-                  TextField(
-                    controller: pwdCtrl,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'كلمة المرور الحالية',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock_outline),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  const Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      'سؤال الأمان الجديد:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // اختيار السؤال
-                  DropdownButtonFormField<String>(
-                    value: selectedQuestion,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    isExpanded: true,
-                    items: [
-                      ...RecoveryService.presetQuestions.map((q) =>
-                          DropdownMenuItem(value: q, child: Text(q))),
-                      const DropdownMenuItem(
-                        value: '__CUSTOM__',
-                        child: Text('✏️ سؤال مخصص (أكتبه بنفسي)'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setSt(() {
-                        selectedQuestion = v;
-                        showCustomField = (v == '__CUSTOM__');
-                      });
-                    },
-                  ),
-                  // حقل السؤال المخصص
-                  if (showCustomField) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: customQuestionCtrl,
-                      maxLength: 100,
-                      decoration: const InputDecoration(
-                        labelText: 'اكتب سؤالك المخصص',
-                        hintText: 'مثال: ما اسم قطتك الأولى؟',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.edit),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  // الإجابة
-                  TextField(
-                    controller: answerCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'الإجابة',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.check),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('إلغاء'),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  // التحقق من كلمة المرور
-                  final pwd = pwdCtrl.text.trim();
-                  if (pwd.isEmpty) return;
-                  final valid = await AuthService.verifyPassword(pwd);
-                  if (!valid) {
-                    if (!ctx.mounted) return;
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('كلمة المرور غير صحيحة'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  // تحديد السؤال النهائي
-                  final finalQuestion = showCustomField
-                      ? customQuestionCtrl.text.trim()
-                      : selectedQuestion;
-
-                  if (finalQuestion.isEmpty) {
-                    if (!ctx.mounted) return;
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('أدخل السؤال'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
-
-                  final answer = answerCtrl.text.trim();
-                  if (answer.isEmpty) {
-                    if (!ctx.mounted) return;
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('أدخل الإجابة'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
-
-                  Navigator.pop(ctx, {
-                    'question': finalQuestion,
-                    'answer': answer,
-                    'isCustom': showCustomField,
-                  });
-                },
-                child: const Text('حفظ'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (result == null) return;
-
-    await RecoveryService.setSecurityQuestion(
-      question: result['question'] as String,
-      answer: result['answer'] as String,
-      isCustom: result['isCustom'] as bool,
-    );
-
-    await LoggerService.logSecurityEvent(
-      action: 'تغيير سؤال الأمان',
-      description: result['isCustom'] == true
-          ? 'سؤال مخصص'
-          : 'سؤال جاهز',
-    );
-
-    await _loadRecoveryInfo();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('✅ تم حفظ سؤال الأمان'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
 // ============== اسم المحاسب ==============
 Future<void> _editAccountantName() async {
   final oldName = _accountantName;
@@ -788,8 +718,7 @@ Future<void> _editAccountantName() async {
             ),
             const SizedBox(height: 12),
             const Text(
-              'يُسجَّل هذا الاسم مع كل عملية تضيفها من هذا الجهاز، '
-              'لتتمكن من معرفة من أضاف كل عملية عند المزامنة.',
+              'يُسجَّل هذا الاسم مع كل عملية تضيفها من هذا الجهاز.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
@@ -823,25 +752,7 @@ Future<void> _editAccountantName() async {
 
   if (result == null) return;
 
-  if (result == '__CLEAR__') {
-    await AccountantService.clearAccountantName();
-    await LoggerService.info(
-      'حذف اسم المحاسب',
-      'الاسم السابق: "${oldName ?? ""}"',
-      category: LogCategory.settings,
-    );
-    if (!mounted) return;
-    setState(() => _accountantName = null);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تم حذف اسم المحاسب'),
-        backgroundColor: Colors.grey,
-      ),
-    );
-    return;
-  }
-
-  if (result.isEmpty) {
+  if (result == '__CLEAR__' || result.isEmpty) {
     await AccountantService.clearAccountantName();
     await LoggerService.info(
       'حذف اسم المحاسب',
@@ -856,7 +767,7 @@ Future<void> _editAccountantName() async {
   await AccountantService.setAccountantName(result);
   await LoggerService.info(
     oldName == null || oldName.isEmpty ? 'إضافة اسم محاسب' : 'تغيير اسم المحاسب',
-    'الاسم: "$result"${oldName != null ? ' (السابق: "$oldName")' : ''}',
+    'الاسم: "$result"',
     category: LogCategory.settings,
   );
   if (!mounted) return;
@@ -868,441 +779,518 @@ Future<void> _editAccountantName() async {
     ),
   );
 }
+  // ============== النسخ اليدوي ==============
+  Future<void> _createBackup() async {
+    setState(() => _backupBusy = true);
+    final result = await BackupService.createBackup();
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
 
-// ============== النسخ اليدوي ==============
-Future<void> _createBackup() async {
-  setState(() => _backupBusy = true);
-  final result = await BackupService.createBackup();
-  if (!mounted) return;
-  setState(() => _backupBusy = false);
+    if (result.success) {
+      await LoggerService.logBackupCreated(
+        customersCount: result.customersCount,
+        transactionsCount: result.transactionsCount,
+        cloud: false,
+      );
 
-  if (result.success) {
-    await LoggerService.logBackupCreated(
-      customersCount: result.customersCount,
-      transactionsCount: result.transactionsCount,
-      cloud: false,
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 8),
+                Text('تم إنشاء النسخة'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${result.customersCount} حساب'),
+                Text('${result.transactionsCount} عملية'),
+                const Divider(),
+                Text('المسار:\n${result.filePath}',
+                    style: const TextStyle(fontSize: 11)),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إغلاق'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  if (result.filePath != null) {
+                    await BackupService.shareBackup(result.filePath!);
+                  }
+                },
+                icon: const Icon(Icons.share),
+                label: const Text('مشاركة'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showBackupsList() async {
+    final backups = await BackupService.listBackups();
+    if (!mounted) return;
+
+    if (backups.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد نسخ احتياطية')),
+      );
+      return;
+    }
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Text('النسخ المحفوظة (${backups.length})',
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: backups.length,
+                  itemBuilder: (_, i) {
+                    final file = backups[i];
+                    final name = file.path.split('/').last;
+                    return Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.description),
+                        title: Text(name,
+                            style: const TextStyle(fontSize: 13)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.restore,
+                                  color: Colors.blue),
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _restoreFromFile(file.path);
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.share),
+                              onPressed: () =>
+                                  BackupService.shareBackup(file.path),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete,
+                                  color: Colors.red),
+                              onPressed: () async {
+                                await BackupService.deleteBackup(file.path);
+                                if (context.mounted) {
+                                  Navigator.pop(context);
+                                  _showBackupsList();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
+  }
 
-    await showDialog(
+  Future<void> _pickAndRestore() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.first.path;
+      if (path == null) return;
+      if (!mounted) return;
+      await _restoreFromFile(path);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل الاختيار: $e')),
+      );
+    }
+  }
+
+  Future<void> _restoreFromFile(String filePath) async {
+    final info = await BackupService.peekFile(filePath);
+    if (!mounted) return;
+
+    if (info == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('الملف غير صالح'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final mode = await showDialog<String>(
       context: context,
       builder: (ctx) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.check_circle, color: Colors.green),
-              SizedBox(width: 8),
-              Text('تم إنشاء النسخة'),
-            ],
-          ),
+          title: const Text('استعادة نسخة'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${result.customersCount} حساب'),
-              Text('${result.transactionsCount} عملية'),
-              const Divider(),
-              Text('المسار:\n${result.filePath}',
-                  style: const TextStyle(fontSize: 11)),
+              Text('التاريخ: ${info['created_at']}'),
+              Text('الحسابات: ${info['customers_count']}'),
+              Text('العمليات: ${info['transactions_count']}'),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('إغلاق'),
+              child: const Text('إلغاء'),
             ),
-            FilledButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                if (result.filePath != null) {
-                  await BackupService.shareBackup(result.filePath!);
-                }
-              },
-              icon: const Icon(Icons.share),
-              label: const Text('مشاركة'),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, 'replace'),
+              child: const Text('استبدال كامل'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'merge'),
+              child: const Text('دمج'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (mode == null) return;
+
+    setState(() => _backupBusy = true);
+    final result = await BackupService.restoreFromFile(filePath, mode: mode);
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+
+    await LoggerService.logBackupRestored(
+      customersAdded: result.customersAdded,
+      transactionsAdded: result.transactionsAdded,
+      mode: mode,
+    );
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                result.success ? Icons.check_circle : Icons.error,
+                color: result.success ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 8),
+              Text(result.success ? 'تمت الاستعادة' : 'فشل'),
+            ],
+          ),
+          content: Text(
+            result.success
+                ? '${result.message}\n\n'
+                    'حسابات مضافة: ${result.customersAdded}\n'
+                    'عمليات مضافة: ${result.transactionsAdded}'
+                : result.message,
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('تم'),
             ),
           ],
         ),
       ),
     );
   }
-}
 
-Future<void> _showBackupsList() async {
-  final backups = await BackupService.listBackups();
-  if (!mounted) return;
-
-  if (backups.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('لا توجد نسخ احتياطية')),
+  // ============== النسخ التلقائي المحلي ==============
+  Future<void> _toggleAutoBackup(bool v) async {
+    await AutoBackupService.setEnabled(v);
+    await LoggerService.logSettingChanged(
+      settingName: 'النسخ التلقائي المحلي',
+      oldValue: _autoEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
     );
-    return;
+    if (!mounted) return;
+    setState(() => _autoEnabled = v);
   }
 
-  await showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        padding: const EdgeInsets.all(16),
-        child: Column(
+  Future<void> _changeFreq() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('تكرار النسخ التلقائي'),
           children: [
-            Text('النسخ المحفوظة (${backups.length})',
-                style: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListView.builder(
-                itemCount: backups.length,
-                itemBuilder: (_, i) {
-                  final file = backups[i];
-                  final name = file.path.split('/').last;
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.description),
-                      title: Text(name,
-                          style: const TextStyle(fontSize: 13)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.restore,
-                                color: Colors.blue),
-                            onPressed: () {
-                              Navigator.pop(context);
-                              _restoreFromFile(file.path);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.share),
-                            onPressed: () =>
-                                BackupService.shareBackup(file.path),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete,
-                                color: Colors.red),
-                            onPressed: () async {
-                              await BackupService.deleteBackup(file.path);
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                                _showBackupsList();
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'daily'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'daily')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('يومياً'),
+                ],
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'weekly'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'weekly')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('أسبوعياً'),
+                ],
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'monthly'),
+              child: Row(
+                children: [
+                  if (_autoFreq == 'monthly')
+                    const Icon(Icons.check, color: Colors.green),
+                  const SizedBox(width: 8),
+                  const Text('شهرياً'),
+                ],
               ),
             ),
           ],
         ),
       ),
-    ),
-  );
-}
-
-Future<void> _pickAndRestore() async {
-  try {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
     );
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.first.path;
-    if (path == null) return;
+    if (result == null) return;
+    await AutoBackupService.setFrequency(result);
     if (!mounted) return;
-    await _restoreFromFile(path);
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('فشل الاختيار: $e')),
-    );
-  }
-}
-
-Future<void> _restoreFromFile(String filePath) async {
-  final info = await BackupService.peekFile(filePath);
-  if (!mounted) return;
-
-  if (info == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('الملف غير صالح'),
-        backgroundColor: Colors.red,
-      ),
-    );
-    return;
+    setState(() => _autoFreq = result);
   }
 
-  final mode = await showDialog<String>(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        title: const Text('استعادة نسخة'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('التاريخ: ${info['created_at']}'),
-            Text('الحسابات: ${info['customers_count']}'),
-            Text('العمليات: ${info['transactions_count']}'),
-            const Divider(height: 24),
-            const Text('طريقة الاستعادة:',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء'),
-          ),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, 'replace'),
-            child: const Text('استبدال كامل'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, 'merge'),
-            child: const Text('دمج'),
-          ),
-        ],
-      ),
-    ),
-  );
+  String _freqLabel(String f) {
+    return {'daily': 'يومياً', 'weekly': 'أسبوعياً', 'monthly': 'شهرياً'}[f] ??
+        f;
+  }
 
-  if (mode == null) return;
-
-  setState(() => _backupBusy = true);
-  final result = await BackupService.restoreFromFile(filePath, mode: mode);
-  if (!mounted) return;
-  setState(() => _backupBusy = false);
-
-  await LoggerService.logBackupRestored(
-    customersAdded: result.customersAdded,
-    transactionsAdded: result.transactionsAdded,
-    mode: mode,
-  );
-
-  if (!mounted) return;
-  showDialog(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              result.success ? Icons.check_circle : Icons.error,
-              color: result.success ? Colors.green : Colors.red,
-            ),
-            const SizedBox(width: 8),
-            Text(result.success ? 'تمت الاستعادة' : 'فشل'),
-          ],
-        ),
-        content: Text(
-          result.success
-              ? '${result.message}\n\n'
-                  'حسابات مضافة: ${result.customersAdded}\n'
-                  'عمليات مضافة: ${result.transactionsAdded}'
-              : result.message,
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('تم'),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-// ============== النسخ التلقائي المحلي ==============
-Future<void> _toggleAutoBackup(bool v) async {
-  await AutoBackupService.setEnabled(v);
-  await LoggerService.logSettingChanged(
-    settingName: 'النسخ التلقائي المحلي',
-    oldValue: _autoEnabled ? 'مُفعّل' : 'مُعطّل',
-    newValue: v ? 'مُفعّل' : 'مُعطّل',
-  );
-  if (!mounted) return;
-  setState(() => _autoEnabled = v);
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content:
-          Text(v ? 'تم تفعيل النسخ التلقائي' : 'تم إيقاف النسخ التلقائي'),
-      backgroundColor: v ? Colors.green : Colors.grey,
-    ),
-  );
-}
-
-Future<void> _changeFreq() async {
-  final result = await showDialog<String>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('تكرار النسخ التلقائي'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'daily'),
-            child: Row(
-              children: [
-                if (_autoFreq == 'daily')
-                  const Icon(Icons.check, color: Colors.green),
-                const SizedBox(width: 8),
-                const Text('يومياً'),
-              ],
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'weekly'),
-            child: Row(
-              children: [
-                if (_autoFreq == 'weekly')
-                  const Icon(Icons.check, color: Colors.green),
-                const SizedBox(width: 8),
-                const Text('أسبوعياً'),
-              ],
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'monthly'),
-            child: Row(
-              children: [
-                if (_autoFreq == 'monthly')
-                  const Icon(Icons.check, color: Colors.green),
-                const SizedBox(width: 8),
-                const Text('شهرياً'),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-  if (result == null) return;
-  await AutoBackupService.setFrequency(result);
-  await LoggerService.logSettingChanged(
-    settingName: 'تكرار النسخ التلقائي',
-    oldValue: _freqLabel(_autoFreq),
-    newValue: _freqLabel(result),
-  );
-  if (!mounted) return;
-  setState(() => _autoFreq = result);
-}
-
-String _freqLabel(String f) {
-  return {'daily': 'يومياً', 'weekly': 'أسبوعياً', 'monthly': 'شهرياً'}[f] ??
-      f;
-}
-
-// ============== النسخ السحابي ==============
-Future<void> _toggleCloudBackup(bool v) async {
-  if (v && !GDriveService.isSignedIn) {
-    final err = await GDriveService.signInWithError();
-    if (err != null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('يجب تسجيل الدخول: $err')),
-      );
-      return;
+  // ============== النسخ السحابي ==============
+  Future<void> _toggleCloudBackup(bool v) async {
+    if (v && !GDriveService.isSignedIn) {
+      final err = await GDriveService.signInWithError();
+      if (err != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('يجب تسجيل الدخول: $err')),
+        );
+        return;
+      }
     }
+
+    await CloudBackupService.setEnabled(v);
+    await LoggerService.logSettingChanged(
+      settingName: 'النسخ السحابي التلقائي',
+      oldValue: _cloudBackupEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
+    if (!mounted) return;
+    setState(() => _cloudBackupEnabled = v);
   }
 
-  await CloudBackupService.setEnabled(v);
-  await LoggerService.logSettingChanged(
-    settingName: 'النسخ السحابي التلقائي',
-    oldValue: _cloudBackupEnabled ? 'مُفعّل' : 'مُعطّل',
-    newValue: v ? 'مُفعّل' : 'مُعطّل',
-  );
-  if (!mounted) return;
-  setState(() => _cloudBackupEnabled = v);
+  Future<void> _changeCloudFrequency() async {
+    final result = await showDialog<BackupFrequency>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('تكرار النسخ السحابي'),
+          children: BackupFrequency.values.map((f) {
+            final selected = _cloudFrequency == f;
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, f),
+              child: Row(
+                children: [
+                  if (selected)
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  Text(CloudBackupService.frequencyLabel(f)),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+    if (result == null) return;
+    await CloudBackupService.setFrequency(result);
+    if (!mounted) return;
+    setState(() => _cloudFrequency = result);
+  }
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(v
-          ? 'تم تفعيل النسخ السحابي التلقائي'
-          : 'تم إيقاف النسخ السحابي'),
-      backgroundColor: v ? Colors.green : Colors.grey,
-    ),
-  );
-}
+  Future<void> _changeCloudMaxBackups() async {
+    final ctrl = TextEditingController(
+      text: _cloudMaxBackups < 0 ? '' : _cloudMaxBackups.toString(),
+    );
+    bool notLimited = _cloudMaxBackups < 0;
 
-Future<void> _changeCloudFrequency() async {
-  final result = await showDialog<BackupFrequency>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('تكرار النسخ السحابي'),
-        children: BackupFrequency.values.map((f) {
-          final selected = _cloudFrequency == f;
-          return SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, f),
-            child: Row(
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('عدد النسخ المحفوظة'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                if (selected)
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                Text(CloudBackupService.frequencyLabel(f)),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('غير نهائي'),
+                  subtitle: const Text('احتفظ بكل النسخ بدون حذف'),
+                  value: notLimited,
+                  onChanged: (v) => setSt(() => notLimited = v),
+                ),
+                if (!notLimited)
+                  TextField(
+                    controller: ctrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'عدد النسخ',
+                      border: OutlineInputBorder(),
+                      hintText: 'مثال: 10',
+                    ),
+                  ),
               ],
             ),
-          );
-        }).toList(),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (notLimited) {
+                    Navigator.pop(ctx, -1);
+                  } else {
+                    final n = int.tryParse(ctrl.text.trim());
+                    if (n == null || n < 1) return;
+                    Navigator.pop(ctx, n);
+                  }
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        ),
       ),
-    ),
-  );
-  if (result == null) return;
-  await CloudBackupService.setFrequency(result);
-  await LoggerService.logSettingChanged(
-    settingName: 'تكرار النسخ السحابي',
-    oldValue: CloudBackupService.frequencyLabel(_cloudFrequency),
-    newValue: CloudBackupService.frequencyLabel(result),
-  );
-  if (!mounted) return;
-  setState(() => _cloudFrequency = result);
-}
+    );
 
-Future<void> _changeCloudMaxBackups() async {
-  final ctrl = TextEditingController(
-    text: _cloudMaxBackups < 0 ? '' : _cloudMaxBackups.toString(),
-  );
-  bool notLimited = _cloudMaxBackups < 0;
+    if (result == null) return;
+    await CloudBackupService.setMaxBackups(result);
+    if (!mounted) return;
+    setState(() => _cloudMaxBackups = result);
+  }
 
-  final result = await showDialog<int>(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: const Text('عدد النسخ المحفوظة'),
+  Future<void> _runCloudBackupNow() async {
+    if (!GDriveService.isSignedIn) {
+      final err = await GDriveService.signInWithError();
+      if (err != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err)),
+        );
+        return;
+      }
+    }
+
+    setState(() => _backupBusy = true);
+    await CloudBackupService.runNow();
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+  }
+
+  // ============== إعدادات الرموز ==============
+  Future<void> _toggleCodeEnabled(bool v) async {
+    await CodeService.setEnabled(v);
+    await LoggerService.logSettingChanged(
+      settingName: 'تفعيل رموز العمليات',
+      oldValue: _codeEnabled ? 'مُفعّل' : 'مُعطّل',
+      newValue: v ? 'مُفعّل' : 'مُعطّل',
+    );
+    if (!mounted) return;
+    setState(() => _codeEnabled = v);
+  }
+
+  Future<void> _editPrefix(String type) async {
+    String current;
+    String label;
+    if (type == 'debt') {
+      current = _debtPrefix;
+      label = 'رمز الدين';
+    } else if (type == 'payment') {
+      current = _paymentPrefix;
+      label = 'رمز السداد';
+    } else {
+      current = _returnPrefix;
+      label = 'رمز المرتجع';
+    }
+
+    final ctrl = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(label),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('غير نهائي'),
-                subtitle: const Text('احتفظ بكل النسخ بدون حذف'),
-                value: notLimited,
-                onChanged: (v) => setSt(() => notLimited = v),
-              ),
-              if (!notLimited)
-                TextField(
-                  controller: ctrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'عدد النسخ',
-                    border: OutlineInputBorder(),
-                    hintText: 'مثال: 10',
-                  ),
+              TextField(
+                controller: ctrl,
+                maxLength: 3,
+                textAlign: TextAlign.center,
+                textCapitalization: TextCapitalization.characters,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
                 ),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: 'مثال: D',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'حرف أو رمز قصير (1-3 أحرف)',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
             ],
           ),
           actions: [
@@ -1312,381 +1300,226 @@ Future<void> _changeCloudMaxBackups() async {
             ),
             FilledButton(
               onPressed: () {
-                if (notLimited) {
-                  Navigator.pop(ctx, -1);
-                } else {
-                  final n = int.tryParse(ctrl.text.trim());
-                  if (n == null || n < 1) return;
-                  Navigator.pop(ctx, n);
-                }
+                final v = ctrl.text.trim();
+                if (v.isEmpty) return;
+                Navigator.pop(ctx, v);
               },
               child: const Text('حفظ'),
             ),
           ],
         ),
       ),
-    ),
-  );
+    );
 
-  if (result == null) return;
-  await CloudBackupService.setMaxBackups(result);
-  await LoggerService.logSettingChanged(
-    settingName: 'عدد النسخ السحابية المحفوظة',
-    oldValue: _cloudMaxBackups < 0 ? 'غير نهائي' : '$_cloudMaxBackups',
-    newValue: result < 0 ? 'غير نهائي' : '$result',
-  );
-  if (!mounted) return;
-  setState(() => _cloudMaxBackups = result);
-}
+    if (result == null) return;
+    final newPrefix = result.toUpperCase();
+    final oldPrefix = current;
 
-Future<void> _runCloudBackupNow() async {
-  if (!GDriveService.isSignedIn) {
-    final err = await GDriveService.signInWithError();
-    if (err != null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err)),
-      );
-      return;
-    }
-  }
-
-  setState(() => _backupBusy = true);
-  await CloudBackupService.runNow();
-  if (!mounted) return;
-  setState(() => _backupBusy = false);
-
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('تم تشغيل النسخ السحابي'),
-      backgroundColor: Colors.green,
-    ),
-  );
-}
-
-// ============== إعدادات الرموز ==============
-Future<void> _toggleCodeEnabled(bool v) async {
-  await CodeService.setEnabled(v);
-  await LoggerService.logSettingChanged(
-    settingName: 'تفعيل رموز العمليات',
-    oldValue: _codeEnabled ? 'مُفعّل' : 'مُعطّل',
-    newValue: v ? 'مُفعّل' : 'مُعطّل',
-  );
-  if (!mounted) return;
-  setState(() => _codeEnabled = v);
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(v ? 'تم تفعيل رموز العمليات' : 'تم تعطيل رموز العمليات'),
-      backgroundColor: v ? Colors.green : Colors.grey,
-    ),
-  );
-}
-
-Future<void> _editPrefix(String type) async {
-  String current;
-  String label;
-  if (type == 'debt') {
-    current = _debtPrefix;
-    label = 'رمز الدين';
-  } else if (type == 'payment') {
-    current = _paymentPrefix;
-    label = 'رمز السداد';
-  } else {
-    current = _returnPrefix;
-    label = 'رمز المرتجع';
-  }
-
-  final ctrl = TextEditingController(text: current);
-  final result = await showDialog<String>(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        title: Text(label),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctrl,
-              maxLength: 3,
-              textAlign: TextAlign.center,
-              textCapitalization: TextCapitalization.characters,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 2,
-              ),
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'مثال: D',
-                counterText: '',
-              ),
+    if (newPrefix != oldPrefix && mounted) {
+      final updateOld = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.update, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('تحديث الرموز القديمة؟'),
+              ],
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'حرف أو رمز قصير (1-3 أحرف)',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+            content: Text(
+              'لقد غيّرت الرمز من "$oldPrefix" إلى "$newPrefix".\n\n'
+              'هل تريد تحديث رموز العمليات القديمة أيضاً؟',
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = ctrl.text.trim();
-              if (v.isEmpty) return;
-              Navigator.pop(ctx, v);
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  if (result == null) return;
-  final newPrefix = result.toUpperCase();
-  final oldPrefix = current;
-
-  if (newPrefix != oldPrefix && mounted) {
-    final updateOld = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.update, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('تحديث الرموز القديمة؟'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('لا، اتركها'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('نعم، حدّثها'),
+              ),
             ],
           ),
-          content: Text(
-            'لقد غيّرت الرمز من "$oldPrefix" إلى "$newPrefix".\n\n'
-            'هل تريد تحديث رموز العمليات القديمة أيضاً؟\n\n'
-            'مثال: $oldPrefix-0001 → $newPrefix-0001',
+        ),
+      );
+
+      if (updateOld == true && mounted) {
+        setState(() => _backupBusy = true);
+        final count = await CodeService.updateOldCodes(
+          oldPrefix: oldPrefix,
+          newPrefix: newPrefix,
+        );
+        if (!mounted) return;
+        setState(() => _backupBusy = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم تحديث $count عملية'),
+            backgroundColor: Colors.green,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('لا، اتركها'),
+        );
+      }
+
+      if (type == 'debt') {
+        await CodeService.setDebtPrefix(newPrefix);
+        if (mounted) setState(() => _debtPrefix = newPrefix);
+      } else if (type == 'payment') {
+        await CodeService.setPaymentPrefix(newPrefix);
+        if (mounted) setState(() => _paymentPrefix = newPrefix);
+      } else {
+        await CodeService.setReturnPrefix(newPrefix);
+        if (mounted) setState(() => _returnPrefix = newPrefix);
+      }
+    } else {
+      if (type == 'debt') {
+        await CodeService.setDebtPrefix(newPrefix);
+        if (mounted) setState(() => _debtPrefix = newPrefix);
+      } else if (type == 'payment') {
+        await CodeService.setPaymentPrefix(newPrefix);
+        if (mounted) setState(() => _paymentPrefix = newPrefix);
+      } else {
+        await CodeService.setReturnPrefix(newPrefix);
+        if (mounted) setState(() => _returnPrefix = newPrefix);
+      }
+    }
+  }
+
+  Future<void> _changeDigits() async {
+    final result = await showDialog<int>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('عدد الأرقام في الرمز'),
+          children: [4, 6, 8].map((d) {
+            final max = CodeService.getMaxPossible(d);
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, d),
+              child: Row(
+                children: [
+                  if (_codeDigits == d)
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('$d أرقام',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          'يسمح بـ ${_formatNumber(max)} عملية',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    await CodeService.setDigits(result);
+    if (!mounted) return;
+    setState(() => _codeDigits = result);
+  }
+
+  Future<void> _changeCodeMode() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('طريقة توليد الرمز'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'sequential'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'sequential')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('مرتب (تسلسلي)',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('D-0001, D-0002, D-0003...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('نعم، حدّثها'),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'random'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'random')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('عشوائي',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text('D-4821, D-1938, D-7305...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
 
-    if (updateOld == true && mounted) {
-      setState(() => _backupBusy = true);
-      final count = await CodeService.updateOldCodes(
-        oldPrefix: oldPrefix,
-        newPrefix: newPrefix,
-      );
-      if (!mounted) return;
-      setState(() => _backupBusy = false);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تم تحديث $count عملية'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-
-    await LoggerService.logCodeChanged(
-      type: label,
-      oldPrefix: oldPrefix,
-      newPrefix: newPrefix,
-      updatedCount: 0,
-    );
-
-    if (type == 'debt') {
-      await CodeService.setDebtPrefix(newPrefix);
-      if (mounted) setState(() => _debtPrefix = newPrefix);
-    } else if (type == 'payment') {
-      await CodeService.setPaymentPrefix(newPrefix);
-      if (mounted) setState(() => _paymentPrefix = newPrefix);
-    } else {
-      await CodeService.setReturnPrefix(newPrefix);
-      if (mounted) setState(() => _returnPrefix = newPrefix);
-    }
-  } else {
-    if (type == 'debt') {
-      await CodeService.setDebtPrefix(newPrefix);
-      if (mounted) setState(() => _debtPrefix = newPrefix);
-    } else if (type == 'payment') {
-      await CodeService.setPaymentPrefix(newPrefix);
-      if (mounted) setState(() => _paymentPrefix = newPrefix);
-    } else {
-      await CodeService.setReturnPrefix(newPrefix);
-      if (mounted) setState(() => _returnPrefix = newPrefix);
-    }
+    if (result == null) return;
+    await CodeService.setMode(result);
+    if (!mounted) return;
+    setState(() => _codeMode = result);
   }
-}
 
-Future<void> _changeDigits() async {
-  final result = await showDialog<int>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('عدد الأرقام في الرمز'),
-        children: [4, 6, 8].map((d) {
-          final max = CodeService.getMaxPossible(d);
-          return SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, d),
-            child: Row(
-              children: [
-                if (_codeDigits == d)
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('$d أرقام',
-                          style:
-                              const TextStyle(fontWeight: FontWeight.bold)),
-                      Text(
-                        'يسمح بـ ${_formatNumber(max)} عملية',
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    ),
-  );
-
-  if (result == null) return;
-  await CodeService.setDigits(result);
-  await LoggerService.logSettingChanged(
-    settingName: 'عدد أرقام الرموز',
-    oldValue: '$_codeDigits',
-    newValue: '$result',
-  );
-  if (!mounted) return;
-  setState(() => _codeDigits = result);
-}
-
-Future<void> _changeCodeMode() async {
-  final result = await showDialog<String>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('طريقة توليد الرمز'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'sequential'),
-            child: Row(
-              children: [
-                if (_codeMode == 'sequential')
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('مرتب (تسلسلي)',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text('D-0001, D-0002, D-0003...',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'random'),
-            child: Row(
-              children: [
-                if (_codeMode == 'random')
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('عشوائي',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text('D-4821, D-1938, D-7305...',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  if (result == null) return;
-  await CodeService.setMode(result);
-  await LoggerService.logSettingChanged(
-    settingName: 'طريقة توليد الرمز',
-    oldValue: CodeService.describeMode(_codeMode),
-    newValue: CodeService.describeMode(result),
-  );
-  if (!mounted) return;
-  setState(() => _codeMode = result);
-}
-
-String _formatNumber(int n) {
-  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-  return '$n';
-}
-
-// ============== إعدادات PDF ==============
-Future<void> _togglePdfSetting(String key, bool v) async {
-  final sp = await SharedPreferences.getInstance();
-  await sp.setBool(key, v);
-
-  String settingName;
-  if (key == 'pdf_show_codes') {
-    settingName = 'إظهار رموز العمليات في PDF';
-  } else if (key == 'pdf_hide_category') {
-    settingName = 'إخفاء التصنيف من PDF';
-  } else {
-    settingName = 'إخفاء نوع الحساب من PDF';
+  String _formatNumber(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
   }
-  await LoggerService.logSettingChanged(
-    settingName: settingName,
-    oldValue: v ? 'مُعطّل' : 'مُفعّل',
-    newValue: v ? 'مُفعّل' : 'مُعطّل',
-  );
 
-  if (!mounted) return;
-  setState(() {
-    if (key == 'pdf_show_codes') _pdfShowCodes = v;
-    if (key == 'pdf_hide_category') _pdfHideCategory = v;
-    if (key == 'pdf_hide_account_type') _pdfHideAccountType = v;
-  });
-}
+  // ============== إعدادات PDF ==============
+  Future<void> _togglePdfSetting(String key, bool v) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(key, v);
+
+    if (!mounted) return;
+    setState(() {
+      if (key == 'pdf_show_codes') _pdfShowCodes = v;
+      if (key == 'pdf_hide_category') _pdfHideCategory = v;
+      if (key == 'pdf_hide_account_type') _pdfHideAccountType = v;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
@@ -1696,7 +1529,7 @@ Future<void> _togglePdfSetting(String key, bool v) async {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ========== قسم المحاسب ==========
+          // ========== المحاسب ==========
           const _SectionHeader('المحاسب'),
           ListTile(
             leading: Icon(
@@ -1715,33 +1548,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             ),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: _editAccountantName,
-          ),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.teal.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.teal.withOpacity(0.3)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.info_outline, size: 16, color: Colors.teal),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'يُسجَّل هذا الاسم مع كل عملية تضيفها من هذا الجهاز. '
-                    'يساعدك على معرفة من أضاف كل عملية عند المزامنة.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark
-                          ? Colors.teal.shade200
-                          : Colors.teal.shade900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
           const SizedBox(height: 8),
 
@@ -1763,74 +1569,15 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               });
             },
           ),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.deepPurple.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(8),
-              border:
-                  Border.all(color: Colors.deepPurple.withOpacity(0.3)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.tips_and_updates,
-                    size: 16, color: Colors.deepPurple),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'أضف كلمات حسب لهجتك لتحسين الفهم. '
-                    'التعديلات تُطبَّق فوراً — بدون إعادة بناء.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark
-                          ? Colors.deepPurple.shade200
-                          : Colors.deepPurple.shade900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           const SizedBox(height: 8),
 
           // ========== فلترة المعلقات ==========
           const _SectionHeader('فلترة المعلقات الصوتية'),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withOpacity(0.3)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.filter_alt,
-                    size: 16, color: Colors.orange),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'اختر ما يظهر في تبويب "🔴 معلقات صوتية" داخل السجل.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark
-                          ? Colors.orange.shade200
-                          : Colors.orange.shade900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           SwitchListTile(
             secondary: const Icon(Icons.mic_off,
                 color: Colors.orange, size: 22),
             title: const Text('تسجيلات صوتية فارغة',
                 style: TextStyle(fontSize: 13)),
-            subtitle: const Text(
-                'التسجيلات التي لم يُسمع فيها أي شيء',
-                style: TextStyle(fontSize: 11)),
             value: _filterEmptyVoice,
             onChanged: (v) => _togglePendingFilter('pending_filter_empty', v),
             dense: true,
@@ -1840,9 +1587,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                 color: Colors.orange, size: 22),
             title: const Text('نصوص غير مفهومة',
                 style: TextStyle(fontSize: 13)),
-            subtitle: const Text(
-                'التسجيلات التي فشل التطبيق في فهم نصها',
-                style: TextStyle(fontSize: 11)),
             value: _filterUnclearText,
             onChanged: (v) => _togglePendingFilter('pending_filter_unclear', v),
             dense: true,
@@ -1852,9 +1596,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                 color: Colors.red, size: 22),
             title: const Text('أخطاء أخرى',
                 style: TextStyle(fontSize: 13)),
-            subtitle: const Text(
-                'أخطاء النظام غير المتعلقة بالصوت',
-                style: TextStyle(fontSize: 11)),
             value: _filterOtherErrors,
             onChanged: (v) => _togglePendingFilter('pending_filter_errors', v),
             dense: true,
@@ -1864,9 +1605,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                 color: Colors.amber, size: 22),
             title: const Text('تحذيرات أخرى',
                 style: TextStyle(fontSize: 13)),
-            subtitle: const Text(
-                'تحذيرات النظام غير المتعلقة بالصوت',
-                style: TextStyle(fontSize: 11)),
             value: _filterOtherWarnings,
             onChanged: (v) => _togglePendingFilter('pending_filter_warnings', v),
             dense: true,
@@ -1878,7 +1616,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
           ListTile(
             leading: const Icon(Icons.history, color: Colors.deepPurple),
             title: const Text('عرض سجل الأحداث'),
-            subtitle: const Text('كل ما يحدث داخل التطبيق'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {
               Navigator.push(
@@ -1927,11 +1664,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               setState(() => _autoWhatsApp = v);
               final sp = await SharedPreferences.getInstance();
               await sp.setBool('auto_whatsapp', v);
-              await LoggerService.logSettingChanged(
-                settingName: 'إرسال واتساب تلقائياً',
-                oldValue: v ? 'مُعطّل' : 'مُفعّل',
-                newValue: v ? 'مُفعّل' : 'مُعطّل',
-              );
             },
           ),
 
@@ -1940,8 +1672,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
           SwitchListTile(
             secondary: const Icon(Icons.qr_code, color: Colors.blue),
             title: const Text('تفعيل رموز العمليات'),
-            subtitle: const Text(
-                'إعطاء رمز فريد لكل عملية (مثل D-0001، P-0002)'),
             value: _codeEnabled,
             onChanged: _toggleCodeEnabled,
           ),
@@ -1957,14 +1687,11 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                   color: Colors.red.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  _debtPrefix,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Colors.red,
-                  ),
-                ),
+                child: Text(_debtPrefix,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.red)),
               ),
               onTap: () => _editPrefix('debt'),
             ),
@@ -1978,14 +1705,11 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                   color: Colors.green.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  _paymentPrefix,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Colors.green,
-                  ),
-                ),
+                child: Text(_paymentPrefix,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.green)),
               ),
               onTap: () => _editPrefix('payment'),
             ),
@@ -2000,14 +1724,11 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                   color: Colors.orange.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  _returnPrefix,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Colors.orange,
-                  ),
-                ),
+                child: Text(_returnPrefix,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.orange)),
               ),
               onTap: () => _editPrefix('return'),
             ),
@@ -2020,13 +1741,9 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '$_codeDigits',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
+                  Text('$_codeDigits',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16)),
                   const Icon(Icons.arrow_forward_ios, size: 16),
                 ],
               ),
@@ -2039,51 +1756,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCodeMode,
             ),
-            Container(
-              margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.blue.shade900.withOpacity(0.3)
-                    : Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue.withOpacity(0.4)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: const [
-                      Icon(Icons.preview, size: 18, color: Colors.blue),
-                      SizedBox(width: 6),
-                      Text(
-                        'معاينة',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      _previewChip(
-                          '$_debtPrefix-${'1'.padLeft(_codeDigits, '0')}',
-                          Colors.red),
-                      _previewChip(
-                          '$_paymentPrefix-${'1'.padLeft(_codeDigits, '0')}',
-                          Colors.green),
-                      _previewChip(
-                          '$_returnPrefix-${'1'.padLeft(_codeDigits, '0')}',
-                          Colors.orange),
-                    ],
-                  ),
-                ],
-              ),
-            ),
           ],
 
           // ========== إعدادات PDF ==========
@@ -2091,22 +1763,18 @@ Future<void> _togglePdfSetting(String key, bool v) async {
           SwitchListTile(
             secondary: const Icon(Icons.qr_code, color: Colors.blue),
             title: const Text('إظهار رموز العمليات'),
-            subtitle: const Text('إظهار عمود الرمز في جدول كشف الحساب'),
             value: _pdfShowCodes,
             onChanged: (v) => _togglePdfSetting('pdf_show_codes', v),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.star, color: Colors.amber),
             title: const Text('إخفاء التصنيف'),
-            subtitle: const Text('إخفاء "عادي / VIP / جديد..." من كشف الحساب'),
             value: _pdfHideCategory,
             onChanged: (v) => _togglePdfSetting('pdf_hide_category', v),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.person, color: Colors.teal),
             title: const Text('إخفاء نوع الحساب'),
-            subtitle:
-                const Text('إخفاء "عميل / مورد / أخرى" من كشف الحساب'),
             value: _pdfHideAccountType,
             onChanged: (v) => _togglePdfSetting('pdf_hide_account_type', v),
           ),
@@ -2146,84 +1814,8 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             },
           ),
 
-          // ═══════════════════════════════════════════════════════
-          // 🆕 قسم الاستعادة
-          // ═══════════════════════════════════════════════════════
+          // ========== الاستعادة ==========
           const _SectionHeader('الاستعادة'),
-
-          // 📌 ملخص الحالة
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _hasRecoveryCode && _hasSecurityQuestion
-                  ? Colors.green.withOpacity(0.08)
-                  : Colors.orange.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: _hasRecoveryCode && _hasSecurityQuestion
-                    ? Colors.green.withOpacity(0.4)
-                    : Colors.orange.withOpacity(0.4),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  _hasRecoveryCode && _hasSecurityQuestion
-                      ? Icons.verified_user
-                      : Icons.warning_amber,
-                  color: _hasRecoveryCode && _hasSecurityQuestion
-                      ? Colors.green
-                      : Colors.orange,
-                  size: 22,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _hasRecoveryCode && _hasSecurityQuestion
-                        ? '✅ الاستعادة جاهزة\nيمكنك استعادة كلمة المرور بأي وقت'
-                        : '⚠️ الاستعادة غير مكتملة\nأكمل الإعداد لحماية حسابك',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark
-                          ? (_hasRecoveryCode && _hasSecurityQuestion
-                              ? Colors.green.shade200
-                              : Colors.orange.shade200)
-                          : (_hasRecoveryCode && _hasSecurityQuestion
-                              ? Colors.green.shade900
-                              : Colors.orange.shade900),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // 📱 رقم واتساب
-          ListTile(
-            leading: Icon(
-              Icons.phone_android,
-              color: _hasWhatsAppNumber ? Colors.green : Colors.grey,
-            ),
-            title: const Text('رقم واتساب للاستعادة'),
-            subtitle: Text(
-              _whatsappNumber ?? 'لم يُضف بعد — اضغط للإضافة',
-              style: TextStyle(
-                color: _hasWhatsAppNumber ? Colors.green : Colors.grey,
-                fontWeight:
-                    _hasWhatsAppNumber ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            trailing: Icon(
-              _hasWhatsAppNumber ? Icons.edit : Icons.add,
-              size: 18,
-            ),
-            onTap: _editWhatsAppNumber,
-          ),
-          const SizedBox(height: 4),
-
-          // 🔑 رمز الاسترداد
           ListTile(
             leading: Icon(
               Icons.vpn_key,
@@ -2232,7 +1824,7 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             title: const Text('رمز الاسترداد'),
             subtitle: Text(
               _hasRecoveryCode
-                  ? '✅ محفوظ — اضغط للعرض أو الإرسال'
+                  ? '✅ محفوظ — اضغط للعرض (يتطلب كلمة المرور)'
                   : 'لم يُنشأ بعد — اضغط للتوليد',
               style: TextStyle(
                 color: _hasRecoveryCode ? Colors.deepPurple : Colors.grey,
@@ -2252,38 +1844,21 @@ Future<void> _togglePdfSetting(String key, bool v) async {
           if (_hasRecoveryCode)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _sendRecoveryCodeViaWhatsApp,
-                      icon: const Icon(Icons.send, size: 16),
-                      label: const Text('إرسال للواتساب',
-                          style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(0, 38),
-                      ),
-                    ),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _generateNewRecoveryCode,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('توليد رمز جديد',
+                      style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 38),
+                    foregroundColor: Colors.orange,
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _generateNewRecoveryCode,
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('توليد جديد',
-                          style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(0, 38),
-                        foregroundColor: Colors.orange,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           const SizedBox(height: 4),
-
-          // 🔐 سؤال الأمان
           ListTile(
             leading: Icon(
               Icons.help_outline,
@@ -2292,7 +1867,7 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             title: const Text('سؤال الأمان'),
             subtitle: Text(
               _hasSecurityQuestion
-                  ? '✅ محفوظ — اضغط للتغيير'
+                  ? '✅ محفوظ — اضغط للتغيير (يتطلب كلمة المرور)'
                   : 'لم يُضف بعد — اضغط للإضافة',
               style: TextStyle(
                 color: _hasSecurityQuestion ? Colors.blue : Colors.grey,
@@ -2307,56 +1882,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             onTap: _editSecurityQuestion,
           ),
 
-          Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue.withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.info_outline,
-                        size: 16,
-                        color: isDark
-                            ? Colors.blue.shade300
-                            : Colors.blue.shade700),
-                    const SizedBox(width: 6),
-                    Text(
-                      'كيف تعمل الاستعادة؟',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: isDark
-                            ? Colors.blue.shade200
-                            : Colors.blue.shade900,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '• عند نسيان كلمة المرور، لديك 3 طرق:\n'
-                  '  1️⃣ الإجابة على سؤال الأمان\n'
-                  '  2️⃣ إرسال رمز الاسترداد للواتساب\n'
-                  '  3️⃣ إدخال رمز الاسترداد يدوياً\n\n'
-                  '• جميع البيانات محفوظة مشفرة على جهازك.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1.5,
-                    color: isDark
-                        ? Colors.blue.shade100
-                        : Colors.blue.shade900,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
           // ========== النسخ الاحتياطي المحلي ==========
           const _SectionHeader('النسخ الاحتياطي المحلي'),
           ListTile(
@@ -2368,7 +1893,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
                   )
                 : const Icon(Icons.backup, color: Colors.blue),
             title: const Text('إنشاء نسخة احتياطية'),
-            subtitle: const Text('حفظ يدوي الآن'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: _backupBusy ? null : _createBackup,
           ),
@@ -2405,23 +1929,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeFreq,
             ),
-            ListTile(
-              leading: const Icon(Icons.play_arrow, color: Colors.green),
-              title: const Text('تشغيل نسخة الآن'),
-              subtitle: const Text('اختبار فوري'),
-              onTap: () async {
-                setState(() => _backupBusy = true);
-                await AutoBackupService.runNow();
-                if (!mounted) return;
-                setState(() => _backupBusy = false);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم إنشاء نسخة'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              },
-            ),
           ],
 
           // ========== النسخ السحابي ==========
@@ -2448,9 +1955,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             secondary:
                 const Icon(Icons.cloud_upload, color: Colors.deepPurple),
             title: const Text('النسخ السحابي التلقائي'),
-            subtitle: Text(_cloudBackupEnabled
-                ? 'يتم رفع نسخة ${CloudBackupService.frequencyLabel(_cloudFrequency)}'
-                : 'رفع نسخة احتياطية تلقائياً إلى Drive'),
             value: _cloudBackupEnabled,
             onChanged: _toggleCloudBackup,
           ),
@@ -2466,11 +1970,9 @@ Future<void> _togglePdfSetting(String key, bool v) async {
             ListTile(
               leading: const Icon(Icons.storage, color: Colors.indigo),
               title: const Text('عدد النسخ المحفوظة'),
-              subtitle: Text(
-                _cloudMaxBackups < 0
-                    ? 'غير نهائي'
-                    : 'آخر $_cloudMaxBackups نسخة',
-              ),
+              subtitle: Text(_cloudMaxBackups < 0
+                  ? 'غير نهائي'
+                  : 'آخر $_cloudMaxBackups نسخة'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCloudMaxBackups,
             ),
@@ -2478,7 +1980,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
               leading:
                   const Icon(Icons.play_circle, color: Colors.deepPurple),
               title: const Text('رفع نسخة الآن'),
-              subtitle: const Text('تشغيل النسخ السحابي يدوياً'),
               onTap: _backupBusy ? null : _runCloudBackupNow,
             ),
           ],
@@ -2624,26 +2125,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
           ),
           const SizedBox(height: 24),
         ],
-      ),
-    );
-  }
-
-  Widget _previewChip(String code, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withOpacity(0.5), width: 0.5),
-      ),
-      child: Text(
-        code,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: color,
-          fontFamily: 'monospace',
-        ),
       ),
     );
   }
@@ -2796,20 +2277,15 @@ Future<void> _togglePdfSetting(String key, bool v) async {
 
     if (result == null) return;
 
-    // حفظ كلمة المرور
     await AuthService.setPassword(result['pwd'] as String);
-
-    // حفظ سؤال الأمان عبر RecoveryService
     await RecoveryService.setSecurityQuestion(
       question: result['q'] as String,
       answer: result['a'] as String,
       isCustom: result['isCustom'] as bool,
     );
 
-    // توليد رمز الاسترداد تلقائياً
     final recoveryCode = RecoveryService.generateRecoveryCode();
     await RecoveryService.setRecoveryCode(recoveryCode);
-
     await AuthService.setEnabled(true);
 
     await LoggerService.logSecurityEvent(
@@ -2820,7 +2296,6 @@ Future<void> _togglePdfSetting(String key, bool v) async {
     await _loadRecoveryInfo();
     if (mounted) setState(() {});
 
-    // عرض رمز الاسترداد للمستخدم
     if (mounted) {
       await _showRecoveryCode();
     }
@@ -2900,7 +2375,7 @@ Future<void> _togglePdfSetting(String key, bool v) async {
 
     await AuthService.setEnabled(false);
     await AuthService.removePassword();
-    await RecoveryService.clearAll(); // 🆕
+    await RecoveryService.clearAll();
 
     await LoggerService.logSecurityEvent(
       action: 'تعطيل القفل',
