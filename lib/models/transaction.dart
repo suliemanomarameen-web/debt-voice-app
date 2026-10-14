@@ -3,7 +3,7 @@ class Transaction {
   final int customerId;
   final String? code;
   final String? accountant;
-  final String? source; // 🆕 مصدر العملية (overlay/voice/manual/customer_screen)
+  final String? source;
   final double amount;
   final String currency;
   final String type;
@@ -15,7 +15,7 @@ class Transaction {
     required this.customerId,
     this.code,
     this.accountant,
-    this.source, // 🆕
+    this.source,
     required this.amount,
     this.currency = 'YER',
     required this.type,
@@ -28,7 +28,7 @@ class Transaction {
         'customer_id': customerId,
         'code': code,
         'accountant': accountant,
-        'source': source, // 🆕
+        'source': source,
         'amount': amount,
         'currency': currency,
         'type': type,
@@ -41,7 +41,7 @@ class Transaction {
         customerId: m['customer_id'],
         code: m['code'],
         accountant: m['accountant'],
-        source: m['source'], // 🆕
+        source: m['source'],
         amount: (m['amount'] as num).toDouble(),
         currency: m['currency'],
         type: m['type'],
@@ -49,13 +49,20 @@ class Transaction {
         createdAt: m['created_at'],
       );
 
-  /// 🆕 الحصول على معلومات المصدر (أيقونة + نص)
+  /// الحصول على معلومات المصدر (أيقونة + نص + لون)
   static ({String label, String emoji, int color}) sourceInfo(String? source) {
     switch (source) {
       case 'overlay':
         return (label: 'الزر العائم', emoji: '🖼️', color: 0xFF9C27B0);
       case 'voice':
         return (label: 'التسجيل الصوتي', emoji: '🎤', color: 0xFF2196F3);
+      case 'voice+manual':
+        // 🆕 صوتي + تصحيح يدوي من المعلقات
+        return (
+          label: 'صوتي + مراجَع',
+          emoji: '🎤✏️',
+          color: 0xFFFF6F00
+        );
       case 'customer_screen':
         return (label: 'شاشة العميل', emoji: '👤', color: 0xFF4CAF50);
       case 'manual':
