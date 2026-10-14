@@ -42,7 +42,6 @@ class LoggerService {
     }
   }
 
-  // ============ اسم المصدر بالعربي ============
   static String _sourceLabel(String? source) {
     switch (source) {
       case 'voice':
@@ -53,14 +52,13 @@ class LoggerService {
         return '👤 شاشة العميل';
       case 'manual':
         return '➕ إضافة يدوية';
+      case 'voice+manual':
+        return '🎤✏️ صوتي + مراجَع';
       default:
         return '';
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استخراج accountant من metadata (إن وُجد)
-  // ═══════════════════════════════════════════════════════════
   static String? _extractAccountantFromMetadata(
       Map<String, dynamic>? metadata) {
     if (metadata == null) return null;
@@ -70,7 +68,6 @@ class LoggerService {
     return s.isEmpty ? null : s;
   }
 
-  // ============ حفظ حدث ============
   static Future<int> log({
     required String action,
     required String description,
@@ -270,15 +267,11 @@ class LoggerService {
     return getLogs(limit: limit);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 جلب التسجيلات المعلّقة فقط
-  // ═══════════════════════════════════════════════════════════
   static Future<List<LogEvent>> getPendingVoiceLogs({
     int limit = 200,
   }) async {
     try {
       final db = await DatabaseHelper.instance.database;
-      // جلب كل الأحداث الصوتية غير المُعالجة
       final r = await db.query(
         'log_events',
         where: "category = 'voice' AND is_acknowledged = 0",
@@ -375,7 +368,9 @@ class LoggerService {
     }
   }
 
-  // ============ إحصائيات ============
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 إحصائيات (مع دعم المعلقات الصوتية)
+  // ═══════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -389,10 +384,19 @@ class LoggerService {
         DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
             .toIso8601String()
       ]);
+
+      // 🆕 معلقات عامة (warning/error غير مُعترف بها)
       final pending = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
           AND (level = 'error' OR level = 'warning')
+      ''');
+
+      // 🆕 معلقات صوتية (فئة voice فقط)
+      final pendingVoice = await db.rawQuery('''
+        SELECT COUNT(*) AS c FROM log_events
+        WHERE is_acknowledged = 0
+          AND category = 'voice'
       ''');
 
       return {
@@ -401,9 +405,17 @@ class LoggerService {
         'warnings': (warnings.first['c'] as int?) ?? 0,
         'today': (today.first['c'] as int?) ?? 0,
         'pending': (pending.first['c'] as int?) ?? 0,
+        'pendingVoice': (pendingVoice.first['c'] as int?) ?? 0,
       };
     } catch (_) {
-      return {'total': 0, 'errors': 0, 'warnings': 0, 'today': 0, 'pending': 0};
+      return {
+        'total': 0,
+        'errors': 0,
+        'warnings': 0,
+        'today': 0,
+        'pending': 0,
+        'pendingVoice': 0,
+      };
     }
   }
 
@@ -488,7 +500,6 @@ class LoggerService {
 
   // ============ دوال مختصرة للأحداث ============
 
-  // إضافة عملية (مع عرض المصدر + accountant)
   static Future<void> logTransactionAdded({
     required String typeLabel,
     required String customerName,
@@ -686,16 +697,12 @@ class LoggerService {
         accountant: accountant,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حفظ تسجيل معلّق (بانتظار المراجعة)
-  // ═══════════════════════════════════════════════════════════
   static Future<int> logVoicePending({
     required String rawText,
     String? audioPath,
     Map<String, dynamic>? partialParse,
     String? accountant,
   }) async {
-    // مستوى warning + is_acknowledged = 0 (يحتاج مراجعة)
     return await log(
       action: 'تسجيل بانتظار المراجعة',
       description: rawText.isEmpty
@@ -709,7 +716,7 @@ class LoggerService {
         'pending': true,
         'raw_text': rawText,
         if (partialParse != null) 'partial': partialParse,
-        'is_pending_voice': true, // علامة سريعة للفلترة
+        'is_pending_voice': true,
       },
     );
   }
