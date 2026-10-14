@@ -14,7 +14,7 @@ import '../services/cloud_backup_service.dart';
 import '../services/code_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
-import '../services/keywords_service.dart'; // 🆕
+import '../services/keywords_service.dart';
 import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
@@ -22,7 +22,7 @@ import '../services/reminder_service.dart';
 import '../services/speech_service.dart';
 import '../services/theme_service.dart';
 import '../screens/gdrive_screen.dart';
-import '../screens/keywords_screen.dart'; // 🆕
+import '../screens/keywords_screen.dart';
 import '../screens/logs_screen.dart';
 import '../screens/stats_screen.dart';
 
@@ -60,6 +60,12 @@ class _SettingsTabState extends State<SettingsTab> {
   BackupFrequency _cloudFrequency = BackupFrequency.daily;
   int _cloudMaxBackups = 10;
 
+  // 🆕 فلترة المعلقات الصوتية
+  bool _filterEmptyVoice = true;
+  bool _filterUnclearText = true;
+  bool _filterOtherErrors = true;
+  bool _filterOtherWarnings = true;
+
   @override
   void initState() {
     super.initState();
@@ -72,6 +78,7 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadCloudBackupSettings();
     _loadPdfSettings();
     _loadAccountantName();
+    _loadPendingFilters();
   }
 
   Future<void> _loadAccountantName() async {
@@ -95,6 +102,38 @@ class _SettingsTabState extends State<SettingsTab> {
       _pdfShowCodes = sp.getBool('pdf_show_codes') ?? true;
       _pdfHideCategory = sp.getBool('pdf_hide_category') ?? false;
       _pdfHideAccountType = sp.getBool('pdf_hide_account_type') ?? false;
+    });
+  }
+
+  Future<void> _loadPendingFilters() async {
+    final sp = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _filterEmptyVoice = sp.getBool('pending_filter_empty') ?? true;
+      _filterUnclearText = sp.getBool('pending_filter_unclear') ?? true;
+      _filterOtherErrors = sp.getBool('pending_filter_errors') ?? true;
+      _filterOtherWarnings = sp.getBool('pending_filter_warnings') ?? true;
+    });
+  }
+
+  Future<void> _togglePendingFilter(String key, bool v) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(key, v);
+
+    await LoggerService.logSettingChanged(
+      settingName: key
+          .replaceFirst('pending_filter_', 'فلتر ')
+          .replaceAll('_', ' '),
+      oldValue: v ? 'معطّل' : 'مفعّل',
+      newValue: v ? 'مفعّل' : 'معطّل',
+    );
+
+    if (!mounted) return;
+    setState(() {
+      if (key == 'pending_filter_empty') _filterEmptyVoice = v;
+      if (key == 'pending_filter_unclear') _filterUnclearText = v;
+      if (key == 'pending_filter_errors') _filterOtherErrors = v;
+      if (key == 'pending_filter_warnings') _filterOtherWarnings = v;
     });
   }
 
@@ -931,8 +970,7 @@ class _SettingsTabState extends State<SettingsTab> {
             content: Text(
               'لقد غيّرت الرمز من "$oldPrefix" إلى "$newPrefix".\n\n'
               'هل تريد تحديث رموز العمليات القديمة أيضاً؟\n\n'
-              'مثال: $oldPrefix-0001 → $newPrefix-0001\n\n'
-              '⚠️ إذا اخترت "لا"، ستحتفظ العمليات القديمة برموزها الحالية.',
+              'مثال: $oldPrefix-0001 → $newPrefix-0001',
             ),
             actions: [
               TextButton(
@@ -969,7 +1007,7 @@ class _SettingsTabState extends State<SettingsTab> {
         type: label,
         oldPrefix: oldPrefix,
         newPrefix: newPrefix,
-        updatedCount: updateOld == true ? 0 : 0,
+        updatedCount: 0,
       );
 
       if (type == 'debt') {
@@ -1200,7 +1238,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     'يساعدك على معرفة من أضاف كل عملية عند المزامنة مع أجهزة أخرى.',
                     style: TextStyle(
                       fontSize: 11,
-                      color: isDark ? Colors.teal.shade200 : Colors.teal.shade900,
+                      color: isDark
+                          ? Colors.teal.shade200
+                          : Colors.teal.shade900,
                     ),
                   ),
                 ),
@@ -1209,7 +1249,7 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 8),
 
-          // ========== 🆕 قسم الفهم الصوتي ==========
+          // ========== قسم الفهم الصوتي ==========
           const _SectionHeader('الفهم الصوتي'),
           ListTile(
             leading: const Icon(Icons.record_voice_over,
@@ -1223,7 +1263,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 context,
                 MaterialPageRoute(builder: (_) => const KeywordsScreen()),
               ).then((_) {
-                // إعادة تحميل الكلمات عند العودة
                 if (mounted) setState(() {});
               });
             },
@@ -1256,6 +1295,85 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 8),
+
+          // ========== 🆕 قسم فلترة المعلقات ==========
+          const _SectionHeader('فلترة المعلقات الصوتية'),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.filter_alt,
+                    size: 16, color: Colors.orange),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'اختر ما يظهر في تبويب "🔴 معلقات صوتية" داخل السجل.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark
+                          ? Colors.orange.shade200
+                          : Colors.orange.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.mic_off,
+                color: Colors.orange, size: 22),
+            title: const Text('تسجيلات صوتية فارغة',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+                'التسجيلات التي لم يُسمع فيها أي شيء',
+                style: TextStyle(fontSize: 11)),
+            value: _filterEmptyVoice,
+            onChanged: (v) => _togglePendingFilter('pending_filter_empty', v),
+            dense: true,
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.help_outline,
+                color: Colors.orange, size: 22),
+            title: const Text('نصوص غير مفهومة',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+                'التسجيلات التي فشل التطبيق في فهم نصها',
+                style: TextStyle(fontSize: 11)),
+            value: _filterUnclearText,
+            onChanged: (v) => _togglePendingFilter('pending_filter_unclear', v),
+            dense: true,
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.error_outline,
+                color: Colors.red, size: 22),
+            title: const Text('أخطاء أخرى',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+                'أخطاء النظام غير المتعلقة بالصوت',
+                style: TextStyle(fontSize: 11)),
+            value: _filterOtherErrors,
+            onChanged: (v) => _togglePendingFilter('pending_filter_errors', v),
+            dense: true,
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.warning_amber,
+                color: Colors.amber, size: 22),
+            title: const Text('تحذيرات أخرى',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+                'تحذيرات النظام غير المتعلقة بالصوت',
+                style: TextStyle(fontSize: 11)),
+            value: _filterOtherWarnings,
+            onChanged: (v) => _togglePendingFilter('pending_filter_warnings', v),
+            dense: true,
           ),
           const SizedBox(height: 8),
 
@@ -1472,7 +1590,7 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ],
 
-          // ========== إعدادات كشف الحساب (PDF) ==========
+          // ========== إعدادات PDF ==========
           const _SectionHeader('إعدادات كشف الحساب (PDF)'),
           SwitchListTile(
             secondary: const Icon(Icons.qr_code, color: Colors.blue),
