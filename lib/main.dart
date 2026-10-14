@@ -5,34 +5,27 @@ import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
-import 'services/accountant_service.dart';
+import 'handlers/overlay_handler.dart';
 import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
-import 'services/code_service.dart';
 import 'services/keywords_service.dart';
-import 'services/logger_service.dart';
-import 'services/notification_dispatcher.dart';
 import 'services/notification_service.dart';
-import 'services/overlay_service.dart';
 import 'services/permission_service.dart';
+import 'services/reminder_service.dart';
 import 'services/speech_service.dart';
-import 'services/parser_service.dart';
-import 'services/query_service.dart';
 import 'services/sync_service.dart';
 import 'services/theme_service.dart';
-import 'services/reminder_service.dart';
 import 'services/tts_service.dart';
-import 'db/database_helper.dart';
-import 'models/customer.dart';
-import 'models/transaction.dart';
 
-String? pendingVoiceText;
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ═══════════════════════════════════════════════════════
+  // 1. تهيئة الخدمات الأساسية
+  // ═══════════════════════════════════════════════════════
   await NotificationService.init();
   await ReminderService.init();
   await PermissionService.requestAll();
@@ -41,321 +34,56 @@ void main() async {
   await speech.init();
 
   await TtsService.init();
-
   await KeywordsService.init();
 
   final theme = ThemeService();
   await theme.load();
 
+  // ═══════════════════════════════════════════════════════
+  // 2. تهيئة خدمات المزامنة والنسخ
+  // ═══════════════════════════════════════════════════════
   await AutoBackupService.init();
   await SyncService.init();
   await CloudBackupService.init();
   await AudioRecorderService.init();
 
+  // ═══════════════════════════════════════════════════════
+  // 3. إشعار الزر العائم بأن الصوت جاهز
+  // ═══════════════════════════════════════════════════════
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
-  NotificationService.onTap = (payload) {
-    if (payload == 'choose_customer' && pendingVoiceText != null) {
-      final text = pendingVoiceText!;
-      pendingVoiceText = null;
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(
-          builder: (_) => VoiceScreen(initialText: text),
-        ),
-      );
-    }
-  };
+  // ═══════════════════════════════════════════════════════
+  // 4. إعداد رد نداء الإشعارات
+  // ═══════════════════════════════════════════════════════
+  NotificationService.onTap = _onNotificationTap;
 
-  _setupOverlayListener();
+  // ═══════════════════════════════════════════════════════
+  // 5. بدء مستمع الزر العائم
+  // ═══════════════════════════════════════════════════════
+  OverlayHandler.listen();
+
+  // ═══════════════════════════════════════════════════════
+  // 6. تشغيل التطبيق
+  // ═══════════════════════════════════════════════════════
   runApp(MultiProvider(
     providers: [ChangeNotifierProvider.value(value: theme)],
     child: const DebtApp(),
   ));
 }
 
-void _setupOverlayListener() {
-  OverlayService.listen((data) async {
-    if (data is! Map) return;
+/// عند الضغط على إشعار "اختر العميل"
+void _onNotificationTap(String? payload) {
+  if (payload != 'choose_customer') return;
 
-    if (data['action'] == 'need_setup') {
-      await NotificationService.show(
-        'يحتاج إعداد',
-        'افتح التطبيق - الإعدادات - فعّل الأذونات',
-      );
-      return;
-    }
+  final text = OverlayHandler.consumePendingVoiceText();
+  if (text == null) return;
 
-    if (data['action'] == 'voice_text') {
-      final text = data['text'] as String? ?? '';
-      String? audioPath;
-
-      try {
-        audioPath = AudioRecorderService().currentRecordingPath;
-      } catch (_) {}
-
-      if (text == '__EMPTY__') {
-        await LoggerService.logVoicePending(
-          rawText: '',
-          audioPath: audioPath,
-        );
-        await TtsService.speakDidNotHear();
-        await NotificationService.show(
-          'لم أسمع شيئا',
-          'اضغط مطولا على الزر وتحدث بوضوح',
-        );
-        return;
-      }
-      if (text.isEmpty) return;
-
-      final db = DatabaseHelper.instance;
-
-      if (QueryService.isQuery(text)) {
-        final result = await QueryService.query(text);
-        await TtsService.speak(result.spokenAnswer);
-        await NotificationService.show(
-          result.hasAccount ? 'استعلام: ${result.customerName}' : 'استعلام',
-          result.spokenAnswer,
-        );
-        return;
-      }
-
-      final parsed = ParserService.parse(text);
-      if (parsed == null) {
-        // ═══════════════════════════════════════════════════════
-        // 🆕 حفظ كتسجيل معلّق بدلاً من فشل صامت
-        // ═══════════════════════════════════════════════════════
-        await LoggerService.logVoicePending(
-          rawText: text,
-          audioPath: audioPath,
-        );
-        await TtsService.speakDidNotUnderstand();
-        await NotificationService.show(
-          '🔴 تسجيل معلّق',
-          'لم أفهم: "$text"\nافتح السجل → المعلقات للمراجعة',
-        );
-        return;
-      }
-
-      if (parsed.intent == 'add_account') {
-        if (parsed.customerName.isEmpty) {
-          await LoggerService.logVoicePending(
-            rawText: text,
-            audioPath: audioPath,
-            partialParse: {
-              'intent': 'add_account',
-              'customerName': '',
-            },
-          );
-          await TtsService.speak('لم أفهم الاسم');
-          await NotificationService.show('لم أفهم الاسم', '');
-          return;
-        }
-        final existing = await db.findExactCustomer(parsed.customerName);
-        if (existing != null) {
-          await LoggerService.logVoiceFail(
-            reason: 'الحساب موجود مسبقاً',
-            text: text,
-            audioPath: audioPath,
-          );
-          await TtsService.speakExistsBefore(parsed.customerName);
-          await NotificationService.show('موجود مسبقا', parsed.customerName);
-          return;
-        }
-        final id = await db.insertCustomer(Customer(
-          name: parsed.customerName,
-          accountType: parsed.accountType,
-          createdAt: DateTime.now().toIso8601String(),
-        ));
-        await LoggerService.logCustomerAdded(parsed.customerName);
-        await LoggerService.logVoiceSuccess(
-          text: text,
-          audioPath: audioPath,
-          parsedAction: 'إنشاء حساب',
-        );
-        await TtsService.speakAccountCreated(parsed.customerName);
-        final typeAr = {
-          'customer': 'عميل',
-          'supplier': 'مورد',
-          'other': 'أخرى',
-        }[parsed.accountType] ?? 'عميل';
-        await NotificationService.show(
-          'تم إنشاء حساب',
-          '${parsed.customerName} ($typeAr)\nالرقم: #$id',
-        );
-        return;
-      }
-
-      final customer = await db.findExactCustomer(parsed.customerName);
-      if (customer != null) {
-        await _saveTransactionFor(
-          customer,
-          parsed,
-          db,
-          source: 'overlay',
-          audioPath: audioPath,
-        );
-        return;
-      }
-      final partial = await db.findCustomersContaining(parsed.customerName);
-      if (partial.isEmpty) {
-        await LoggerService.logVoicePending(
-          rawText: text,
-          audioPath: audioPath,
-          partialParse: {
-            'intent': parsed.intent,
-            'amount': parsed.amount,
-            'customerName': parsed.customerName,
-            'items': parsed.items,
-          },
-        );
-        await TtsService.speakNoAccount(parsed.customerName);
-        await NotificationService.show(
-          '🔴 تسجيل معلّق',
-          'لا يوجد حساب باسم "${parsed.customerName}"\nافتح السجل → المعلقات',
-        );
-        return;
-      }
-      if (partial.length > 1) {
-        pendingVoiceText = text;
-        await TtsService.speakMultipleAccounts();
-        await NotificationService.show(
-          'يوجد أكثر من حساب',
-          'اضغط هنا لاختيار الحساب',
-          payload: 'choose_customer',
-        );
-        return;
-      }
-      await _saveTransactionFor(
-        partial.first,
-        parsed,
-        db,
-        source: 'overlay',
-        audioPath: audioPath,
-      );
-    }
-  });
-}
-
-Future<void> _saveTransactionFor(
-  Customer customer,
-  dynamic parsed,
-  DatabaseHelper db, {
-  required String source,
-  String? audioPath,
-}) async {
-  final normalizedType = CodeService.normalizeType(parsed.intent);
-  final storedType = (normalizedType == 'return') ? 'payment' : normalizedType;
-
-  // منع التكرار
-  try {
-    final isDuplicate = await db.transactionExistsRecent(
-      customerId: customer.id!,
-      amount: parsed.amount.toDouble(),
-      type: storedType,
-      window: const Duration(seconds: 30),
-    );
-
-    if (isDuplicate) {
-      await LoggerService.logVoiceFail(
-        reason: 'عملية مكررة (خلال 30 ثانية)',
-        text: '${parsed.amount} - ${customer.name}',
-        audioPath: audioPath,
-      );
-      await TtsService.speak('هذه العملية مسجلة بالفعل');
-      await NotificationService.show(
-        'عملية مكررة',
-        'تم تجاهل العملية (مسجلة خلال آخر 30 ثانية)',
-      );
-      return;
-    }
-  } catch (e) {
-    debugPrint('Duplicate check error: $e');
-  }
-
-  String? accountant;
-  try {
-    accountant = await AccountantService.getAccountantName();
-  } catch (e) {
-    debugPrint('❌ Accountant name error: $e');
-  }
-
-  String? code;
-  try {
-    code = await CodeService.generateCode(normalizedType);
-  } catch (e) {
-    debugPrint('❌ Code generation error: $e');
-  }
-
-  await db.insertTransaction(Transaction(
-    customerId: customer.id!,
-    code: code,
-    accountant: accountant,
-    source: source,
-    amount: parsed.amount,
-    currency: parsed.currency,
-    type: storedType,
-    items: normalizedType == 'return'
-        ? 'مرتجع${parsed.items.isEmpty ? "" : ": ${parsed.items}"}'
-        : parsed.items,
-    createdAt: DateTime.now().toIso8601String(),
-  ));
-
-  final newBalance = await db.customerBalance(customer.id!);
-  final label = {
-    'debt': 'دين',
-    'payment': 'سداد',
-    'return': 'مرتجع',
-  }[normalizedType] ?? 'عملية';
-
-  await LoggerService.logTransactionAdded(
-    typeLabel: label,
-    customerName: customer.name,
-    amount: parsed.amount,
-    currency: parsed.currency,
-    code: code,
-    accountant: accountant,
-    source: source,
-    audioPath: audioPath,
-  );
-
-  await LoggerService.logVoiceSuccess(
-    text: '$label ${parsed.amount.toStringAsFixed(0)} ${customer.name}',
-    audioPath: audioPath,
-    parsedAction: label,
-  );
-
-  await TtsService.confirmTransaction(
-    type: label,
-    amount: parsed.amount,
-    customerName: customer.name,
-    newBalance: newBalance,
-    currency: parsed.currency,
-  );
-
-  final detail = StringBuffer();
-  detail.write('${customer.name}\n');
-  if (code != null) detail.write('الرمز: $code\n');
-  if (accountant != null && accountant.isNotEmpty) {
-    detail.write('المحاسب: $accountant\n');
-  }
-  detail.write('المبلغ: ${parsed.amount.toStringAsFixed(0)} ${parsed.currency}');
-  if (parsed.items.isNotEmpty) {
-    detail.write('\nالأصناف: ${parsed.items}');
-  }
-  detail.write('\nالرصيد: ${newBalance.toStringAsFixed(0)} ${parsed.currency}');
-
-  await NotificationService.show('تم تسجيل $label', detail.toString());
-
-  await NotificationDispatcher.afterTransactionAdded(
-    customerId: customer.id!,
-    customerName: customer.name,
-    phone: customer.phone,
-    type: normalizedType,
-    amount: parsed.amount,
-    newBalance: newBalance,
-    source: source,
+  navigatorKey.currentState?.push(
+    MaterialPageRoute(
+      builder: (_) => VoiceScreen(initialText: text),
+    ),
   );
 }
 
