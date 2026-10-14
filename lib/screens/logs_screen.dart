@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
@@ -12,6 +11,7 @@ import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
+import '../services/notification_dispatcher.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});
@@ -28,6 +28,11 @@ class _LogsScreenState extends State<LogsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) {
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -45,16 +50,22 @@ class _LogsScreenState extends State<LogsScreen>
       child: Scaffold(
         appBar: AppBar(
           title: const Text('سجل الأحداث'),
+          titleTextStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          toolbarHeight: 44,
           bottom: TabBar(
             controller: _tabController,
+            labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            unselectedLabelStyle: const TextStyle(fontSize: 11),
             tabs: const [
               Tab(
-                icon: Icon(Icons.history),
+                height: 40,
+                icon: Icon(Icons.history, size: 18),
                 text: 'كل الأحداث',
               ),
               Tab(
-                icon: Icon(Icons.pending_actions, color: Colors.orange),
-                text: '🔴 معلقات صوتية',
+                height: 40,
+                icon: Icon(Icons.pending_actions, size: 18, color: Colors.orange),
+                text: '🔴 معلقات',
               ),
             ],
           ),
@@ -72,7 +83,7 @@ class _LogsScreenState extends State<LogsScreen>
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📑 التبويب 1: كل الأحداث (السلوك الحالي)
+// 📑 التبويب 1: كل الأحداث
 // ═══════════════════════════════════════════════════════════════
 class _AllLogsTab extends StatefulWidget {
   final ThemeData theme;
@@ -161,21 +172,12 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     _loadLogs();
   }
 
-  // ============ تشغيل الصوت ============
   Future<void> _togglePlay(LogEvent e) async {
     if (e.audioPath == null || e.audioPath!.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.white, size: 18),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text('التسجيل الصوتي غير متوفر لهذا الحدث'),
-                ),
-              ],
-            ),
+            content: Text('التسجيل الصوتي غير متوفر', style: TextStyle(fontSize: 12)),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 2),
           ),
@@ -189,7 +191,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('❌ الملف الصوتي غير موجود'),
+            content: Text('❌ الملف الصوتي غير موجود', style: TextStyle(fontSize: 12)),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 2),
           ),
@@ -209,17 +211,9 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
     if (ok) {
       setState(() => _playingPath = e.audioPath);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('❌ فشل تشغيل التسجيل'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
-  // ============ الاعتراف ============
   Future<void> _acknowledge(LogEvent e) async {
     if (e.id == null) return;
     final ok = await LoggerService.acknowledge(e.id!);
@@ -228,7 +222,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ تم الاعتراف بالتنبيه'),
+          content: Text('✅ تم الاعتراف', style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 1),
         ),
@@ -245,23 +239,23 @@ class _AllLogsTabState extends State<_AllLogsTab> {
         child: AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.done_all, color: Colors.green),
-              SizedBox(width: 8),
-              Text('الاعتراف بالكل'),
+              Icon(Icons.done_all, color: Colors.green, size: 20),
+              SizedBox(width: 6),
+              Text('الاعتراف بالكل', style: TextStyle(fontSize: 15)),
             ],
           ),
           content: const Text(
-            'سيتم إيقاف كل التنبيهات المعلقة.\n\n'
-            'الأحداث نفسها لن تُحذف — فقط تُعتبر "تمت مراجعتها".',
+            'سيتم إيقاف كل التنبيهات المعلقة.',
+            style: TextStyle(fontSize: 12),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
+              child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('تأكيد'),
+              child: const Text('تأكيد', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -273,77 +267,22 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('✅ تم الاعتراف بـ $count حدث'),
+        content: Text('✅ تم الاعتراف بـ $count حدث', style: const TextStyle(fontSize: 11)),
         backgroundColor: Colors.green,
       ),
     );
     _loadLogs();
   }
 
-  // ============ حذف ============
   Future<void> _deleteLog(LogEvent e) async {
     if (e.id == null) return;
     await LoggerService.deleteLog(e.id!);
     if (e.audioPath != null) {
       await AudioRecorderService.deleteFile(e.audioPath!);
     }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🗑️ تم حذف الحدث'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
     _loadLogs();
   }
 
-  Future<void> _clearAll() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber, color: Colors.red),
-              SizedBox(width: 8),
-              Text('حذف كل السجل'),
-            ],
-          ),
-          content: const Text(
-            '⚠️ سيتم حذف كل الأحداث نهائياً.\n\n'
-            'لا يمكن التراجع.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('حذف الكل'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirm != true) return;
-    await LoggerService.clearAll();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🗑️ تم حذف كل السجل'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-    _loadLogs();
-  }
-
-  // ============ فلتر التاريخ ============
   Future<void> _pickDate({required bool isFrom}) async {
     final picked = await showDatePicker(
       context: context,
@@ -363,136 +302,14 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     _loadLogs();
   }
 
-  // ============ تصدير CSV ============
-  Future<void> _exportCsv() async {
-    try {
-      if (_logs.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا توجد أحداث للتصدير')),
-        );
-        return;
-      }
-
-      final sb = StringBuffer();
-      sb.writeln(
-          'التاريخ,المستوى,الفئة,الإجراء,الوصف,المحاسب,معرّف مرتبط,مسار الصوت,تم الاعتراف');
-      for (final e in _logs) {
-        sb.writeln([
-          e.createdAt,
-          e.levelLabel,
-          e.categoryLabel,
-          _csvEscape(e.action),
-          _csvEscape(e.description),
-          _csvEscape(e.accountant ?? ''),
-          _csvEscape(e.relatedId ?? ''),
-          e.audioPath ?? '',
-          e.isAcknowledged ? 'نعم' : 'لا',
-        ].join(','));
-      }
-
-      final dir = await getTemporaryDirectory();
-      final f = File(
-          '${dir.path}/logs_${DateTime.now().millisecondsSinceEpoch}.csv');
-      await f.writeAsString('\uFEFF${sb.toString()}');
-
-      await Share.shareXFiles([XFile(f.path)], text: 'سجل الأحداث');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل التصدير: $e')),
-        );
-      }
-    }
-  }
-
-  String _csvEscape(String s) {
-    if (s.contains(',') || s.contains('"') || s.contains('\n')) {
-      return '"${s.replaceAll('"', '""')}"';
-    }
-    return s;
-  }
-
-  // ============ حوار إعدادات الاحتفاظ ============
-  Future<void> _showRetentionSettings() async {
-    final current = await AudioRecorderService.getRetentionDays();
-    if (!mounted) return;
-
-    final result = await showDialog<int>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.auto_delete, color: Colors.blue),
-              SizedBox(width: 8),
-              Text('مدة الاحتفاظ'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'يتم حذف التسجيلات الصوتية الأقدم من المدة المحددة تلقائياً.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
-              RadioListTile<int>(
-                value: 7,
-                groupValue: current,
-                title: const Text('7 أيام'),
-                onChanged: (v) => Navigator.pop(ctx, v),
-              ),
-              RadioListTile<int>(
-                value: 30,
-                groupValue: current,
-                title: const Text('30 يوم'),
-                onChanged: (v) => Navigator.pop(ctx, v),
-              ),
-              RadioListTile<int>(
-                value: 90,
-                groupValue: current,
-                title: const Text('90 يوم'),
-                onChanged: (v) => Navigator.pop(ctx, v),
-              ),
-              RadioListTile<int>(
-                value: 0,
-                groupValue: current,
-                title: const Text('لا تحذف تلقائياً'),
-                onChanged: (v) => Navigator.pop(ctx, v),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (result == null) return;
-    await AudioRecorderService.setRetentionDays(result);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('✅ تم حفظ الإعداد'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
   String _formatDateTime(String iso) {
     try {
       final dt = DateTime.parse(iso);
-      final y = dt.year;
       final m = dt.month.toString().padLeft(2, '0');
       final d = dt.day.toString().padLeft(2, '0');
       final h = dt.hour.toString().padLeft(2, '0');
       final min = dt.minute.toString().padLeft(2, '0');
-      return '$y/$m/$d - $h:$min';
+      return '$d/$m $h:$min';
     } catch (_) {
       return iso;
     }
@@ -506,8 +323,9 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
     return Column(
       children: [
+        // ===== الإحصائيات المضغوطة =====
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
           child: Row(
             children: [
               Expanded(
@@ -518,7 +336,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   isDark,
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Expanded(
                 child: _statCard(
                   'اليوم',
@@ -527,7 +345,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   isDark,
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Expanded(
                 child: _statCard(
                   'أخطاء',
@@ -536,7 +354,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   isDark,
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Expanded(
                 child: _statCard(
                   'معلقة',
@@ -548,16 +366,22 @@ class _AllLogsTabState extends State<_AllLogsTab> {
             ],
           ),
         ),
+
+        // ===== البحث المضغوط =====
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: TextField(
             controller: _searchCtrl,
+            style: const TextStyle(fontSize: 12),
             decoration: InputDecoration(
-              hintText: 'ابحث في الأحداث...',
-              prefixIcon: const Icon(Icons.search),
+              hintText: 'ابحث...',
+              hintStyle: const TextStyle(fontSize: 12),
+              prefixIcon: const Icon(Icons.search, size: 18),
               suffixIcon: _searchQuery.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear),
+                      icon: const Icon(Icons.clear, size: 16),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                       onPressed: () {
                         _searchCtrl.clear();
                         setState(() => _searchQuery = '');
@@ -566,11 +390,11 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                     )
                   : null,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
               ),
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 14),
+                  horizontal: 10, vertical: 8),
             ),
             onChanged: (v) {
               setState(() => _searchQuery = v);
@@ -578,42 +402,31 @@ class _AllLogsTabState extends State<_AllLogsTab> {
             },
           ),
         ),
-        const SizedBox(height: 8),
+
+        const SizedBox(height: 4),
+
+        // ===== الفلاتر المضغوطة =====
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [
-              FilterChip(
-                avatar: pendingCount > 0
-                    ? CircleAvatar(
-                        backgroundColor: Colors.orange,
-                        radius: 8,
-                        child: Text(
-                          '$pendingCount',
-                          style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      )
-                    : null,
-                label: const Text('المعلقة'),
+              _compactChip(
+                label: 'المعلقة${pendingCount > 0 ? " ($pendingCount)" : ""}',
                 selected: _onlyPending,
                 onSelected: (v) {
                   setState(() => _onlyPending = v);
                   _loadLogs();
                 },
+                color: Colors.orange,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               ...LogCategory.values.map((cat) {
                 final selected = _categoryFilter == cat;
-                final label = _categoryLabel(cat);
-                final emoji = _categoryEmoji(cat);
                 return Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: FilterChip(
-                    label: Text('$emoji $label'),
+                  padding: const EdgeInsets.only(left: 4),
+                  child: _compactChip(
+                    label: '${_categoryEmoji(cat)} ${_categoryLabel(cat)}',
                     selected: selected,
                     onSelected: (_) {
                       setState(() {
@@ -627,61 +440,79 @@ class _AllLogsTabState extends State<_AllLogsTab> {
             ],
           ),
         ),
+
         const SizedBox(height: 4),
+
+        // ===== المستوى + التاريخ المضغوط =====
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<LogLevel?>(
-                  value: _levelFilter,
-                  decoration: const InputDecoration(
-                    labelText: 'المستوى',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                  items: [
-                    const DropdownMenuItem<LogLevel?>(
-                      value: null,
-                      child: Text('الكل'),
+                flex: 2,
+                child: SizedBox(
+                  height: 32,
+                  child: DropdownButtonFormField<LogLevel?>(
+                    value: _levelFilter,
+                    style: const TextStyle(fontSize: 11),
+                    decoration: const InputDecoration(
+                      labelText: 'المستوى',
+                      labelStyle: TextStyle(fontSize: 10),
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                     ),
-                    ...LogLevel.values.map((l) => DropdownMenuItem<LogLevel?>(
-                          value: l,
-                          child: Text(_levelLabel(l)),
-                        )),
-                  ],
-                  onChanged: (v) {
-                    setState(() => _levelFilter = v);
-                    _loadLogs();
-                  },
+                    items: [
+                      const DropdownMenuItem<LogLevel?>(
+                        value: null,
+                        child: Text('الكل', style: TextStyle(fontSize: 11)),
+                      ),
+                      ...LogLevel.values.map((l) => DropdownMenuItem<LogLevel?>(
+                            value: l,
+                            child: Text(_levelLabel(l),
+                                style: const TextStyle(fontSize: 11)),
+                          )),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _levelFilter = v);
+                      _loadLogs();
+                    },
+                  ),
                 ),
               ),
-              const SizedBox(width: 6),
-              IconButton.filledTonal(
-                icon: const Icon(Icons.calendar_today, size: 18),
+              const SizedBox(width: 4),
+              _compactIconButton(
+                icon: Icons.calendar_today,
                 tooltip: _fromDate == null
-                    ? 'من تاريخ'
-                    : 'من: ${_fromDate!.year}/${_fromDate!.month}/${_fromDate!.day}',
+                    ? 'من'
+                    : 'من: ${_fromDate!.day}/${_fromDate!.month}',
                 onPressed: () => _pickDate(isFrom: true),
+                active: _fromDate != null,
               ),
-              IconButton.filledTonal(
-                icon: const Icon(Icons.event, size: 18),
+              const SizedBox(width: 2),
+              _compactIconButton(
+                icon: Icons.event,
                 tooltip: _toDate == null
-                    ? 'إلى تاريخ'
-                    : 'إلى: ${_toDate!.year}/${_toDate!.month}/${_toDate!.day}',
+                    ? 'إلى'
+                    : 'إلى: ${_toDate!.day}/${_toDate!.month}',
                 onPressed: () => _pickDate(isFrom: false),
+                active: _toDate != null,
               ),
-              IconButton(
-                icon: const Icon(Icons.clear_all),
-                tooltip: 'مسح الفلاتر',
+              const SizedBox(width: 2),
+              _compactIconButton(
+                icon: Icons.clear_all,
+                tooltip: 'مسح',
                 onPressed: _clearFilters,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 8),
+
+        const SizedBox(height: 4),
+        const Divider(height: 1),
+
+        // ===== قائمة الأحداث =====
         Expanded(
           child: _loading
               ? const Center(child: CircularProgressIndicator())
@@ -691,12 +522,12 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.inbox,
-                              size: 64, color: theme.disabledColor),
-                          const SizedBox(height: 12),
+                              size: 40, color: theme.disabledColor),
+                          const SizedBox(height: 6),
                           Text(
                             'لا توجد أحداث',
                             style: TextStyle(
-                                color: theme.disabledColor, fontSize: 16),
+                                color: theme.disabledColor, fontSize: 12),
                           ),
                         ],
                       ),
@@ -704,10 +535,10 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   : RefreshIndicator(
                       onRefresh: _loadLogs,
                       child: ListView.builder(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.all(4),
                         itemCount: _logs.length,
                         itemBuilder: (_, i) =>
-                            _buildLogCard(_logs[i], theme, isDark),
+                            _buildCompactCard(_logs[i], theme, isDark),
                       ),
                     ),
         ),
@@ -715,249 +546,242 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     );
   }
 
-  Widget _buildLogCard(LogEvent e, ThemeData theme, bool isDark) {
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 بطاقة الحدث المضغوطة
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildCompactCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
     final needsAck = e.needsAcknowledgement;
     final isPlaying = _playingPath != null && _playingPath == e.audioPath;
-
     final isVoiceLog = e.category == LogCategory.voice;
     final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       color: needsAck ? Colors.orange.withOpacity(0.06) : null,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ===== Row 1: التاريخ + الفئة + المستوى =====
             Row(
               children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: levelColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                        color: levelColor.withOpacity(0.4), width: 0.5),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(e.levelEmoji,
-                          style: const TextStyle(fontSize: 12)),
-                      const SizedBox(width: 3),
-                      Text(
-                        e.levelLabel,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: levelColor,
-                        ),
-                      ),
-                    ],
+                Text(
+                  _formatDateTime(e.createdAt),
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
+                // الفئة (مضغوطة)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 1),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     '${e.categoryEmoji} ${e.categoryLabel}',
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 8,
                       color: theme.colorScheme.primary,
                     ),
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  _formatDateTime(e.createdAt),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: theme.colorScheme.onSurfaceVariant,
+                const SizedBox(width: 3),
+                // المستوى (أيقونة صغيرة)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 3, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: levelColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(4),
                   ),
+                  child: Text(
+                    e.levelEmoji,
+                    style: const TextStyle(fontSize: 9),
+                  ),
+                ),
+                const Spacer(),
+                // أيقونة المصدر (إن وجد)
+                if (e.accountant != null && e.accountant!.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '👤 ${e.accountant}',
+                      style: const TextStyle(
+                        fontSize: 8,
+                        color: Colors.teal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(height: 2),
+
+            // ===== Row 2: الإجراء =====
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    e.action,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                // زر الحذف
+                _miniIconButton(
+                  icon: Icons.delete_outline,
+                  color: Colors.red,
+                  onPressed: () => _deleteLog(e),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              e.action,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              e.description,
-              style: TextStyle(
-                fontSize: 12,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            if ((e.accountant != null && e.accountant!.isNotEmpty) ||
-                (e.relatedId != null && e.relatedId!.isNotEmpty)) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  if (e.accountant != null && e.accountant!.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.teal.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.person,
-                              size: 10, color: Colors.teal),
-                          const SizedBox(width: 3),
-                          Text(
-                            e.accountant!,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.teal,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
+
+            // ===== Row 3: الوصف + الأزرار =====
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    e.description.replaceAll('\n', ' '),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
-                  if (e.relatedId != null && e.relatedId!.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '#${e.relatedId}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.blue,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            if (isVoiceLog || needsAck) ...[
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  if (isVoiceLog)
-                    OutlinedButton.icon(
-                      onPressed: () => _togglePlay(e),
-                      icon: Icon(
-                        isPlaying ? Icons.stop : Icons.play_arrow,
-                        size: 16,
-                        color: hasAudio ? null : Colors.grey,
-                      ),
-                      label: Text(
-                        isPlaying
-                            ? 'إيقاف'
-                            : (hasAudio ? 'تشغيل' : 'لا يوجد صوت'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: hasAudio ? null : Colors.grey,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        minimumSize: const Size(0, 32),
-                        side: BorderSide(
-                          color: hasAudio
-                              ? theme.colorScheme.outline
-                              : Colors.grey.shade400,
-                        ),
-                      ),
-                    ),
-                  if (isVoiceLog && needsAck) const SizedBox(width: 8),
-                  if (needsAck)
-                    FilledButton.icon(
-                      onPressed: () => _acknowledge(e),
-                      icon: const Icon(Icons.check, size: 16),
-                      label: const Text(
-                        'تم التصحيح',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        minimumSize: const Size(0, 32),
-                      ),
-                    ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    tooltip: 'حذف',
-                    color: Colors.red,
-                    onPressed: () => _deleteLog(e),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
-            ] else ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    tooltip: 'حذف',
-                    color: Colors.red,
-                    onPressed: () => _deleteLog(e),
+                ),
+                const SizedBox(width: 4),
+                // زر التشغيل (للأحداث الصوتية)
+                if (isVoiceLog)
+                  _miniIconButton(
+                    icon: isPlaying ? Icons.stop : Icons.play_arrow,
+                    color: hasAudio ? Colors.green : Colors.grey,
+                    onPressed: hasAudio ? () => _togglePlay(e) : null,
                   ),
-                ],
-              ),
-            ],
+                // زر الاعتراف
+                if (needsAck)
+                  _miniIconButton(
+                    icon: Icons.check_circle,
+                    color: Colors.green,
+                    onPressed: () => _acknowledge(e),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // Widgets مساعدة مضغوطة
+  // ═══════════════════════════════════════════════════════════
+
   Widget _statCard(String label, int value, Color color, bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             label,
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 8,
               color: isDark ? Colors.white70 : Colors.black54,
             ),
           ),
-          const SizedBox(height: 2),
           Text(
             '$value',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 13,
               fontWeight: FontWeight.bold,
               color: color,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _compactChip({
+    required String label,
+    required bool selected,
+    required void Function(bool) onSelected,
+    Color? color,
+  }) {
+    return FilterChip(
+      label: Text(label, style: const TextStyle(fontSize: 10)),
+      selected: selected,
+      onSelected: onSelected,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+      side: color != null
+          ? BorderSide(color: color.withOpacity(0.5), width: 0.5)
+          : null,
+    );
+  }
+
+  Widget _compactIconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    bool active = false,
+  }) {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        icon: Icon(icon, size: 16),
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        style: IconButton.styleFrom(
+          backgroundColor: active
+              ? Colors.blue.withOpacity(0.15)
+              : null,
+        ),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  Widget _miniIconButton({
+    required IconData icon,
+    required Color color,
+    VoidCallback? onPressed,
+  }) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        icon: Icon(icon, size: 16, color: color),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        onPressed: onPressed,
       ),
     );
   }
@@ -1023,7 +847,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📑 التبويب 2: التسجيلات المعلّقة (جديد)
+// 📑 التبويب 2: التسجيلات المعلّقة
 // ═══════════════════════════════════════════════════════════════
 class _PendingVoiceTab extends StatefulWidget {
   final ThemeData theme;
@@ -1074,7 +898,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('التسجيل الصوتي غير متوفر'),
+          content: Text('التسجيل الصوتي غير متوفر', style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.orange,
         ),
       );
@@ -1086,7 +910,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('❌ الملف الصوتي غير موجود'),
+          content: Text('❌ الملف الصوتي غير موجود', style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.red,
         ),
       );
@@ -1107,10 +931,9 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 فتح نافذة "إضافة عملية" مع ملء تلقائي
+  // 🆕 نافذة "إضافة عملية" (مضغوطة)
   // ═══════════════════════════════════════════════════════════
   Future<void> _openAddDialog(LogEvent e) async {
-    // استخراج partial parse من metadata
     Map<String, dynamic>? partial;
     try {
       final meta = e.metadataMap;
@@ -1119,7 +942,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       }
     } catch (_) {}
 
-    // استخراج نص خام
     String rawText = '';
     try {
       final meta = e.metadataMap;
@@ -1132,7 +954,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (m != null) rawText = m.group(1) ?? '';
     }
 
-    // القيم الافتراضية
     String selectedType = 'debt';
     if (partial != null) {
       final t = partial['intent'] as String? ?? 'debt';
@@ -1183,20 +1004,22 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
           builder: (ctx, setStateDialog) => AlertDialog(
             title: Row(
               children: [
-                const Icon(Icons.add_card, color: Colors.teal),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('إضافة عملية')),
+                const Icon(Icons.add_card, color: Colors.teal, size: 20),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text('إضافة عملية', style: TextStyle(fontSize: 15)),
+                ),
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Text(
-                    '🔴 من تسجيل معلّق',
+                    '🔴 معلّق',
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: FontWeight.bold,
                       color: Colors.orange,
                     ),
@@ -1211,31 +1034,27 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // نص التسجيل الأصلي
                     if (rawText.isNotEmpty)
                       Container(
-                        padding: const EdgeInsets.all(8),
-                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(6),
+                        margin: const EdgeInsets.only(bottom: 8),
                         decoration: BoxDecoration(
-                          color: theme_bg(context),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: Colors.grey.withOpacity(0.3)),
+                          color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.mic,
-                                size: 14, color: Colors.grey),
-                            const SizedBox(width: 6),
+                            const Icon(Icons.mic, size: 12, color: Colors.grey),
+                            const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 'النص: "$rawText"',
                                 style: const TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   fontStyle: FontStyle.italic,
                                   color: Colors.grey,
                                 ),
-                                maxLines: 2,
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -1244,29 +1063,31 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       ),
 
                     // نوع العملية
-                    const Text(
-                      'نوع العملية:',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
                     SegmentedButton<String>(
+                      style: ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                        padding: WidgetStateProperty.all(
+                          const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        textStyle: WidgetStateProperty.all(
+                          const TextStyle(fontSize: 11),
+                        ),
+                      ),
                       segments: const [
                         ButtonSegment(
                           value: 'debt',
-                          label: _SegmentLabel('دين', Icons.arrow_upward),
+                          label: Text('دين'),
+                          icon: Icon(Icons.arrow_upward, size: 14),
                         ),
                         ButtonSegment(
                           value: 'payment',
-                          label: _SegmentLabel('سداد', Icons.payments),
+                          label: Text('سداد'),
+                          icon: Icon(Icons.payments, size: 14),
                         ),
                         ButtonSegment(
                           value: 'return',
-                          label:
-                              _SegmentLabel('مرتجع', Icons.keyboard_return),
+                          label: Text('مرتجع'),
+                          icon: Icon(Icons.keyboard_return, size: 14),
                         ),
                       ],
                       selected: {selectedType},
@@ -1275,69 +1096,66 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       },
                     ),
 
-                    const Divider(height: 24),
+                    const SizedBox(height: 10),
 
                     // العميل
-                    const Text(
-                      'العميل:',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
                     if (selectedCustomer != null)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
+                            horizontal: 8, vertical: 6),
                         decoration: BoxDecoration(
                           color: Colors.teal.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.teal),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.teal, width: 0.7),
                         ),
                         child: Row(
                           children: [
                             const Icon(Icons.person,
-                                color: Colors.teal, size: 18),
-                            const SizedBox(width: 6),
+                                color: Colors.teal, size: 14),
+                            const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 selectedCustomer!.name,
                                 style: const TextStyle(
+                                  fontSize: 12,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.teal,
                                 ),
                               ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                              onPressed: () {
-                                setStateDialog(() {
-                                  selectedCustomer = null;
-                                  searchCtrl.clear();
-                                  filtered = List.from(customers);
-                                });
-                              },
+                            SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: IconButton(
+                                icon: const Icon(Icons.close, size: 14),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () {
+                                  setStateDialog(() {
+                                    selectedCustomer = null;
+                                    searchCtrl.clear();
+                                    filtered = List.from(customers);
+                                  });
+                                },
+                              ),
                             ),
                           ],
                         ),
                       ),
                     if (selectedCustomer == null) ...[
-                      const SizedBox(height: 8),
                       TextField(
                         controller: searchCtrl,
+                        style: const TextStyle(fontSize: 12),
                         decoration: InputDecoration(
-                          hintText: 'ابحث بالاسم...',
-                          prefixIcon: const Icon(Icons.search),
+                          hintText: 'ابحث عن عميل...',
+                          hintStyle: const TextStyle(fontSize: 11),
+                          prefixIcon: const Icon(Icons.search, size: 16),
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 12),
+                              horizontal: 10, vertical: 8),
                         ),
                         onChanged: (v) {
                           setStateDialog(() {
@@ -1347,19 +1165,20 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                           });
                         },
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Container(
-                        constraints: const BoxConstraints(maxHeight: 150),
+                        constraints: const BoxConstraints(maxHeight: 120),
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: filtered.isEmpty
                             ? const Padding(
-                                padding: EdgeInsets.all(20),
+                                padding: EdgeInsets.all(12),
                                 child: Center(
                                   child: Text('لا توجد نتائج',
-                                      style: TextStyle(color: Colors.grey)),
+                                      style: TextStyle(
+                                          fontSize: 11, color: Colors.grey)),
                                 ),
                               )
                             : ListView.builder(
@@ -1369,20 +1188,21 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                                   final c = filtered[i];
                                   return ListTile(
                                     dense: true,
+                                    visualDensity: VisualDensity.compact,
                                     leading: CircleAvatar(
-                                      radius: 14,
+                                      radius: 12,
                                       backgroundColor:
                                           Theme.of(ctx).colorScheme.primary,
                                       child: Text(
                                         c.name.characters.first,
                                         style: const TextStyle(
                                             color: Colors.white,
-                                            fontSize: 11),
+                                            fontSize: 10),
                                       ),
                                     ),
                                     title: Text(c.name,
                                         style:
-                                            const TextStyle(fontSize: 13)),
+                                            const TextStyle(fontSize: 12)),
                                     onTap: () {
                                       setStateDialog(() {
                                         selectedCustomer = c;
@@ -1395,47 +1215,36 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       ),
                     ],
 
-                    const Divider(height: 24),
+                    const SizedBox(height: 8),
 
                     // المبلغ
-                    const Text(
-                      'المبلغ:',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
                     TextField(
                       controller: amountCtrl,
                       keyboardType: TextInputType.number,
+                      style: const TextStyle(fontSize: 12),
                       decoration: InputDecoration(
-                        hintText: 'أدخل المبلغ',
-                        prefixIcon: const Icon(Icons.attach_money),
+                        labelText: 'المبلغ',
+                        labelStyle: const TextStyle(fontSize: 11),
+                        prefixIcon: const Icon(Icons.attach_money, size: 16),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 12),
+                            horizontal: 10, vertical: 8),
                       ),
                     ),
-                    const SizedBox(height: 16),
+
+                    const SizedBox(height: 8),
 
                     // الأصناف / البيان
-                    Text(
-                      selectedType == 'payment' ? 'البيان:' : 'الأصناف:',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
                     TextField(
                       controller: itemsCtrl,
+                      style: const TextStyle(fontSize: 12),
                       decoration: InputDecoration(
+                        labelText:
+                            selectedType == 'payment' ? 'البيان' : 'الأصناف',
+                        labelStyle: const TextStyle(fontSize: 11),
                         hintText: selectedType == 'payment'
                             ? 'مثال: دفعة...'
                             : 'مثال: رز، شاي...',
@@ -1443,13 +1252,14 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                           selectedType == 'payment'
                               ? Icons.description_outlined
                               : Icons.inventory_2_outlined,
+                          size: 16,
                         ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 12),
+                            horizontal: 10, vertical: 8),
                       ),
                     ),
                   ],
@@ -1460,7 +1270,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
               TextButton(
                 onPressed:
                     isSaving ? null : () => Navigator.pop(dialogContext),
-                child: const Text('إلغاء'),
+                child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
               ),
               FilledButton.icon(
                 onPressed: isSaving
@@ -1469,7 +1279,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         if (selectedCustomer == null) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
                             const SnackBar(
-                              content: Text('اختر عميلاً'),
+                              content: Text('اختر عميلاً',
+                                  style: TextStyle(fontSize: 11)),
                               backgroundColor: Colors.orange,
                             ),
                           );
@@ -1479,7 +1290,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         if (amt == null || amt <= 0) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
                             const SnackBar(
-                              content: Text('أدخل مبلغاً صحيحاً'),
+                              content: Text('أدخل مبلغاً صحيحاً',
+                                  style: TextStyle(fontSize: 11)),
                               backgroundColor: Colors.orange,
                             ),
                           );
@@ -1489,8 +1301,9 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         setStateDialog(() => isSaving = true);
 
                         try {
-                          final storedType =
-                              (selectedType == 'return') ? 'payment' : selectedType;
+                          final storedType = (selectedType == 'return')
+                              ? 'payment'
+                              : selectedType;
 
                           final isDuplicate =
                               await db.transactionExistsRecent(
@@ -1503,7 +1316,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                           if (isDuplicate) {
                             ScaffoldMessenger.of(ctx).showSnackBar(
                               const SnackBar(
-                                content: Text('⚠️ العملية مسجلة بالفعل'),
+                                content: Text('⚠️ العملية مسجلة بالفعل',
+                                    style: TextStyle(fontSize: 11)),
                                 backgroundColor: Colors.orange,
                               ),
                             );
@@ -1513,7 +1327,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
                           String? code;
                           try {
-                            code = await CodeService.generateCode(selectedType);
+                            code =
+                                await CodeService.generateCode(selectedType);
                           } catch (_) {}
 
                           final accountant =
@@ -1530,18 +1345,20 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
+                          // 🆕 المصدر: voice+manual
+                          const sourceValue = 'voice+manual';
+
                           await db.insertTransaction(Transaction(
                             customerId: selectedCustomer!.id!,
                             code: code,
                             accountant: accountant,
-                            source: 'voice',
+                            source: sourceValue,
                             amount: amt,
                             type: storedType,
                             items: extraText,
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          // تسجيل الحدث (نجاح)
                           final typeLabel = {
                             'debt': 'دين',
                             'payment': 'سداد',
@@ -1555,22 +1372,41 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             currency: 'YER',
                             code: code,
                             accountant: accountant,
-                            source: 'voice',
+                            source: sourceValue,
                           );
 
-                          // 🆕 تعليم التسجيل المعلّق بأنه تم
+                          // 🆕 حساب الرصيد + الإشعارات (واتساب)
+                          final newBalance = await db
+                              .customerBalance(selectedCustomer!.id!);
+
+                          final normalizedType =
+                              CodeService.normalizeType(selectedType);
+
+                          await NotificationDispatcher
+                              .afterTransactionAdded(
+                            customerId: selectedCustomer!.id!,
+                            customerName: selectedCustomer!.name,
+                            phone: selectedCustomer!.phone,
+                            type: normalizedType,
+                            amount: amt,
+                            newBalance: newBalance,
+                            source: sourceValue,
+                          );
+
+                          // 🆕 تعليم المعلّق بأنه تم
                           if (e.id != null) {
                             await LoggerService.acknowledge(e.id!);
                           }
 
                           if (!dialogContext.mounted) return;
-                          Navigator.pop(dialogContext);
+                          Navigator.pop(dialogContext, true);
 
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
-                                  '✅ تم تسجيل $typeLabel بقيمة ${amt.toStringAsFixed(0)} ريال'),
+                                  '✅ تم تسجيل $typeLabel بقيمة ${amt.toStringAsFixed(0)} ريال',
+                                  style: const TextStyle(fontSize: 11)),
                               backgroundColor: Colors.green,
                             ),
                           );
@@ -1584,26 +1420,26 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       },
                 icon: isSaving
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
+                        width: 14,
+                        height: 14,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
                           color: Colors.white,
                         ),
                       )
-                    : const Icon(Icons.check),
-                label: Text(isSaving ? 'جاري الحفظ...' : 'حفظ'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.teal),
+                    : const Icon(Icons.check, size: 16),
+                label: Text(isSaving ? 'جاري الحفظ...' : 'حفظ',
+                    style: const TextStyle(fontSize: 12)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  visualDensity: VisualDensity.compact,
+                ),
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  Color theme_bg(BuildContext ctx) {
-    return Theme.of(ctx).colorScheme.surfaceContainerHighest;
   }
 
   Future<void> _discard(LogEvent e) async {
@@ -1614,24 +1450,24 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
         child: AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.delete, color: Colors.red),
-              SizedBox(width: 8),
-              Text('تجاهل التسجيل؟'),
+              Icon(Icons.delete, color: Colors.red, size: 20),
+              SizedBox(width: 6),
+              Text('تجاهل التسجيل؟', style: TextStyle(fontSize: 15)),
             ],
           ),
           content: const Text(
-            'سيتم حذف التسجيل المعلّق نهائياً.\n\n'
-            'يمكنك الاحتفاظ به إذا كنت تريد مراجعته لاحقاً.',
+            'سيتم حذف التسجيل المعلّق نهائياً.',
+            style: TextStyle(fontSize: 12),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
+              child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
             ),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('تجاهل وحذف'),
+              child: const Text('تجاهل', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -1648,11 +1484,35 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     await _load();
   }
 
+  // 🆕 مشاركة كرسالة صوتية
+  Future<void> _shareVoice(LogEvent e) async {
+    if (e.audioPath == null || e.audioPath!.isEmpty) return;
+    if (!await AudioRecorderService.fileExists(e.audioPath!)) return;
+
+    try {
+      await Share.shareXFiles(
+        [XFile(e.audioPath!)],
+        text: 'تسجيل صوتي',
+      );
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('فشل المشاركة: $err', style: const TextStyle(fontSize: 11)),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   String _formatDateTime(String iso) {
     try {
       final dt = DateTime.parse(iso);
-      return '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} '
-          '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      final m = dt.month.toString().padLeft(2, '0');
+      final d = dt.day.toString().padLeft(2, '0');
+      final h = dt.hour.toString().padLeft(2, '0');
+      final min = dt.minute.toString().padLeft(2, '0');
+      return '$d/$m $h:$min';
     } catch (_) {
       return iso;
     }
@@ -1672,16 +1532,16 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.check_circle_outline,
-                size: 80, color: Colors.green.withOpacity(0.5)),
-            const SizedBox(height: 16),
+                size: 50, color: Colors.green.withOpacity(0.5)),
+            const SizedBox(height: 10),
             const Text(
               'لا توجد تسجيلات معلّقة',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+              style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             const Text(
               'كل التسجيلات تمت مراجعتها 🎉',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              style: TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
@@ -1691,7 +1551,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(4),
         itemCount: _pending.length,
         itemBuilder: (_, i) => _buildCard(_pending[i], theme),
       ),
@@ -1703,140 +1563,109 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
       color: Colors.orange.withOpacity(0.06),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Row 1: التاريخ + المؤشر
             Row(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 1),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                        color: Colors.orange.withOpacity(0.4), width: 0.5),
+                    borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('⚠️', style: TextStyle(fontSize: 12)),
-                      SizedBox(width: 3),
-                      Text(
-                        'معلّق',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                    ],
+                  child: const Text(
+                    '⚠️ معلّق',
+                    style: TextStyle(
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 4),
                 Text(
                   _formatDateTime(e.createdAt),
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 9,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                const Spacer(),
+                if (e.accountant != null && e.accountant!.isNotEmpty)
+                  Text(
+                    '👤 ${e.accountant}',
+                    style: const TextStyle(
+                      fontSize: 8,
+                      color: Colors.teal,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
               ],
             ),
-            const SizedBox(height: 8),
+
+            const SizedBox(height: 2),
+
+            // Row 2: الوصف
             Text(
-              e.action,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              e.description,
+              e.description.replaceAll('\n', ' '),
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 10,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            if (e.accountant != null && e.accountant!.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.teal.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.person, size: 10, color: Colors.teal),
-                    const SizedBox(width: 3),
-                    Text(
-                      e.accountant!,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.teal,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            // أزرار
+
+            const SizedBox(height: 4),
+
+            // Row 3: الأزرار المضغوطة
             Row(
               children: [
-                // تشغيل الصوت
-                OutlinedButton.icon(
-                  onPressed: hasAudio ? () => _togglePlay(e) : null,
-                  icon: Icon(
-                    isPlaying ? Icons.stop : Icons.play_arrow,
-                    size: 16,
-                    color: hasAudio ? null : Colors.grey,
+                // تشغيل
+                if (hasAudio)
+                  _miniButton(
+                    icon: isPlaying ? Icons.stop : Icons.play_arrow,
+                    label: isPlaying ? 'إيقاف' : 'تشغيل',
+                    color: Colors.blue,
+                    onPressed: () => _togglePlay(e),
                   ),
-                  label: Text(
-                    isPlaying
-                        ? 'إيقاف'
-                        : (hasAudio ? 'تشغيل' : 'لا يوجد صوت'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: hasAudio ? null : Colors.grey,
-                    ),
+                const SizedBox(width: 4),
+                // مشاركة صوتية
+                if (hasAudio)
+                  _miniButton(
+                    icon: Icons.share,
+                    label: 'مشاركة',
+                    color: Colors.purple,
+                    onPressed: () => _shareVoice(e),
                   ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    minimumSize: const Size(0, 36),
-                  ),
-                ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 // إضافة عملية
-                FilledButton.icon(
+                _miniButton(
+                  icon: Icons.add_card,
+                  label: 'إضافة',
+                  color: Colors.teal,
                   onPressed: () => _openAddDialog(e),
-                  icon: const Icon(Icons.add_card, size: 16),
-                  label: const Text('إضافة عملية',
-                      style: TextStyle(fontSize: 12)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.teal,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    minimumSize: const Size(0, 36),
-                  ),
+                  filled: true,
                 ),
                 const Spacer(),
-                // تجاهل
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  tooltip: 'تجاهل',
-                  color: Colors.red,
-                  onPressed: () => _discard(e),
+                // حذف
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        size: 16, color: Colors.red),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _discard(e),
+                  ),
                 ),
               ],
             ),
@@ -1845,27 +1674,43 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       ),
     );
   }
-}
 
-// ═══════════════════════════════════════════════════════════════
-// 🆕 Widget مساعد للـ SegmentedButton
-// ═══════════════════════════════════════════════════════════════
-class _SegmentLabel extends StatelessWidget {
-  final String text;
-  final IconData icon;
-  const _SegmentLabel(this.text, this.icon);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(text, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 2),
-          Icon(icon, size: 16),
-        ],
+  Widget _miniButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+    bool filled = false,
+  }) {
+    if (filled) {
+      return SizedBox(
+        height: 28,
+        child: FilledButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 14),
+          label: Text(label, style: const TextStyle(fontSize: 10)),
+          style: FilledButton.styleFrom(
+            backgroundColor: color,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 28),
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 28,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 14, color: color),
+        label: Text(label,
+            style: TextStyle(fontSize: 10, color: color)),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(0, 28),
+          visualDensity: VisualDensity.compact,
+          side: BorderSide(color: color.withOpacity(0.5), width: 0.7),
+        ),
       ),
     );
   }
