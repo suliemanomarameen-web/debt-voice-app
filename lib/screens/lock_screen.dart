@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 import '../services/recovery_service.dart';
 
@@ -203,7 +201,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🆕 شاشة الاستعادة (3 خيارات)
+// 🆕 شاشة الاستعادة (خياران فقط — بدون واتساب)
 // ═══════════════════════════════════════════════════════════════
 class _RecoveryOptions extends StatefulWidget {
   final VoidCallback onSuccess;
@@ -219,14 +217,13 @@ class _RecoveryOptions extends StatefulWidget {
 }
 
 class _RecoveryOptionsState extends State<_RecoveryOptions> {
-  int _step = 0; // 0 = قائمة الخيارات، 1 = سؤال، 2 = رمز، 3 = واتساب
+  int _step = 0; // 0 = قائمة، 1 = سؤال، 2 = رمز
 
   @override
   Widget build(BuildContext context) {
     if (_step == 0) return _buildOptionsList();
     if (_step == 1) return _buildSecurityQuestion();
     if (_step == 2) return _buildRecoveryCodeInput();
-    if (_step == 3) return _buildWhatsAppSend();
     return _buildOptionsList();
   }
 
@@ -260,17 +257,7 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
         ),
         const SizedBox(height: 10),
 
-        // خيار 2: إرسال للواتساب
-        _recoveryOption(
-          icon: Icons.send,
-          color: Colors.green,
-          title: 'إرسال الرمز للواتساب',
-          subtitle: 'أرسل رمز الاسترداد لهاتفك الآخر',
-          onTap: () => setState(() => _step = 3),
-        ),
-        const SizedBox(height: 10),
-
-        // خيار 3: رمز الاسترداد المحفوظ
+        // خيار 2: رمز الاسترداد المحفوظ
         _recoveryOption(
           icon: Icons.vpn_key,
           color: Colors.deepPurple,
@@ -336,16 +323,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
       onBack: () => setState(() => _step = 0),
     );
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // 3. إرسال للواتساب
-  // ═══════════════════════════════════════════════════════════
-  Widget _buildWhatsAppSend() {
-    return _WhatsAppSendStep(
-      onSuccess: widget.onSuccess,
-      onBack: () => setState(() => _step = 0),
-    );
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -408,7 +385,6 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
         _verified = true;
         _error = null;
       });
-      // الانتقال لخطوة إعادة التعيين
     } else {
       setState(() => _error = 'الإجابة غير صحيحة');
       _answerCtrl.clear();
@@ -460,7 +436,6 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 20),
 
-        // السؤال
         Container(
           width: 320,
           padding: const EdgeInsets.all(16),
@@ -487,7 +462,6 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
         ),
         const SizedBox(height: 20),
 
-        // الإجابة
         SizedBox(
           width: 280,
           child: TextField(
@@ -675,270 +649,6 @@ class _RecoveryCodeStepState extends State<_RecoveryCodeStep> {
             minimumSize: const Size(220, 48),
           ),
         ),
-        const SizedBox(height: 12),
-        TextButton.icon(
-          onPressed: widget.onBack,
-          icon: const Icon(Icons.arrow_back),
-          label: const Text('رجوع'),
-        ),
-      ],
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// خطوة 3: إرسال للواتساب
-// ═══════════════════════════════════════════════════════════
-class _WhatsAppSendStep extends StatefulWidget {
-  final VoidCallback onSuccess;
-  final VoidCallback onBack;
-
-  const _WhatsAppSendStep({
-    required this.onSuccess,
-    required this.onBack,
-  });
-
-  @override
-  State<_WhatsAppSendStep> createState() => _WhatsAppSendStepState();
-}
-
-class _WhatsAppSendStepState extends State<_WhatsAppSendStep> {
-  String? _number;
-  bool _hasCode = false;
-  bool _loading = true;
-  bool _sent = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final hasCode = await RecoveryService.hasRecoveryCode();
-    final num = await RecoveryService.getWhatsAppNumber();
-    if (!mounted) return;
-    setState(() {
-      _hasCode = hasCode;
-      _number = num;
-      _loading = false;
-    });
-  }
-
-  Future<void> _sendViaWhatsApp() async {
-    final code = await RecoveryService.getRecoveryCodePlain();
-    if (code == null || code.isEmpty) return;
-
-    // إذا كان هناك رقم محفوظ → إرسال إليه
-    // إذا لا → فتح واتساب عام
-    final url = (_number != null && _number!.isNotEmpty)
-        ? RecoveryService.buildWhatsAppNumberUrl(
-            phoneNumber: _number!,
-            recoveryCode: code,
-          )
-        : RecoveryService.buildWhatsAppRecoveryUrl(recoveryCode: code);
-
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (!mounted) return;
-        setState(() => _sent = true);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ: $e')),
-      );
-    }
-  }
-
-  Future<void> _copyCode() async {
-    final code = await RecoveryService.getRecoveryCodePlain();
-    if (code == null) return;
-    await Clipboard.setData(ClipboardData(text: code));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('✅ تم نسخ الرمز'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (!_hasCode) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline,
-              size: 60, color: Colors.orange.withOpacity(0.7)),
-          const SizedBox(height: 12),
-          const Text('لا يوجد رمز استرداد',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          TextButton.icon(
-            onPressed: widget.onBack,
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('رجوع'),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(Icons.send,
-            size: 60, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(height: 16),
-        const Text('إرسال الرمز عبر واتساب',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        const Text(
-          'سيُفتح واتساب مع رمز الاسترداد\n'
-          'أرسله إلى هاتفك الآخر أو احفظه',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
-
-        if (_number != null && _number!.isNotEmpty)
-          Container(
-            width: 320,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.green.withOpacity(0.4)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.phone_android,
-                    color: Colors.green, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('الرقم المحفوظ:',
-                          style: TextStyle(
-                              fontSize: 10, color: Colors.grey)),
-                      Text(
-                        _number!,
-                        style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (_number == null || _number!.isEmpty)
-          Container(
-            width: 320,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withOpacity(0.4)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.orange, size: 18),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'لم يتم حفظ رقم واتساب.\nسيُفتح واتساب لاختيار جهة الاتصال يدوياً.',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-        const SizedBox(height: 20),
-
-        // زر الإرسال
-        SizedBox(
-          width: 280,
-          height: 48,
-          child: FilledButton.icon(
-            onPressed: _sendViaWhatsApp,
-            icon: const Icon(Icons.send),
-            label: Text(_sent ? 'إعادة الإرسال' : 'فتح واتساب'),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // زر النسخ
-        SizedBox(
-          width: 280,
-          height: 44,
-          child: OutlinedButton.icon(
-            onPressed: _copyCode,
-            icon: const Icon(Icons.copy, size: 16),
-            label: const Text('نسخ الرمز يدوياً'),
-          ),
-        ),
-
-        const SizedBox(height: 24),
-        Container(
-          width: 320,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.lightbulb_outline, color: Colors.blue, size: 18),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'بعد إرسال الرمز لهاتفك الآخر:\n'
-                  '1. افتح واتساب على الجهاز الآخر\n'
-                  '2. انسخ الرمز من الرسالة\n'
-                  '3. ارجع هنا → خيار "رمز الاسترداد المحفوظ"\n'
-                  '4. أدخل الرمز',
-                  style: TextStyle(fontSize: 11, height: 1.5),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // بعد الإرسال - زر "لدي الرمز الآن"
-        if (_sent)
-          SizedBox(
-            width: 280,
-            height: 44,
-            child: FilledButton.icon(
-              onPressed: () {
-                // نعود لقائمة الخيارات مع فتح خيار الرمز يدوياً
-                widget.onBack();
-              },
-              icon: const Icon(Icons.vpn_key),
-              label: const Text('لدي الرمز - أدخله الآن'),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-              ),
-            ),
-          ),
-
         const SizedBox(height: 12),
         TextButton.icon(
           onPressed: widget.onBack,
