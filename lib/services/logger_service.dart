@@ -68,6 +68,9 @@ class LoggerService {
     return s.isEmpty ? null : s;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حفظ حدث (مع needsAck)
+  // ═══════════════════════════════════════════════════════════
   static Future<int> log({
     required String action,
     required String description,
@@ -77,6 +80,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
+    bool needsAck = false, // 🆕
   }) async {
     try {
       accountant ??= _extractAccountantFromMetadata(metadata);
@@ -87,6 +91,10 @@ class LoggerService {
         } catch (_) {}
       }
 
+      // 🆕: إذا كان الحدث مهماً (error/warning) → نُفعّل needsAck تلقائياً
+      final finalNeedsAck = needsAck ||
+          (level == LogLevel.error || level == LogLevel.warning);
+
       final event = LogEvent(
         action: action,
         description: description,
@@ -96,8 +104,8 @@ class LoggerService {
         relatedId: relatedId,
         metadata: LogEvent.encodeMetadata(metadata),
         audioPath: audioPath,
-        isAcknowledged:
-            !(level == LogLevel.error || level == LogLevel.warning),
+        isAcknowledged: false, // 🆕: دائماً false حتى يقرأ المستخدم
+        needsAck: finalNeedsAck,
         createdAt: DateTime.now().toIso8601String(),
       );
 
@@ -131,6 +139,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
+    bool needsAck = false,
   }) =>
       log(
         action: action,
@@ -141,6 +150,7 @@ class LoggerService {
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
+        needsAck: needsAck,
       );
 
   static Future<void> success(
@@ -151,6 +161,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
+    bool needsAck = false,
   }) =>
       log(
         action: action,
@@ -161,6 +172,7 @@ class LoggerService {
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
+        needsAck: needsAck,
       );
 
   static Future<void> warning(
@@ -171,6 +183,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
+    bool needsAck = false,
   }) =>
       log(
         action: action,
@@ -181,6 +194,7 @@ class LoggerService {
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
+        needsAck: needsAck,
       );
 
   static Future<void> logError(
@@ -191,6 +205,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
+    bool needsAck = false,
   }) =>
       log(
         action: action,
@@ -201,6 +216,7 @@ class LoggerService {
         relatedId: relatedId,
         metadata: metadata,
         audioPath: audioPath,
+        needsAck: needsAck,
       );
 
   // ============ قراءة ============
@@ -313,6 +329,30 @@ class LoggerService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 عدد الإشعارات التي تحتاج تأكيد
+  // ═══════════════════════════════════════════════════════════
+  static Future<int> getPendingAckCount() async {
+    try {
+      return await DatabaseHelper.instance.getPendingAckCount();
+    } catch (e) {
+      debugPrint('❌ [Logger] getPendingAckCount: $e');
+      return 0;
+    }
+  }
+
+  /// 🆕 كل الإشعارات المعلقة
+  static Future<List<LogEvent>> getAllPendingAck({int limit = 100}) async {
+    try {
+      final rows =
+          await DatabaseHelper.instance.getAllPendingAck(limit: limit);
+      return rows.map((e) => LogEvent.fromMap(e)).toList();
+    } catch (e) {
+      debugPrint('❌ [Logger] getAllPendingAck: $e');
+      return [];
+    }
+  }
+
   static Future<Map<String, int>> getPendingCountByCategory() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -368,9 +408,7 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 إحصائيات (مع دعم المعلقات الصوتية)
-  // ═══════════════════════════════════════════════════════════
+  // ============ إحصائيات ============
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -384,15 +422,18 @@ class LoggerService {
         DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
             .toIso8601String()
       ]);
-
-      // 🆕 معلقات عامة (warning/error غير مُعترف بها)
       final pending = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
           AND (level = 'error' OR level = 'warning')
       ''');
-
-      // 🆕 معلقات صوتية (فئة voice فقط)
+      // 🆕
+      final pendingAck = await db.rawQuery('''
+        SELECT COUNT(*) AS c FROM log_events
+        WHERE is_acknowledged = 0
+          AND needs_acknowledgement = 1
+      ''');
+      // 🆕
       final pendingVoice = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
@@ -405,6 +446,7 @@ class LoggerService {
         'warnings': (warnings.first['c'] as int?) ?? 0,
         'today': (today.first['c'] as int?) ?? 0,
         'pending': (pending.first['c'] as int?) ?? 0,
+        'pendingAck': (pendingAck.first['c'] as int?) ?? 0,
         'pendingVoice': (pendingVoice.first['c'] as int?) ?? 0,
       };
     } catch (_) {
@@ -414,6 +456,7 @@ class LoggerService {
         'warnings': 0,
         'today': 0,
         'pending': 0,
+        'pendingAck': 0,
         'pendingVoice': 0,
       };
     }
@@ -487,7 +530,7 @@ class LoggerService {
 
   static Future<void> _notifyPendingCount() async {
     try {
-      final count = await getPendingCount();
+      final count = await getPendingAckCount(); // 🆕: نستخدم needsAck
       if (!_pendingCountController.isClosed) {
         _pendingCountController.add(count);
       }
@@ -498,7 +541,9 @@ class LoggerService {
     await _notifyPendingCount();
   }
 
-  // ============ دوال مختصرة للأحداث ============
+  // ═══════════════════════════════════════════════════════════
+  // دوال مختصرة للأحداث
+  // ═══════════════════════════════════════════════════════════
 
   static Future<void> logTransactionAdded({
     required String typeLabel,
@@ -521,6 +566,7 @@ class LoggerService {
       relatedId: relatedId,
       audioPath: audioPath,
       accountant: accountant,
+      needsAck: false,
       metadata: {
         'customer': customerName,
         'amount': amount,
@@ -544,6 +590,7 @@ class LoggerService {
         'تم حذف عملية بمبلغ ${amount.toStringAsFixed(0)} للعميل "$customerName"${code != null ? " (رمز: $code)" : ""}',
         category: LogCategory.transaction,
         accountant: accountant,
+        needsAck: false,
       );
 
   static Future<void> logCustomerAdded(String name, {String? accountant}) =>
@@ -560,6 +607,7 @@ class LoggerService {
         'تم حذف الحساب: "$name"',
         category: LogCategory.customer,
         accountant: accountant,
+        needsAck: false,
       );
 
   static Future<void> logCustomerStatusChanged({
@@ -573,17 +621,84 @@ class LoggerService {
           : warning('إيقاف حساب', 'تم إيقاف حساب "$name"',
               category: LogCategory.customer, accountant: accountant);
 
-  static Future<void> logCustomerLimitExceeded({
-    required String name,
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 دوال الإشعارات المهمة (needsAck = true)
+  // ═══════════════════════════════════════════════════════════
+
+  /// 🆕 دين على حساب موقوف
+  static Future<void> logDebtOnInactiveAccount({
+    required String customerName,
+    required double amount,
+    required String currency,
+    String? accountant,
+    String? relatedId,
+  }) =>
+      warning(
+        '⚠️ دين على حساب موقوف',
+        'تم تسجيل دين بمبلغ ${amount.toStringAsFixed(0)} $currency للعميل "$customerName" (حسابه موقوف).',
+        category: LogCategory.customer,
+        accountant: accountant,
+        relatedId: relatedId,
+        needsAck: true,
+      );
+
+  /// 🆕 إعادة تفعيل حساب محذوف
+  static Future<void> logAccountRestored({
+    required String customerName,
+    required String reason,
+    String? accountant,
+    String? relatedId,
+  }) =>
+      warning(
+        '🔄 إعادة تفعيل حساب',
+        'تم إعادة تفعيل الحساب "$customerName" تلقائياً. السبب: $reason',
+        category: LogCategory.customer,
+        accountant: accountant,
+        relatedId: relatedId,
+        needsAck: true,
+      );
+
+  /// 🆕 تجاوز الحد الأقصى
+  static Future<void> logOverLimit({
+    required String customerName,
     required double balance,
     required double maxBalance,
     String? accountant,
+    String? relatedId,
   }) =>
       warning(
-        'تجاوز الحد الأقصى',
-        'العميل "$name" تجاوز الحد. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
+        '⚠️ تجاوز الحد الأقصى',
+        'العميل "$customerName" تجاوز الحد. الرصيد: ${balance.toStringAsFixed(0)} / الحد: ${maxBalance.toStringAsFixed(0)}',
         category: LogCategory.customer,
         accountant: accountant,
+        relatedId: relatedId,
+        needsAck: true,
+      );
+
+  /// 🆕 نزاع مزامنة
+  static Future<void> logSyncConflict({
+    required String detail,
+    String? accountant,
+  }) =>
+      warning(
+        '⚠️ نزاع مزامنة',
+        detail,
+        category: LogCategory.sync,
+        accountant: accountant,
+        needsAck: true,
+      );
+
+  /// 🆕 فشل مزامنة (3 مرات)
+  static Future<void> logSyncFailure({
+    required String error,
+    String? accountant,
+  }) =>
+      logError(
+        '❌ فشل المزامنة',
+        'فشلت المزامنة 3 مرات متتالية: $error',
+        category: LogCategory.sync,
+        accountant: accountant,
+        needsAck: true,
       );
 
   // ============ المزامنة ============
@@ -683,6 +798,7 @@ class LoggerService {
         category: LogCategory.voice,
         audioPath: audioPath,
         accountant: accountant,
+        needsAck: false, // السجل الصوتي له تبويب خاص
       );
 
   static Future<void> logVoiceEmpty({
@@ -712,6 +828,7 @@ class LoggerService {
       category: LogCategory.voice,
       audioPath: audioPath,
       accountant: accountant,
+      needsAck: false, // السجل الصوتي له تبويب خاص
       metadata: {
         'pending': true,
         'raw_text': rawText,
