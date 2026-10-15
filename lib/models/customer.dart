@@ -9,7 +9,17 @@ class Customer {
   final String? photoPath;
   final String category;
   final double? maxBalance;
-  final bool isActive; // 🆕 الحساب نشط أم موقوف
+  final bool isActive;
+
+  // 🆕 Tracking
+  final String? createdBy;
+  final String? updatedBy;
+  final String? updatedAt;
+
+  // 🆕 Soft Delete
+  final bool isDeleted;
+  final String? deletedAt;
+
   final String createdAt;
 
   Customer({
@@ -21,7 +31,13 @@ class Customer {
     this.photoPath,
     this.category = 'normal',
     this.maxBalance,
-    this.isActive = true, // 🆕 افتراضياً نشط
+    this.isActive = true,
+    // 🆕
+    this.createdBy,
+    this.updatedBy,
+    this.updatedAt,
+    this.isDeleted = false,
+    this.deletedAt,
     required this.createdAt,
   });
 
@@ -34,7 +50,13 @@ class Customer {
         'photo_path': photoPath,
         'category': category,
         'max_balance': maxBalance,
-        'is_active': isActive ? 1 : 0, // 🆕
+        'is_active': isActive ? 1 : 0,
+        // 🆕
+        'created_by': createdBy,
+        'updated_by': updatedBy,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted ? 1 : 0,
+        'deleted_at': deletedAt,
         'created_at': createdAt,
       };
 
@@ -49,11 +71,16 @@ class Customer {
         maxBalance: m['max_balance'] != null
             ? (m['max_balance'] as num).toDouble()
             : null,
-        isActive: m['is_active'] == null || m['is_active'] == 1, // 🆕
-        createdAt: m['created_at'],
+        isActive: m['is_active'] == null || m['is_active'] == 1,
+        // 🆕
+        createdBy: m['created_by'],
+        updatedBy: m['updated_by'],
+        updatedAt: m['updated_at'],
+        isDeleted: m['is_deleted'] == 1,
+        deletedAt: m['deleted_at'],
+        createdAt: m['created_at'] ?? '',
       );
 
-  /// نسخة معدّلة
   Customer copyWith({
     int? id,
     String? name,
@@ -64,6 +91,12 @@ class Customer {
     String? category,
     double? maxBalance,
     bool? isActive,
+    // 🆕
+    String? createdBy,
+    String? updatedBy,
+    String? updatedAt,
+    bool? isDeleted,
+    String? deletedAt,
     String? createdAt,
   }) {
     return Customer(
@@ -76,9 +109,19 @@ class Customer {
       category: category ?? this.category,
       maxBalance: maxBalance ?? this.maxBalance,
       isActive: isActive ?? this.isActive,
+      // 🆕
+      createdBy: createdBy ?? this.createdBy,
+      updatedBy: updatedBy ?? this.updatedBy,
+      updatedAt: updatedAt ?? this.updatedAt,
+      isDeleted: isDeleted ?? this.isDeleted,
+      deletedAt: deletedAt ?? this.deletedAt,
       createdAt: createdAt ?? this.createdAt,
     );
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // دوال مساعدة
+  // ═══════════════════════════════════════════════════════════
 
   /// هل تجاوز الرصيد الحد الأقصى؟
   bool isOverLimit(double currentBalance) {
@@ -92,9 +135,21 @@ class Customer {
     if (maxBalance == null || maxBalance! <= 0) return 0;
     return currentBalance / maxBalance!;
   }
+
+  /// 🆕 هل الحساب نشط + غير محذوف؟
+  bool get isCurrentlyActive => isActive && !isDeleted;
+
+  /// 🆕 هل الحساب محذوف؟
+  bool get isTrashed => isDeleted;
+
+  /// 🆕 هل تم تعديله بعد الإنشاء؟
+  bool get wasModified {
+    if (updatedAt == null || createdAt.isEmpty) return false;
+    return updatedAt != createdAt;
+  }
 }
 
-/// 🆕 التصنيفات الجاهزة
+/// التصنيفات الجاهزة
 class CustomerCategory {
   static const String normal = 'normal';
   static const String vip = 'vip';
