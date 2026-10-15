@@ -8,15 +8,6 @@ class Transaction {
   final String currency;
   final String type;
   final String items;
-
-  // 🆕 Tracking
-  final String? updatedBy;
-  final String? updatedAt;
-
-  // 🆕 Soft Delete
-  final bool isDeleted;
-  final String? deletedAt;
-
   final String createdAt;
 
   Transaction({
@@ -29,11 +20,6 @@ class Transaction {
     this.currency = 'YER',
     required this.type,
     this.items = '',
-    // 🆕
-    this.updatedBy,
-    this.updatedAt,
-    this.isDeleted = false,
-    this.deletedAt,
     required this.createdAt,
   });
 
@@ -47,11 +33,6 @@ class Transaction {
         'currency': currency,
         'type': type,
         'items': items,
-        // 🆕
-        'updated_by': updatedBy,
-        'updated_at': updatedAt,
-        'is_deleted': isDeleted ? 1 : 0,
-        'deleted_at': deletedAt,
         'created_at': createdAt,
       };
 
@@ -62,56 +43,13 @@ class Transaction {
         accountant: m['accountant'],
         source: m['source'],
         amount: (m['amount'] as num).toDouble(),
-        currency: m['currency'] ?? 'YER',
+        currency: m['currency'],
         type: m['type'],
         items: m['items'] ?? '',
-        // 🆕
-        updatedBy: m['updated_by'],
-        updatedAt: m['updated_at'],
-        isDeleted: m['is_deleted'] == 1,
-        deletedAt: m['deleted_at'],
         createdAt: m['created_at'],
       );
 
-  Transaction copyWith({
-    int? id,
-    int? customerId,
-    String? code,
-    String? accountant,
-    String? source,
-    double? amount,
-    String? currency,
-    String? type,
-    String? items,
-    // 🆕
-    String? updatedBy,
-    String? updatedAt,
-    bool? isDeleted,
-    String? deletedAt,
-    String? createdAt,
-  }) {
-    return Transaction(
-      id: id ?? this.id,
-      customerId: customerId ?? this.customerId,
-      code: code ?? this.code,
-      accountant: accountant ?? this.accountant,
-      source: source ?? this.source,
-      amount: amount ?? this.amount,
-      currency: currency ?? this.currency,
-      type: type ?? this.type,
-      items: items ?? this.items,
-      // 🆕
-      updatedBy: updatedBy ?? this.updatedBy,
-      updatedAt: updatedAt ?? this.updatedAt,
-      isDeleted: isDeleted ?? this.isDeleted,
-      deletedAt: deletedAt ?? this.deletedAt,
-      createdAt: createdAt ?? this.createdAt,
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // معلومات المصدر (أيقونة + نص + لون)
-  // ═══════════════════════════════════════════════════════════
+  /// الحصول على معلومات المصدر (أيقونة + نص + لون)
   static ({String label, String emoji, int color}) sourceInfo(String? source) {
     switch (source) {
       case 'overlay':
@@ -119,6 +57,7 @@ class Transaction {
       case 'voice':
         return (label: 'التسجيل الصوتي', emoji: '🎤', color: 0xFF2196F3);
       case 'voice+manual':
+        // 🆕 صوتي + تصحيح يدوي من المعلقات
         return (
           label: 'صوتي + مراجَع',
           emoji: '🎤✏️',
@@ -130,37 +69,5 @@ class Transaction {
       default:
         return (label: 'إضافة يدوية', emoji: '➕', color: 0xFF607D8B);
     }
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 دوال مساعدة
-  // ═══════════════════════════════════════════════════════════
-
-  /// هل العملية دين؟
-  bool get isDebt => type == 'debt' && !isReturn;
-
-  /// هل العملية سداد؟
-  bool get isPayment => type == 'payment' && !isReturn;
-
-  /// هل العملية مرتجع؟
-  bool get isReturn => items.startsWith('مرتجع');
-
-  /// هل العملية نشطة + غير محذوفة؟
-  bool get isCurrentlyActive => !isDeleted;
-
-  /// هل العملية محذوفة؟
-  bool get isTrashed => isDeleted;
-
-  /// هل تم تعديلها بعد الإنشاء؟
-  bool get wasModified {
-    if (updatedAt == null || createdAt.isEmpty) return false;
-    return updatedAt != createdAt;
-  }
-
-  /// هل تم تعديلها بواسطة شخص مختلف عن المنشئ؟
-  bool get wasModifiedByOther {
-    if (!wasModified) return false;
-    if (accountant == null || updatedBy == null) return false;
-    return accountant != updatedBy;
   }
 }
