@@ -12,7 +12,6 @@ import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/notification_dispatcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});
@@ -552,7 +551,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
   // ═══════════════════════════════════════════════════════════
   Widget _buildCompactCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
-    final needsAck = e.isPendingAck; // ⬅️ التعديل هنا
+    final needsAck = e.needsAcknowledgement;
     final isPlaying = _playingPath != null && _playingPath == e.audioPath;
     final isVoiceLog = e.category == LogCategory.voice;
     final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
@@ -576,6 +575,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const SizedBox(width: 4),
+                // الفئة (مضغوطة)
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 4, vertical: 1),
@@ -592,6 +592,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const SizedBox(width: 3),
+                // المستوى (أيقونة صغيرة)
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 3, vertical: 1),
@@ -605,6 +606,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const Spacer(),
+                // أيقونة المصدر (إن وجد)
                 if (e.accountant != null && e.accountant!.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -641,6 +643,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                // زر الحذف
                 _miniIconButton(
                   icon: Icons.delete_outline,
                   color: Colors.red,
@@ -664,12 +667,14 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const SizedBox(width: 4),
+                // زر التشغيل (للأحداث الصوتية)
                 if (isVoiceLog)
                   _miniIconButton(
                     icon: isPlaying ? Icons.stop : Icons.play_arrow,
                     color: hasAudio ? Colors.green : Colors.grey,
                     onPressed: hasAudio ? () => _togglePlay(e) : null,
                   ),
+                // زر الاعتراف
                 if (needsAck)
                   _miniIconButton(
                     icon: Icons.check_circle,
@@ -755,7 +760,9 @@ class _AllLogsTabState extends State<_AllLogsTab> {
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
         style: IconButton.styleFrom(
-          backgroundColor: active ? Colors.blue.withOpacity(0.15) : null,
+          backgroundColor: active
+              ? Colors.blue.withOpacity(0.15)
+              : null,
         ),
         onPressed: onPressed,
       ),
@@ -838,6 +845,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     }
   }
 }
+
 // ═══════════════════════════════════════════════════════════════
 // 📑 التبويب 2: التسجيلات المعلّقة
 // ═══════════════════════════════════════════════════════════════
@@ -856,14 +864,9 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   bool _loading = true;
   String? _playingPath;
 
-  // 🆕 إعدادات الفلترة
-  bool _filterEmptyVoice = true;
-  bool _filterUnclearText = true;
-
   @override
   void initState() {
     super.initState();
-    _loadFilters();
     _load();
     _audioService.isCompletedStream.listen((isCompleted) {
       if (isCompleted && mounted) {
@@ -878,46 +881,14 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     super.dispose();
   }
 
-  // 🆕 تحميل إعدادات الفلترة
-  Future<void> _loadFilters() async {
-    try {
-      final sp = await SharedPreferences.getInstance();
-      if (!mounted) return;
-      setState(() {
-        _filterEmptyVoice = sp.getBool('pending_filter_empty') ?? true;
-        _filterUnclearText = sp.getBool('pending_filter_unclear') ?? true;
-      });
-    } catch (_) {}
-  }
-
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => _loading = true);
 
     final list = await LoggerService.getPendingVoiceLogs();
-
-    // 🆕 فلترة حسب الإعدادات
-    final filtered = list.where((e) {
-      try {
-        final meta = e.metadataMap;
-        final rawText = (meta?['raw_text'] as String?) ?? '';
-
-        // "فارغ" = لا يوجد نص
-        final isEmpty = rawText.isEmpty ||
-            rawText == '(تسجيل صوتي محفوظ - بانتظار المراجعة)';
-
-        if (isEmpty && !_filterEmptyVoice) return false;
-        if (!isEmpty && !_filterUnclearText) return false;
-
-        return true;
-      } catch (_) {
-        return true;
-      }
-    }).toList();
-
     if (!mounted) return;
     setState(() {
-      _pending = filtered;
+      _pending = list;
       _loading = false;
     });
   }
@@ -1068,14 +1039,12 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         padding: const EdgeInsets.all(6),
                         margin: const EdgeInsets.only(bottom: 8),
                         decoration: BoxDecoration(
-                          color:
-                              Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                          color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.mic,
-                                size: 12, color: Colors.grey),
+                            const Icon(Icons.mic, size: 12, color: Colors.grey),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
@@ -1376,6 +1345,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
+                          // 🆕 المصدر: voice+manual
                           const sourceValue = 'voice+manual';
 
                           await db.insertTransaction(Transaction(
@@ -1405,6 +1375,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             source: sourceValue,
                           );
 
+                          // 🆕 حساب الرصيد + الإشعارات (واتساب)
                           final newBalance = await db
                               .customerBalance(selectedCustomer!.id!);
 
@@ -1422,6 +1393,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             source: sourceValue,
                           );
 
+                          // 🆕 تعليم المعلّق بأنه تم
                           if (e.id != null) {
                             await LoggerService.acknowledge(e.id!);
                           }
@@ -1526,8 +1498,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('فشل المشاركة: $err',
-              style: const TextStyle(fontSize: 11)),
+          content: Text('فشل المشاركة: $err', style: const TextStyle(fontSize: 11)),
           backgroundColor: Colors.red,
         ),
       );
@@ -1599,7 +1570,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Row 1
+            // Row 1: التاريخ + المؤشر
             Row(
               children: [
                 Container(
@@ -1657,6 +1628,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
             // Row 3: الأزرار المضغوطة
             Row(
               children: [
+                // تشغيل
                 if (hasAudio)
                   _miniButton(
                     icon: isPlaying ? Icons.stop : Icons.play_arrow,
@@ -1665,6 +1637,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                     onPressed: () => _togglePlay(e),
                   ),
                 const SizedBox(width: 4),
+                // مشاركة صوتية
                 if (hasAudio)
                   _miniButton(
                     icon: Icons.share,
@@ -1673,6 +1646,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                     onPressed: () => _shareVoice(e),
                   ),
                 const SizedBox(width: 4),
+                // إضافة عملية
                 _miniButton(
                   icon: Icons.add_card,
                   label: 'إضافة',
@@ -1681,6 +1655,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                   filled: true,
                 ),
                 const Spacer(),
+                // حذف
                 SizedBox(
                   width: 28,
                   height: 28,
