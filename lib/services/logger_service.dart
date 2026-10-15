@@ -69,7 +69,7 @@ class LoggerService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 حفظ حدث (مع needsAck)
+  // حفظ حدث (مع needsAck)
   // ═══════════════════════════════════════════════════════════
   static Future<int> log({
     required String action,
@@ -80,7 +80,7 @@ class LoggerService {
     String? relatedId,
     Map<String, dynamic>? metadata,
     String? audioPath,
-    bool needsAck = false, // 🆕
+    bool needsAck = false,
   }) async {
     try {
       accountant ??= _extractAccountantFromMetadata(metadata);
@@ -91,7 +91,6 @@ class LoggerService {
         } catch (_) {}
       }
 
-      // 🆕: إذا كان الحدث مهماً (error/warning) → نُفعّل needsAck تلقائياً
       final finalNeedsAck = needsAck ||
           (level == LogLevel.error || level == LogLevel.warning);
 
@@ -104,7 +103,7 @@ class LoggerService {
         relatedId: relatedId,
         metadata: LogEvent.encodeMetadata(metadata),
         audioPath: audioPath,
-        isAcknowledged: false, // 🆕: دائماً false حتى يقرأ المستخدم
+        isAcknowledged: false,
         needsAck: finalNeedsAck,
         createdAt: DateTime.now().toIso8601String(),
       );
@@ -329,9 +328,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 عدد الإشعارات التي تحتاج تأكيد
-  // ═══════════════════════════════════════════════════════════
   static Future<int> getPendingAckCount() async {
     try {
       return await DatabaseHelper.instance.getPendingAckCount();
@@ -341,7 +337,6 @@ class LoggerService {
     }
   }
 
-  /// 🆕 كل الإشعارات المعلقة
   static Future<List<LogEvent>> getAllPendingAck({int limit = 100}) async {
     try {
       final rows =
@@ -373,7 +368,6 @@ class LoggerService {
     }
   }
 
-  // ============ الاعتراف ============
   static Future<bool> acknowledge(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -408,7 +402,6 @@ class LoggerService {
     }
   }
 
-  // ============ إحصائيات ============
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -427,13 +420,11 @@ class LoggerService {
         WHERE is_acknowledged = 0
           AND (level = 'error' OR level = 'warning')
       ''');
-      // 🆕
       final pendingAck = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
           AND needs_acknowledgement = 1
       ''');
-      // 🆕
       final pendingVoice = await db.rawQuery('''
         SELECT COUNT(*) AS c FROM log_events
         WHERE is_acknowledged = 0
@@ -462,7 +453,6 @@ class LoggerService {
     }
   }
 
-  // ============ حذف ============
   static Future<bool> deleteLog(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -498,7 +488,6 @@ class LoggerService {
     }
   }
 
-  // ============ تنظيف تلقائي ============
   static Future<void> _autoCleanup() async {
     try {
       final days = await getRetentionDays();
@@ -530,7 +519,7 @@ class LoggerService {
 
   static Future<void> _notifyPendingCount() async {
     try {
-      final count = await getPendingAckCount(); // 🆕: نستخدم needsAck
+      final count = await getPendingAckCount();
       if (!_pendingCountController.isClosed) {
         _pendingCountController.add(count);
       }
@@ -540,7 +529,6 @@ class LoggerService {
   static Future<void> refreshPendingCount() async {
     await _notifyPendingCount();
   }
-
   // ═══════════════════════════════════════════════════════════
   // دوال مختصرة للأحداث
   // ═══════════════════════════════════════════════════════════
@@ -622,10 +610,37 @@ class LoggerService {
               category: LogCategory.customer, accountant: accountant);
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 دوال الإشعارات المهمة (needsAck = true)
+  // (Legacy) دوال التوافق مع الاستدعاءات القديمة
   // ═══════════════════════════════════════════════════════════
 
-  /// 🆕 دين على حساب موقوف
+  /// (Legacy) تجاوز الحد الأقصى — للتوافق مع الاستدعاءات القديمة
+  static Future<void> logCustomerLimitExceeded({
+    required String name,
+    required double balance,
+    required double maxBalance,
+    String? accountant,
+  }) =>
+      logOverLimit(
+        customerName: name,
+        balance: balance,
+        maxBalance: maxBalance,
+        accountant: accountant,
+      );
+
+  /// (Legacy) فشل المزامنة — للتوافق
+  static Future<void> logSyncError(String errMsg, {String? accountant}) =>
+      logError(
+        'فشل المزامنة',
+        'خطأ: $errMsg',
+        category: LogCategory.sync,
+        accountant: accountant,
+      );
+
+  // ═══════════════════════════════════════════════════════════
+  // دوال الإشعارات المهمة (needsAck = true)
+  // ═══════════════════════════════════════════════════════════
+
+  /// دين على حساب موقوف
   static Future<void> logDebtOnInactiveAccount({
     required String customerName,
     required double amount,
@@ -642,7 +657,7 @@ class LoggerService {
         needsAck: true,
       );
 
-  /// 🆕 إعادة تفعيل حساب محذوف
+  /// إعادة تفعيل حساب محذوف
   static Future<void> logAccountRestored({
     required String customerName,
     required String reason,
@@ -658,7 +673,7 @@ class LoggerService {
         needsAck: true,
       );
 
-  /// 🆕 تجاوز الحد الأقصى
+  /// تجاوز الحد الأقصى
   static Future<void> logOverLimit({
     required String customerName,
     required double balance,
@@ -675,7 +690,7 @@ class LoggerService {
         needsAck: true,
       );
 
-  /// 🆕 نزاع مزامنة
+  /// نزاع مزامنة
   static Future<void> logSyncConflict({
     required String detail,
     String? accountant,
@@ -688,7 +703,7 @@ class LoggerService {
         needsAck: true,
       );
 
-  /// 🆕 فشل مزامنة (3 مرات)
+  /// فشل مزامنة (3 مرات)
   static Future<void> logSyncFailure({
     required String error,
     String? accountant,
@@ -716,14 +731,6 @@ class LoggerService {
             '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
             '${customersUpdated > 0 ? " ~$customersUpdated حساب محدّث" : ""}'
             '${transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات)" : ""}',
-        category: LogCategory.sync,
-        accountant: accountant,
-      );
-
-  static Future<void> logSyncError(String errMsg, {String? accountant}) =>
-      logError(
-        'فشل المزامنة',
-        'خطأ: $errMsg',
         category: LogCategory.sync,
         accountant: accountant,
       );
@@ -798,7 +805,7 @@ class LoggerService {
         category: LogCategory.voice,
         audioPath: audioPath,
         accountant: accountant,
-        needsAck: false, // السجل الصوتي له تبويب خاص
+        needsAck: false,
       );
 
   static Future<void> logVoiceEmpty({
@@ -828,7 +835,7 @@ class LoggerService {
       category: LogCategory.voice,
       audioPath: audioPath,
       accountant: accountant,
-      needsAck: false, // السجل الصوتي له تبويب خاص
+      needsAck: false,
       metadata: {
         'pending': true,
         'raw_text': rawText,
