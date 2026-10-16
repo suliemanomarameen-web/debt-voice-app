@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
@@ -50,11 +51,13 @@ class _LogsScreenState extends State<LogsScreen>
       child: Scaffold(
         appBar: AppBar(
           title: const Text('سجل الأحداث'),
-          titleTextStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          titleTextStyle: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold),
           toolbarHeight: 44,
           bottom: TabBar(
             controller: _tabController,
-            labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            labelStyle: const TextStyle(
+                fontSize: 12, fontWeight: FontWeight.bold),
             unselectedLabelStyle: const TextStyle(fontSize: 11),
             tabs: const [
               Tab(
@@ -64,7 +67,8 @@ class _LogsScreenState extends State<LogsScreen>
               ),
               Tab(
                 height: 40,
-                icon: Icon(Icons.pending_actions, size: 18, color: Colors.orange),
+                icon: Icon(Icons.pending_actions,
+                    size: 18, color: Colors.orange),
                 text: '🔴 معلقات',
               ),
             ],
@@ -177,7 +181,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('التسجيل الصوتي غير متوفر', style: TextStyle(fontSize: 12)),
+            content: Text('التسجيل الصوتي غير متوفر',
+                style: TextStyle(fontSize: 12)),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 2),
           ),
@@ -191,7 +196,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('❌ الملف الصوتي غير موجود', style: TextStyle(fontSize: 12)),
+            content: Text('❌ الملف الصوتي غير موجود',
+                style: TextStyle(fontSize: 12)),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 2),
           ),
@@ -222,7 +228,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ تم الاعتراف', style: TextStyle(fontSize: 11)),
+          content:
+              Text('✅ تم الاعتراف', style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 1),
         ),
@@ -241,7 +248,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
             children: [
               Icon(Icons.done_all, color: Colors.green, size: 20),
               SizedBox(width: 6),
-              Text('الاعتراف بالكل', style: TextStyle(fontSize: 15)),
+              Text('الاعتراف بالكل',
+                  style: TextStyle(fontSize: 15)),
             ],
           ),
           content: const Text(
@@ -251,11 +259,13 @@ class _AllLogsTabState extends State<_AllLogsTab> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
+              child: const Text('إلغاء',
+                  style: TextStyle(fontSize: 12)),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('تأكيد', style: TextStyle(fontSize: 12)),
+              child: const Text('تأكيد',
+                  style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -267,7 +277,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('✅ تم الاعتراف بـ $count حدث', style: const TextStyle(fontSize: 11)),
+        content: Text('✅ تم الاعتراف بـ $count حدث',
+            style: const TextStyle(fontSize: 11)),
         backgroundColor: Colors.green,
       ),
     );
@@ -286,8 +297,9 @@ class _AllLogsTabState extends State<_AllLogsTab> {
   Future<void> _pickDate({required bool isFrom}) async {
     final picked = await showDatePicker(
       context: context,
-      initialDate:
-          isFrom ? (_fromDate ?? DateTime.now()) : (_toDate ?? DateTime.now()),
+      initialDate: isFrom
+          ? (_fromDate ?? DateTime.now())
+          : (_toDate ?? DateTime.now()),
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
@@ -296,7 +308,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
       if (isFrom) {
         _fromDate = picked;
       } else {
-        _toDate = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+        _toDate =
+            DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
       }
     });
     _loadLogs();
@@ -329,45 +342,29 @@ class _AllLogsTabState extends State<_AllLogsTab> {
           child: Row(
             children: [
               Expanded(
-                child: _statCard(
-                  'الإجمالي',
-                  (_stats['total'] as int?) ?? 0,
-                  Colors.blue,
-                  isDark,
-                ),
+                child: _statCard('الإجمالي',
+                    (_stats['total'] as int?) ?? 0, Colors.blue, isDark),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _statCard('اليوم',
+                    (_stats['today'] as int?) ?? 0, Colors.purple, isDark),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _statCard('أخطاء',
+                    (_stats['errors'] as int?) ?? 0, Colors.red, isDark),
               ),
               const SizedBox(width: 4),
               Expanded(
                 child: _statCard(
-                  'اليوم',
-                  (_stats['today'] as int?) ?? 0,
-                  Colors.purple,
-                  isDark,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _statCard(
-                  'أخطاء',
-                  (_stats['errors'] as int?) ?? 0,
-                  Colors.red,
-                  isDark,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _statCard(
-                  'معلقة',
-                  pendingCount,
-                  Colors.orange,
-                  isDark,
-                ),
+                    'معلقة', pendingCount, Colors.orange, isDark),
               ),
             ],
           ),
         ),
 
-        // ===== البحث المضغوط =====
+        // ===== البحث =====
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: TextField(
@@ -405,14 +402,15 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
         const SizedBox(height: 4),
 
-        // ===== الفلاتر المضغوطة =====
+        // ===== الفلاتر =====
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [
               _compactChip(
-                label: 'المعلقة${pendingCount > 0 ? " ($pendingCount)" : ""}',
+                label:
+                    'المعلقة${pendingCount > 0 ? " ($pendingCount)" : ""}',
                 selected: _onlyPending,
                 onSelected: (v) {
                   setState(() => _onlyPending = v);
@@ -426,7 +424,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                 return Padding(
                   padding: const EdgeInsets.only(left: 4),
                   child: _compactChip(
-                    label: '${_categoryEmoji(cat)} ${_categoryLabel(cat)}',
+                    label:
+                        '${_categoryEmoji(cat)} ${_categoryLabel(cat)}',
                     selected: selected,
                     onSelected: (_) {
                       setState(() {
@@ -443,7 +442,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
         const SizedBox(height: 4),
 
-        // ===== المستوى + التاريخ المضغوط =====
+        // ===== المستوى + التاريخ =====
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
@@ -460,19 +459,22 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                       labelStyle: TextStyle(fontSize: 10),
                       isDense: true,
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 4),
                     ),
                     items: [
                       const DropdownMenuItem<LogLevel?>(
                         value: null,
-                        child: Text('الكل', style: TextStyle(fontSize: 11)),
+                        child: Text('الكل',
+                            style: TextStyle(fontSize: 11)),
                       ),
-                      ...LogLevel.values.map((l) => DropdownMenuItem<LogLevel?>(
-                            value: l,
-                            child: Text(_levelLabel(l),
-                                style: const TextStyle(fontSize: 11)),
-                          )),
+                      ...LogLevel.values.map(
+                          (l) => DropdownMenuItem<LogLevel?>(
+                                value: l,
+                                child: Text(_levelLabel(l),
+                                    style: const TextStyle(
+                                        fontSize: 11)),
+                              )),
                     ],
                     onChanged: (v) {
                       setState(() => _levelFilter = v);
@@ -522,12 +524,14 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.inbox,
-                              size: 40, color: theme.disabledColor),
+                              size: 40,
+                              color: theme.disabledColor),
                           const SizedBox(height: 6),
                           Text(
                             'لا توجد أحداث',
                             style: TextStyle(
-                                color: theme.disabledColor, fontSize: 12),
+                                color: theme.disabledColor,
+                                fontSize: 12),
                           ),
                         ],
                       ),
@@ -547,18 +551,30 @@ class _AllLogsTabState extends State<_AllLogsTab> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 بطاقة الحدث المضغوطة
+  // بطاقة الحدث
   // ═══════════════════════════════════════════════════════════
   Widget _buildCompactCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
-    final needsAck = e.needsAcknowledgement;
+    final needsAck = e.isPendingAck; // ✅ v11
     final isPlaying = _playingPath != null && _playingPath == e.audioPath;
     final isVoiceLog = e.category == LogCategory.voice;
     final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
 
+    // 🆕 تمييز بصري للإشعارات
+    Color? bgColor;
+    if (e.isDeletionConflict) {
+      bgColor = Colors.red.withOpacity(0.08);
+    } else if (e.isRemoteActivity) {
+      bgColor = Colors.purple.withOpacity(0.06);
+    } else if (e.isSyncConflict || e.isSyncFailure) {
+      bgColor = Colors.orange.withOpacity(0.08);
+    } else if (needsAck) {
+      bgColor = Colors.orange.withOpacity(0.06);
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-      color: needsAck ? Colors.orange.withOpacity(0.06) : null,
+      color: bgColor,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Column(
@@ -575,7 +591,6 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                // الفئة (مضغوطة)
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 4, vertical: 1),
@@ -592,7 +607,6 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                   ),
                 ),
                 const SizedBox(width: 3),
-                // المستوى (أيقونة صغيرة)
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 3, vertical: 1),
@@ -605,8 +619,38 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                     style: const TextStyle(fontSize: 9),
                   ),
                 ),
+                // 🆕 شارات الحالة
+                if (e.isDeletionConflict)
+                  Container(
+                    margin: const EdgeInsets.only(right: 3),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('⚠️ حذف',
+                        style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                if (e.isRemoteActivity)
+                  Container(
+                    margin: const EdgeInsets.only(right: 3),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('📡 جهاز آخر',
+                        style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.purple,
+                            fontWeight: FontWeight.bold)),
+                  ),
                 const Spacer(),
-                // أيقونة المصدر (إن وجد)
                 if (e.accountant != null && e.accountant!.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -629,7 +673,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
             const SizedBox(height: 2),
 
-            // ===== Row 2: الإجراء =====
+            // ===== Row 2: الإجراء + الحذف =====
             Row(
               children: [
                 Expanded(
@@ -643,7 +687,6 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // زر الحذف
                 _miniIconButton(
                   icon: Icons.delete_outline,
                   color: Colors.red,
@@ -662,19 +705,18 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                       fontSize: 10,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 4),
-                // زر التشغيل (للأحداث الصوتية)
                 if (isVoiceLog)
                   _miniIconButton(
                     icon: isPlaying ? Icons.stop : Icons.play_arrow,
                     color: hasAudio ? Colors.green : Colors.grey,
-                    onPressed: hasAudio ? () => _togglePlay(e) : null,
+                    onPressed:
+                        hasAudio ? () => _togglePlay(e) : null,
                   ),
-                // زر الاعتراف
                 if (needsAck)
                   _miniIconButton(
                     icon: Icons.check_circle,
@@ -690,10 +732,11 @@ class _AllLogsTabState extends State<_AllLogsTab> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // Widgets مساعدة مضغوطة
+  // Widgets مساعدة
   // ═══════════════════════════════════════════════════════════
 
-  Widget _statCard(String label, int value, Color color, bool isDark) {
+  Widget _statCard(
+      String label, int value, Color color, bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       decoration: BoxDecoration(
@@ -760,9 +803,8 @@ class _AllLogsTabState extends State<_AllLogsTab> {
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
         style: IconButton.styleFrom(
-          backgroundColor: active
-              ? Colors.blue.withOpacity(0.15)
-              : null,
+          backgroundColor:
+              active ? Colors.blue.withOpacity(0.15) : null,
         ),
         onPressed: onPressed,
       ),
@@ -864,9 +906,14 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   bool _loading = true;
   String? _playingPath;
 
+  // 🆕 فلاتر
+  bool _filterEmptyVoice = true;
+  bool _filterUnclearText = true;
+
   @override
   void initState() {
     super.initState();
+    _loadFilters();
     _load();
     _audioService.isCompletedStream.listen((isCompleted) {
       if (isCompleted && mounted) {
@@ -881,14 +928,44 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     super.dispose();
   }
 
+  Future<void> _loadFilters() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _filterEmptyVoice = sp.getBool('pending_filter_empty') ?? true;
+        _filterUnclearText = sp.getBool('pending_filter_unclear') ?? true;
+      });
+    } catch (_) {}
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => _loading = true);
 
     final list = await LoggerService.getPendingVoiceLogs();
+
+    // 🆕 فلترة
+    final filtered = list.where((e) {
+      try {
+        final meta = e.metadataMap;
+        final rawText = (meta?['raw_text'] as String?) ?? '';
+
+        final isEmpty = rawText.isEmpty ||
+            rawText == '(تسجيل صوتي محفوظ - بانتظار المراجعة)';
+
+        if (isEmpty && !_filterEmptyVoice) return false;
+        if (!isEmpty && !_filterUnclearText) return false;
+
+        return true;
+      } catch (_) {
+        return true;
+      }
+    }).toList();
+
     if (!mounted) return;
     setState(() {
-      _pending = list;
+      _pending = filtered;
       _loading = false;
     });
   }
@@ -898,7 +975,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('التسجيل الصوتي غير متوفر', style: TextStyle(fontSize: 11)),
+          content: Text('التسجيل الصوتي غير متوفر',
+              style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.orange,
         ),
       );
@@ -910,7 +988,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('❌ الملف الصوتي غير موجود', style: TextStyle(fontSize: 11)),
+          content: Text('❌ الملف الصوتي غير موجود',
+              style: TextStyle(fontSize: 11)),
           backgroundColor: Colors.red,
         ),
       );
@@ -930,9 +1009,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 نافذة "إضافة عملية" (مضغوطة)
-  // ═══════════════════════════════════════════════════════════
   Future<void> _openAddDialog(LogEvent e) async {
     Map<String, dynamic>? partial;
     try {
@@ -1004,14 +1080,16 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
           builder: (ctx, setStateDialog) => AlertDialog(
             title: Row(
               children: [
-                const Icon(Icons.add_card, color: Colors.teal, size: 20),
+                const Icon(Icons.add_card,
+                    color: Colors.teal, size: 20),
                 const SizedBox(width: 6),
                 const Expanded(
-                  child: Text('إضافة عملية', style: TextStyle(fontSize: 15)),
+                  child: Text('إضافة عملية',
+                      style: TextStyle(fontSize: 15)),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 3),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(10),
@@ -1039,12 +1117,15 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         padding: const EdgeInsets.all(6),
                         margin: const EdgeInsets.only(bottom: 8),
                         decoration: BoxDecoration(
-                          color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                          color: Theme.of(ctx)
+                              .colorScheme
+                              .surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.mic, size: 12, color: Colors.grey),
+                            const Icon(Icons.mic,
+                                size: 12, color: Colors.grey),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
@@ -1092,7 +1173,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       ],
                       selected: {selectedType},
                       onSelectionChanged: (v) {
-                        setStateDialog(() => selectedType = v.first);
+                        setStateDialog(
+                            () => selectedType = v.first);
                       },
                     ),
 
@@ -1106,7 +1188,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         decoration: BoxDecoration(
                           color: Colors.teal.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.teal, width: 0.7),
+                          border: Border.all(
+                              color: Colors.teal, width: 0.7),
                         ),
                         child: Row(
                           children: [
@@ -1127,14 +1210,17 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                               width: 24,
                               height: 24,
                               child: IconButton(
-                                icon: const Icon(Icons.close, size: 14),
+                                icon: const Icon(Icons.close,
+                                    size: 14),
                                 padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
+                                constraints:
+                                    const BoxConstraints(),
                                 onPressed: () {
                                   setStateDialog(() {
                                     selectedCustomer = null;
                                     searchCtrl.clear();
-                                    filtered = List.from(customers);
+                                    filtered =
+                                        List.from(customers);
                                   });
                                 },
                               ),
@@ -1149,27 +1235,32 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         decoration: InputDecoration(
                           hintText: 'ابحث عن عميل...',
                           hintStyle: const TextStyle(fontSize: 11),
-                          prefixIcon: const Icon(Icons.search, size: 16),
+                          prefixIcon:
+                              const Icon(Icons.search, size: 16),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(6),
                           ),
                           isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
+                          contentPadding:
+                              const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
                         ),
                         onChanged: (v) {
                           setStateDialog(() {
                             filtered = customers
-                                .where((c) => c.name.contains(v.trim()))
+                                .where((c) =>
+                                    c.name.contains(v.trim()))
                                 .toList();
                           });
                         },
                       ),
                       const SizedBox(height: 4),
                       Container(
-                        constraints: const BoxConstraints(maxHeight: 120),
+                        constraints:
+                            const BoxConstraints(maxHeight: 120),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
+                          border: Border.all(
+                              color: Colors.grey.shade300),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: filtered.isEmpty
@@ -1178,7 +1269,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                                 child: Center(
                                   child: Text('لا توجد نتائج',
                                       style: TextStyle(
-                                          fontSize: 11, color: Colors.grey)),
+                                          fontSize: 11,
+                                          color: Colors.grey)),
                                 ),
                               )
                             : ListView.builder(
@@ -1188,11 +1280,13 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                                   final c = filtered[i];
                                   return ListTile(
                                     dense: true,
-                                    visualDensity: VisualDensity.compact,
+                                    visualDensity:
+                                        VisualDensity.compact,
                                     leading: CircleAvatar(
                                       radius: 12,
-                                      backgroundColor:
-                                          Theme.of(ctx).colorScheme.primary,
+                                      backgroundColor: Theme.of(ctx)
+                                          .colorScheme
+                                          .primary,
                                       child: Text(
                                         c.name.characters.first,
                                         style: const TextStyle(
@@ -1201,8 +1295,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                                       ),
                                     ),
                                     title: Text(c.name,
-                                        style:
-                                            const TextStyle(fontSize: 12)),
+                                        style: const TextStyle(
+                                            fontSize: 12)),
                                     onTap: () {
                                       setStateDialog(() {
                                         selectedCustomer = c;
@@ -1225,7 +1319,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       decoration: InputDecoration(
                         labelText: 'المبلغ',
                         labelStyle: const TextStyle(fontSize: 11),
-                        prefixIcon: const Icon(Icons.attach_money, size: 16),
+                        prefixIcon: const Icon(Icons.attach_money,
+                            size: 16),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -1242,8 +1337,9 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                       controller: itemsCtrl,
                       style: const TextStyle(fontSize: 12),
                       decoration: InputDecoration(
-                        labelText:
-                            selectedType == 'payment' ? 'البيان' : 'الأصناف',
+                        labelText: selectedType == 'payment'
+                            ? 'البيان'
+                            : 'الأصناف',
                         labelStyle: const TextStyle(fontSize: 11),
                         hintText: selectedType == 'payment'
                             ? 'مثال: دفعة...'
@@ -1268,9 +1364,11 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
             ),
             actions: [
               TextButton(
-                onPressed:
-                    isSaving ? null : () => Navigator.pop(dialogContext),
-                child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
+                onPressed: isSaving
+                    ? null
+                    : () => Navigator.pop(dialogContext),
+                child: const Text('إلغاء',
+                    style: TextStyle(fontSize: 12)),
               ),
               FilledButton.icon(
                 onPressed: isSaving
@@ -1290,7 +1388,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         if (amt == null || amt <= 0) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
                             const SnackBar(
-                              content: Text('أدخل مبلغاً صحيحاً',
+                              content: Text(
+                                  'أدخل مبلغاً صحيحاً',
                                   style: TextStyle(fontSize: 11)),
                               backgroundColor: Colors.orange,
                             ),
@@ -1301,12 +1400,13 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         setStateDialog(() => isSaving = true);
 
                         try {
-                          final storedType = (selectedType == 'return')
-                              ? 'payment'
-                              : selectedType;
+                          final storedType =
+                              (selectedType == 'return')
+                                  ? 'payment'
+                                  : selectedType;
 
-                          final isDuplicate =
-                              await db.transactionExistsRecent(
+                          final isDuplicate = await db
+                              .transactionExistsRecent(
                             customerId: selectedCustomer!.id!,
                             amount: amt,
                             type: storedType,
@@ -1316,23 +1416,26 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                           if (isDuplicate) {
                             ScaffoldMessenger.of(ctx).showSnackBar(
                               const SnackBar(
-                                content: Text('⚠️ العملية مسجلة بالفعل',
-                                    style: TextStyle(fontSize: 11)),
+                                content: Text(
+                                    '⚠️ العملية مسجلة بالفعل',
+                                    style: TextStyle(
+                                        fontSize: 11)),
                                 backgroundColor: Colors.orange,
                               ),
                             );
-                            setStateDialog(() => isSaving = false);
+                            setStateDialog(
+                                () => isSaving = false);
                             return;
                           }
 
                           String? code;
                           try {
-                            code =
-                                await CodeService.generateCode(selectedType);
+                            code = await CodeService.generateCode(
+                                selectedType);
                           } catch (_) {}
 
-                          final accountant =
-                              await AccountantService.getAccountantName();
+                          final accountant = await AccountantService
+                              .getAccountantName();
 
                           String extraText;
                           if (selectedType == 'payment') {
@@ -1345,7 +1448,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             extraText = itemsCtrl.text.trim();
                           }
 
-                          // 🆕 المصدر: voice+manual
                           const sourceValue = 'voice+manual';
 
                           await db.insertTransaction(Transaction(
@@ -1356,7 +1458,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             amount: amt,
                             type: storedType,
                             items: extraText,
-                            createdAt: DateTime.now().toIso8601String(),
+                            createdAt: DateTime.now()
+                                .toIso8601String(),
                           ));
 
                           final typeLabel = {
@@ -1375,12 +1478,12 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             source: sourceValue,
                           );
 
-                          // 🆕 حساب الرصيد + الإشعارات (واتساب)
                           final newBalance = await db
                               .customerBalance(selectedCustomer!.id!);
 
                           final normalizedType =
-                              CodeService.normalizeType(selectedType);
+                              CodeService.normalizeType(
+                                  selectedType);
 
                           await NotificationDispatcher
                               .afterTransactionAdded(
@@ -1393,7 +1496,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             source: sourceValue,
                           );
 
-                          // 🆕 تعليم المعلّق بأنه تم
                           if (e.id != null) {
                             await LoggerService.acknowledge(e.id!);
                           }
@@ -1406,7 +1508,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             SnackBar(
                               content: Text(
                                   '✅ تم تسجيل $typeLabel بقيمة ${amt.toStringAsFixed(0)} ريال',
-                                  style: const TextStyle(fontSize: 11)),
+                                  style: const TextStyle(
+                                      fontSize: 11)),
                               backgroundColor: Colors.green,
                             ),
                           );
@@ -1414,7 +1517,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                           await _load();
                         } finally {
                           if (mounted) {
-                            setStateDialog(() => isSaving = false);
+                            setStateDialog(
+                                () => isSaving = false);
                           }
                         }
                       },
@@ -1452,7 +1556,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
             children: [
               Icon(Icons.delete, color: Colors.red, size: 20),
               SizedBox(width: 6),
-              Text('تجاهل التسجيل؟', style: TextStyle(fontSize: 15)),
+              Text('تجاهل التسجيل؟',
+                  style: TextStyle(fontSize: 15)),
             ],
           ),
           content: const Text(
@@ -1462,12 +1567,15 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء', style: TextStyle(fontSize: 12)),
+              child: const Text('إلغاء',
+                  style: TextStyle(fontSize: 12)),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('تجاهل', style: TextStyle(fontSize: 12)),
+              child: const Text('تجاهل',
+                  style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -1484,7 +1592,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     await _load();
   }
 
-  // 🆕 مشاركة كرسالة صوتية
   Future<void> _shareVoice(LogEvent e) async {
     if (e.audioPath == null || e.audioPath!.isEmpty) return;
     if (!await AudioRecorderService.fileExists(e.audioPath!)) return;
@@ -1498,7 +1605,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('فشل المشاركة: $err', style: const TextStyle(fontSize: 11)),
+          content: Text('فشل المشاركة: $err',
+              style: const TextStyle(fontSize: 11)),
           backgroundColor: Colors.red,
         ),
       );
@@ -1570,7 +1678,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Row 1: التاريخ + المؤشر
             Row(
               children: [
                 Container(
@@ -1612,7 +1719,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
             const SizedBox(height: 2),
 
-            // Row 2: الوصف
             Text(
               e.description.replaceAll('\n', ' '),
               style: TextStyle(
@@ -1625,10 +1731,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
             const SizedBox(height: 4),
 
-            // Row 3: الأزرار المضغوطة
             Row(
               children: [
-                // تشغيل
                 if (hasAudio)
                   _miniButton(
                     icon: isPlaying ? Icons.stop : Icons.play_arrow,
@@ -1637,7 +1741,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                     onPressed: () => _togglePlay(e),
                   ),
                 const SizedBox(width: 4),
-                // مشاركة صوتية
                 if (hasAudio)
                   _miniButton(
                     icon: Icons.share,
@@ -1646,7 +1749,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                     onPressed: () => _shareVoice(e),
                   ),
                 const SizedBox(width: 4),
-                // إضافة عملية
                 _miniButton(
                   icon: Icons.add_card,
                   label: 'إضافة',
@@ -1655,7 +1757,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                   filled: true,
                 ),
                 const Spacer(),
-                // حذف
                 SizedBox(
                   width: 28,
                   height: 28,
@@ -1688,7 +1789,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
         child: FilledButton.icon(
           onPressed: onPressed,
           icon: Icon(icon, size: 14),
-          label: Text(label, style: const TextStyle(fontSize: 10)),
+          label:
+              Text(label, style: const TextStyle(fontSize: 10)),
           style: FilledButton.styleFrom(
             backgroundColor: color,
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1709,7 +1811,8 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           minimumSize: const Size(0, 28),
           visualDensity: VisualDensity.compact,
-          side: BorderSide(color: color.withOpacity(0.5), width: 0.7),
+          side: BorderSide(
+              color: color.withOpacity(0.5), width: 0.7),
         ),
       ),
     );
