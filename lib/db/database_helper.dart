@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' hide Transaction;
+import 'package:uuid/uuid.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../models/log_event.dart';
@@ -12,6 +13,8 @@ class DatabaseHelper {
 
   static void Function()? onDataChanged;
 
+  static const _uuid = Uuid();
+
   Future<Database> get database async {
     if (_db != null) return _db!;
     _db = await _initDB('debt_book.db');
@@ -22,16 +25,20 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 9,
+      version: 11,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // إنشاء الجداول (v11)
+  // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
       CREATE TABLE customers(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cloud_id TEXT UNIQUE,
         name TEXT NOT NULL,
         phone TEXT,
         account_type TEXT DEFAULT 'customer',
@@ -40,12 +47,20 @@ class DatabaseHelper {
         category TEXT DEFAULT 'normal',
         max_balance REAL,
         is_active INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        updated_at TEXT,
+        is_deleted INTEGER DEFAULT 0,
+        deleted_at TEXT,
+        deleted_by TEXT,
         created_at TEXT NOT NULL
       )
     ''');
+
     await db.execute('''
       CREATE TABLE transactions(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cloud_id TEXT UNIQUE,
         customer_id INTEGER NOT NULL,
         code TEXT UNIQUE,
         accountant TEXT,
@@ -54,10 +69,18 @@ class DatabaseHelper {
         currency TEXT DEFAULT 'YER',
         type TEXT NOT NULL,
         items TEXT,
+        updated_by TEXT,
+        updated_at TEXT,
+        last_modified_by TEXT,
+        last_modified_from TEXT,
+        is_deleted INTEGER DEFAULT 0,
+        deleted_at TEXT,
+        deleted_by TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(customer_id) REFERENCES customers(id)
       )
     ''');
+
     await db.execute('''
       CREATE TABLE used_codes(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +89,7 @@ class DatabaseHelper {
         created_at TEXT NOT NULL
       )
     ''');
+
     await db.execute('''
       CREATE TABLE log_events(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,9 +102,11 @@ class DatabaseHelper {
         metadata TEXT,
         audio_path TEXT,
         is_acknowledged INTEGER DEFAULT 0,
+        needs_acknowledgement INTEGER DEFAULT 0,
         created_at TEXT NOT NULL
       )
     ''');
+
     await db.execute('''
       CREATE TABLE settings(
         key TEXT PRIMARY KEY,
@@ -89,7 +115,11 @@ class DatabaseHelper {
     ''');
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // ترقية قاعدة البيانات
+  // ═══════════════════════════════════════════════════════════
   Future _upgrade(Database db, int oldV, int newV) async {
+    // v2 → v9 (ترقيات قديمة)
     if (oldV < 2) {
       try {
         await db.execute(
@@ -162,6 +192,93 @@ class DatabaseHelper {
         ''');
       } catch (_) {}
     }
+
+    // 🆕 v10: tracking + soft delete + cloud_id
+    if (oldV < 10) {
+      try {
+        // customers
+        await _addColumnIfMissing(db, 'customers', 'cloud_id', 'TEXT');
+        await _addColumnIfMissing(db, 'customers', 'created_by', 'TEXT');
+        await _addColumnIfMissing(db, 'customers', 'updated_by', 'TEXT');
+        await _addColumnIfMissing(db, 'customers', 'updated_at', 'TEXT');
+        await _addColumnIfMissing(db, 'customers', 'is_deleted',
+            'INTEGER DEFAULT 0');
+        await _addColumnIfMissing(db, 'customers', 'deleted_at', 'TEXT');
+        await _addColumnIfMissing(db, 'customers', 'deleted_by', 'TEXT');
+
+        // transactions
+        await _addColumnIfMissing(db, 'transactions', 'cloud_id', 'TEXT');
+        await _addColumnIfMissing(db, 'transactions', 'updated_by', 'TEXT');
+        await _addColumnIfMissing(db, 'transactions', 'updated_at', 'TEXT');
+        await _addColumnIfMissing(
+            db, 'transactions', 'last_modified_by', 'TEXT');
+        await _addColumnIfMissing(
+            db, 'transactions', 'last_modified_from', 'TEXT');
+        await _addColumnIfMissing(db, 'transactions', 'is_deleted',
+            'INTEGER DEFAULT 0');
+        await _addColumnIfMissing(db, 'transactions', 'deleted_at', 'TEXT');
+        await _addColumnIfMissing(db, 'transactions', 'deleted_by', 'TEXT');
+
+        // فهارس
+        try {
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_customers_is_deleted ON customers(is_deleted)");
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_transactions_is_deleted ON transactions(is_deleted)");
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_customers_cloud_id ON customers(cloud_id)");
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_transactions_cloud_id ON transactions(cloud_id)");
+        } catch (_) {}
+
+        // backfill
+        try {
+          await db.execute(
+              "UPDATE customers SET updated_at = created_at WHERE updated_at IS NULL");
+          await db.execute(
+              "UPDATE transactions SET updated_at = created_at WHERE updated_at IS NULL");
+        } catch (_) {}
+
+        debugPrint('✅ [DB] Upgraded to v10 (tracking + soft delete + cloudId)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v10] $e');
+      }
+    }
+
+    // 🆕 v11: needs_acknowledgement
+    if (oldV < 11) {
+      try {
+        await _addColumnIfMissing(
+            db, 'log_events', 'needs_acknowledgement', 'INTEGER DEFAULT 0');
+
+        try {
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_log_events_needs_ack ON log_events(needs_acknowledgement)");
+        } catch (_) {}
+
+        debugPrint('✅ [DB] Upgraded to v11 (needs_acknowledgement)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v11] $e');
+      }
+    }
+  }
+
+  /// إضافة عمود إذا لم يكن موجوداً
+  Future<void> _addColumnIfMissing(
+    Database db,
+    String table,
+    String column,
+    String type,
+  ) async {
+    try {
+      final info = await db.rawQuery('PRAGMA table_info($table)');
+      final cols = info.map((c) => c['name'] as String).toSet();
+      if (!cols.contains(column)) {
+        await db.execute('ALTER TABLE $table ADD COLUMN $column $type');
+      }
+    } catch (e) {
+      debugPrint('⚠️ _addColumnIfMissing $table.$column: $e');
+    }
   }
 
   Future<void> _ensureAllColumns(Database db) async {
@@ -192,36 +309,6 @@ class DatabaseHelper {
       if (!transactionsCols.contains('source')) {
         await db.execute("ALTER TABLE transactions ADD COLUMN source TEXT");
       }
-
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS used_codes(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          code TEXT UNIQUE NOT NULL,
-          type TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        )
-      ''');
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS log_events(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          action TEXT NOT NULL,
-          description TEXT NOT NULL,
-          level TEXT NOT NULL,
-          category TEXT NOT NULL,
-          accountant TEXT,
-          related_id TEXT,
-          metadata TEXT,
-          audio_path TEXT,
-          is_acknowledged INTEGER DEFAULT 0,
-          created_at TEXT NOT NULL
-        )
-      ''');
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS settings(
-          key TEXT PRIMARY KEY,
-          value TEXT
-        )
-      ''');
     } catch (e) {
       debugPrint('❌ [DB] Error: $e');
     }
@@ -233,39 +320,181 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
-  // ============ الزبائن ============
+  String _now() => DateTime.now().toIso8601String();
+
+  String _generateCloudId() => _uuid.v4();
+
+  // ═══════════════════════════════════════════════════════════
+  // الزبائن
+  // ═══════════════════════════════════════════════════════════
+
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
-    final id = await db.insert('customers', c.toMap());
+    final map = c.toMap();
+
+    // 🆕 توليد cloud_id تلقائيًا إن لم يكن موجودًا
+    if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
+      map['cloud_id'] = _generateCloudId();
+    }
+
+    // 🆕 ضبط updated_at
+    map['updated_at'] = map['updated_at'] ?? _now();
+
+    final id = await db.insert('customers', map);
     _notifyChanged();
     return id;
   }
 
   Future<int> insertCustomerRaw(Map<String, dynamic> data) async {
     final db = await database;
+    // 🆕 توليد cloud_id إن لم يكن موجودًا
+    if (data['cloud_id'] == null || (data['cloud_id'] as String).isEmpty) {
+      data['cloud_id'] = _generateCloudId();
+    }
     return db.insert('customers', data);
   }
 
-  Future<int> updateCustomer(Customer c) async {
+  Future<int> updateCustomer(Customer c, {String? by}) async {
     final db = await database;
-    final r = await db.update('customers', c.toMap(),
+    final data = c.toMap();
+    data['updated_at'] = _now();
+    if (by != null && by.isNotEmpty) data['updated_by'] = by;
+
+    final r = await db.update('customers', data,
         where: 'id = ?', whereArgs: [c.id]);
     _notifyChanged();
     return r;
   }
 
-  Future<int> deleteCustomer(int id) async {
-    final db = await database;
-    await db.delete('transactions',
-        where: 'customer_id = ?', whereArgs: [id]);
-    final r = await db.delete('customers', where: 'id = ?', whereArgs: [id]);
-    _notifyChanged();
-    return r;
+  Future<int> updateCustomerFields(
+      int id, Map<String, dynamic> fields, {String? by}) async {
+    if (fields.isEmpty) return 0;
+    try {
+      final db = await database;
+      final data = Map<String, dynamic>.from(fields);
+      data['updated_at'] = _now();
+      if (by != null && by.isNotEmpty) {
+        data['updated_by'] = by;
+      }
+
+      final r = await db.update('customers', data,
+          where: 'id = ?', whereArgs: [id]);
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ updateCustomerFields error: $e');
+      return 0;
+    }
+  }
+
+  // 🆕 حذف ناعم
+  Future<int> softDeleteCustomer(int id, {String? by}) async {
+    try {
+      final db = await database;
+      final now = _now();
+
+      // soft delete للعميل
+      final r = await db.update(
+        'customers',
+        {
+          'is_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+      // soft delete لكل معاملاته
+      await db.update(
+        'transactions',
+        {
+          'is_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'customer_id = ?',
+        whereArgs: [id],
+      );
+
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ softDeleteCustomer: $e');
+      return 0;
+    }
+  }
+
+  // 🆕 استعادة عميل
+  Future<int> restoreCustomer(int id, {String? by}) async {
+    try {
+      final db = await database;
+      final now = _now();
+
+      final r = await db.update(
+        'customers',
+        {
+          'is_deleted': 0,
+          'deleted_at': null,
+          'deleted_by': null,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+      await db.update(
+        'transactions',
+        {
+          'is_deleted': 0,
+          'deleted_at': null,
+          'deleted_by': null,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'customer_id = ?',
+        whereArgs: [id],
+      );
+
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ restoreCustomer: $e');
+      return 0;
+    }
+  }
+
+  // 🆕 حذف نهائي (فعلي)
+  Future<int> hardDeleteCustomer(int id) async {
+    try {
+      final db = await database;
+      await db.delete('transactions',
+          where: 'customer_id = ?', whereArgs: [id]);
+      final r =
+          await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ hardDeleteCustomer: $e');
+      return 0;
+    }
+  }
+
+  /// حذف قديم — يُحوَّل إلى soft delete
+  Future<int> deleteCustomer(int id, {String? by}) async {
+    return softDeleteCustomer(id, by: by);
   }
 
   Future<List<Customer>> allCustomers() async {
     final db = await database;
-    final r = await db.query('customers', orderBy: 'name ASC');
+    final r = await db.query('customers',
+        where: 'is_deleted = 0 OR is_deleted IS NULL',
+        orderBy: 'name ASC');
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
@@ -273,7 +502,8 @@ class DatabaseHelper {
     final db = await database;
     try {
       final r = await db.query('customers',
-          where: 'is_active = 1 OR is_active IS NULL',
+          where:
+              '(is_active = 1 OR is_active IS NULL) AND (is_deleted = 0 OR is_deleted IS NULL)',
           orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
@@ -285,17 +515,46 @@ class DatabaseHelper {
     final db = await database;
     try {
       final r = await db.query('customers',
-          where: 'is_active = 0', orderBy: 'name ASC');
+          where: 'is_active = 0 AND (is_deleted = 0 OR is_deleted IS NULL)',
+          orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
       return [];
     }
   }
 
+  // 🆕 كل العملاء (بما فيهم المحذوفون)
+  Future<List<Customer>> allCustomersWithDeleted() async {
+    final db = await database;
+    final r = await db.query('customers', orderBy: 'name ASC');
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
+
+  // 🆕 العملاء المحذوفون فقط
+  Future<List<Customer>> getDeletedCustomers() async {
+    final db = await database;
+    final r = await db.query(
+      'customers',
+      where: 'is_deleted = 1',
+      orderBy: 'deleted_at DESC',
+    );
+    return r.map((e) => Customer.fromMap(e)).toList();
+  }
+
+  Future<Customer?> getCustomer(int id) async {
+    final db = await database;
+    final r = await db.query('customers',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    if (r.isEmpty) return null;
+    return Customer.fromMap(r.first);
+  }
+
   Future<Customer?> findExactCustomer(String name) async {
     final db = await database;
     final r = await db.query('customers',
-        where: 'name = ?', whereArgs: [name], limit: 1);
+        where: 'name = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        whereArgs: [name],
+        limit: 1);
     if (r.isEmpty) return null;
     return Customer.fromMap(r.first);
   }
@@ -303,7 +562,9 @@ class DatabaseHelper {
   Future<List<Customer>> findCustomersContaining(String name) async {
     final db = await database;
     final r = await db.query('customers',
-        where: 'name LIKE ?', whereArgs: ['%$name%'], orderBy: 'name ASC');
+        where: 'name LIKE ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        whereArgs: ['%$name%'],
+        orderBy: 'name ASC');
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
@@ -318,12 +579,17 @@ class DatabaseHelper {
     return r.first['id'] as int?;
   }
 
-  Future<int> setCustomerActive(int id, bool active) async {
+  Future<int> setCustomerActive(int id, bool active, {String? by}) async {
     final db = await database;
     try {
+      final now = _now();
       final r = await db.update(
         'customers',
-        {'is_active': active ? 1 : 0},
+        {
+          'is_active': active ? 1 : 0,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
         where: 'id = ?',
         whereArgs: [id],
       );
@@ -347,29 +613,24 @@ class DatabaseHelper {
     }
   }
 
-  Future<int> updateCustomerFields(
-      int id, Map<String, dynamic> fields) async {
-    if (fields.isEmpty) return 0;
-    try {
-      final db = await database;
-      final r = await db.update(
-        'customers',
-        fields,
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      _notifyChanged();
-      return r;
-    } catch (e) {
-      debugPrint('❌ updateCustomerFields error: $e');
-      return 0;
-    }
-  }
+  // ═══════════════════════════════════════════════════════════
+  // المعاملات
+  // ═══════════════════════════════════════════════════════════
 
-  // ============ المعاملات ============
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
-    final id = await db.insert('transactions', t.toMap());
+    final map = t.toMap();
+
+    // 🆕 توليد cloud_id تلقائيًا
+    if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
+      map['cloud_id'] = _generateCloudId();
+    }
+
+    // 🆕 ضبط updated_at
+    map['updated_at'] = map['updated_at'] ?? _now();
+
+    final id = await db.insert('transactions', map);
+
     if (t.code != null && t.code!.isNotEmpty) {
       try {
         await db.insert('used_codes', {
@@ -385,6 +646,13 @@ class DatabaseHelper {
 
   Future<int> insertTransactionRaw(Map<String, dynamic> data) async {
     final db = await database;
+
+    // 🆕 توليد cloud_id إن لم يكن موجودًا
+    if (data['cloud_id'] == null ||
+        (data['cloud_id'] as String?)?.isEmpty == true) {
+      data['cloud_id'] = _generateCloudId();
+    }
+
     final id = await db.insert('transactions', data);
     final code = data['code'] as String?;
     if (code != null && code.isNotEmpty) {
@@ -392,26 +660,119 @@ class DatabaseHelper {
         await db.insert('used_codes', {
           'code': code,
           'type': data['type'] ?? 'debt',
-          'created_at': data['created_at'] ?? DateTime.now().toIso8601String(),
+          'created_at': data['created_at'] ?? _now(),
         });
       } catch (_) {}
     }
     return id;
   }
 
-  Future<int> updateTransaction(Transaction t) async {
+  Future<int> updateTransaction(Transaction t, {String? by}) async {
     final db = await database;
-    final r = await db.update('transactions', t.toMap(),
+    final now = _now();
+
+    final data = t.toMap();
+    data['updated_at'] = now;
+    if (by != null && by.isNotEmpty) {
+      data['updated_by'] = by;
+      data['last_modified_by'] = by;
+    }
+
+    final r = await db.update('transactions', data,
         where: 'id = ?', whereArgs: [t.id]);
     _notifyChanged();
     return r;
   }
 
-  Future<int> deleteTransaction(int id) async {
-    final db = await database;
-    final r = await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
-    _notifyChanged();
-    return r;
+  Future<int> updateTransactionFields(
+      int id, Map<String, dynamic> fields, {String? by}) async {
+    if (fields.isEmpty) return 0;
+    try {
+      final db = await database;
+      final now = _now();
+      final data = Map<String, dynamic>.from(fields);
+      data['updated_at'] = now;
+      if (by != null && by.isNotEmpty) {
+        data['updated_by'] = by;
+        data['last_modified_by'] = by;
+      }
+
+      final r = await db.update('transactions', data,
+          where: 'id = ?', whereArgs: [id]);
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ updateTransactionFields error: $e');
+      return 0;
+    }
+  }
+
+  // 🆕 حذف ناعم لمعاملة
+  Future<int> softDeleteTransaction(int id, {String? by}) async {
+    try {
+      final db = await database;
+      final now = _now();
+
+      final r = await db.update(
+        'transactions',
+        {
+          'is_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ softDeleteTransaction: $e');
+      return 0;
+    }
+  }
+
+  Future<int> restoreTransaction(int id, {String? by}) async {
+    try {
+      final db = await database;
+      final now = _now();
+
+      final r = await db.update(
+        'transactions',
+        {
+          'is_deleted': 0,
+          'deleted_at': null,
+          'deleted_by': null,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ restoreTransaction: $e');
+      return 0;
+    }
+  }
+
+  Future<int> hardDeleteTransaction(int id) async {
+    try {
+      final db = await database;
+      final r =
+          await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  /// حذف قديم — يُحوَّل إلى soft
+  Future<int> deleteTransaction(int id, {String? by}) async {
+    return softDeleteTransaction(id, by: by);
   }
 
   Future<Transaction?> getTransaction(int id) async {
@@ -425,8 +786,27 @@ class DatabaseHelper {
   Future<List<Transaction>> customerTransactions(int customerId) async {
     final db = await database;
     final r = await db.query('transactions',
-        where: 'customer_id = ?', whereArgs: [customerId],
+        where: 'customer_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        whereArgs: [customerId],
         orderBy: 'created_at DESC');
+    return r.map((e) => Transaction.fromMap(e)).toList();
+  }
+
+  // 🆕 كل المعاملات (بما فيها المحذوفة)
+  Future<List<Transaction>> allTransactionsWithDeleted() async {
+    final db = await database;
+    final r = await db.query('transactions', orderBy: 'created_at DESC');
+    return r.map((e) => Transaction.fromMap(e)).toList();
+  }
+
+  // 🆕 المعاملات المحذوفة
+  Future<List<Transaction>> getDeletedTransactions() async {
+    final db = await database;
+    final r = await db.query(
+      'transactions',
+      where: 'is_deleted = 1',
+      orderBy: 'deleted_at DESC',
+    );
     return r.map((e) => Transaction.fromMap(e)).toList();
   }
 
@@ -436,7 +816,9 @@ class DatabaseHelper {
       SELECT
         COALESCE(SUM(CASE WHEN type='debt' THEN amount ELSE 0 END),0) AS d,
         COALESCE(SUM(CASE WHEN type='payment' THEN amount ELSE 0 END),0) AS p
-      FROM transactions WHERE customer_id = ?
+      FROM transactions
+      WHERE customer_id = ?
+        AND (is_deleted = 0 OR is_deleted IS NULL)
     ''', [customerId]);
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
@@ -449,6 +831,7 @@ class DatabaseHelper {
         COALESCE(SUM(CASE WHEN type='debt' THEN amount ELSE 0 END),0) AS d,
         COALESCE(SUM(CASE WHEN type='payment' THEN amount ELSE 0 END),0) AS p
       FROM transactions
+      WHERE is_deleted = 0 OR is_deleted IS NULL
     ''');
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
@@ -465,7 +848,8 @@ class DatabaseHelper {
 
     final r = await db.query(
       'transactions',
-      where: 'customer_id = ? AND amount = ? AND type = ? AND created_at > ?',
+      where:
+          'customer_id = ? AND amount = ? AND type = ? AND created_at > ? AND (is_deleted = 0 OR is_deleted IS NULL)',
       whereArgs: [customerId, amount, type, since],
       limit: 1,
     );
@@ -486,7 +870,80 @@ class DatabaseHelper {
     return r.isNotEmpty;
   }
 
-  // ============ إدارة الرموز ============
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 فحص الحذف (يُستخدم من الواجهة قبل الحذف)
+  // ═══════════════════════════════════════════════════════════
+
+  /// عدد معاملات العميل
+  Future<int> countCustomerTransactions(int customerId) async {
+    final db = await database;
+    final r = await db.rawQuery('''
+      SELECT COUNT(*) AS c FROM transactions
+      WHERE customer_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+    ''', [customerId]);
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // تنظيف المحذوفات
+  // ═══════════════════════════════════════════════════════════
+
+  Future<Map<String, int>> cleanupDeleted({int days = 30}) async {
+    int customersDeleted = 0;
+    int transactionsDeleted = 0;
+
+    try {
+      final db = await database;
+      final cutoff =
+          DateTime.now().subtract(Duration(days: days)).toIso8601String();
+
+      transactionsDeleted = await db.delete(
+        'transactions',
+        where: 'is_deleted = 1 AND deleted_at < ?',
+        whereArgs: [cutoff],
+      );
+
+      customersDeleted = await db.delete(
+        'customers',
+        where: 'is_deleted = 1 AND deleted_at < ?',
+        whereArgs: [cutoff],
+      );
+
+      if (customersDeleted > 0 || transactionsDeleted > 0) {
+        _notifyChanged();
+        debugPrint(
+            '✅ [DB] Cleanup: $customersDeleted customers, $transactionsDeleted transactions');
+      }
+    } catch (e) {
+      debugPrint('❌ cleanupDeleted: $e');
+    }
+
+    return {
+      'customers': customersDeleted,
+      'transactions': transactionsDeleted,
+    };
+  }
+
+  Future<Map<String, int>> getDeletedCount() async {
+    try {
+      final db = await database;
+      final c = await db.rawQuery(
+          'SELECT COUNT(*) AS c FROM customers WHERE is_deleted = 1');
+      final t = await db.rawQuery(
+          'SELECT COUNT(*) AS c FROM transactions WHERE is_deleted = 1');
+      return {
+        'customers': (c.first['c'] as int?) ?? 0,
+        'transactions': (t.first['c'] as int?) ?? 0,
+      };
+    } catch (e) {
+      return {'customers': 0, 'transactions': 0};
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // إدارة الرموز
+  // ═══════════════════════════════════════════════════════════
+
   Future<bool> codeExists(String code) async {
     final db = await database;
     final r = await db.query('used_codes',
@@ -503,12 +960,11 @@ class DatabaseHelper {
       await db.insert('used_codes', {
         'code': code,
         'type': type,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': _now(),
       });
     } catch (_) {}
   }
 
-  // 🆕 getMaxCodeSequence — استعلام SQL واحد سريع
   Future<int> getMaxCodeSequence(String prefix) async {
     try {
       final db = await database;
@@ -580,8 +1036,7 @@ class DatabaseHelper {
           await db.insert('used_codes', {
             'code': newCode,
             'type': row['type'] ?? 'debt',
-            'created_at':
-                row['created_at'] ?? DateTime.now().toIso8601String(),
+            'created_at': row['created_at'] ?? _now(),
           });
         } catch (_) {}
       }
@@ -604,7 +1059,10 @@ class DatabaseHelper {
     return stats;
   }
 
-  // ============ إدارة المحاسبين ============
+  // ═══════════════════════════════════════════════════════════
+  // المحاسبون
+  // ═══════════════════════════════════════════════════════════
+
   Future<List<String>> getAllAccountants() async {
     final db = await database;
     try {
@@ -624,23 +1082,20 @@ class DatabaseHelper {
     }
   }
 
-  // ============ سجل الأحداث ============
+  // ═══════════════════════════════════════════════════════════
+  // سجل الأحداث
+  // ═══════════════════════════════════════════════════════════
+
   Future<int> insertLog(Map<String, dynamic> data) async {
     final db = await database;
     return db.insert('log_events', data);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 دالة إدراج من السحابة (بدون تعديل)
-  // ═══════════════════════════════════════════════════════════
   Future<int> insertLogEventRaw(Map<String, dynamic> data) async {
     final db = await database;
     return db.insert('log_events', data);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 فحص وجود حدث مطابق (لتجنب التكرار عند المزامنة)
-  // ═══════════════════════════════════════════════════════════
   Future<bool> logEventExists({
     required String action,
     required String createdAt,
@@ -669,17 +1124,11 @@ class DatabaseHelper {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 جلب كل الأحداث للمزامنة
-  // ═══════════════════════════════════════════════════════════
   Future<List<Map<String, dynamic>>> allLogEventsRaw() async {
     final db = await database;
     return db.query('log_events', orderBy: 'created_at ASC');
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حذف كل الأحداث (للاستبدال الكامل)
-  // ═══════════════════════════════════════════════════════════
   Future<int> clearAllLogEvents() async {
     final db = await database;
     return db.delete('log_events');
@@ -821,7 +1270,79 @@ class DatabaseHelper {
     return db.query('log_events', orderBy: 'created_at ASC', limit: count);
   }
 
-  // ============ الإعدادات ============
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 الإشعارات التي تحتاج تأكيد
+  // ═══════════════════════════════════════════════════════════
+
+  Future<int> getPendingAckCount() async {
+    try {
+      final db = await database;
+      final r = await db.rawQuery('''
+        SELECT COUNT(*) AS c FROM log_events
+        WHERE needs_acknowledgement = 1
+          AND is_acknowledged = 0
+      ''');
+      return (r.first['c'] as int?) ?? 0;
+    } catch (e) {
+      debugPrint('❌ getPendingAckCount: $e');
+      return 0;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAllPendingAck({
+    int limit = 100,
+  }) async {
+    try {
+      final db = await database;
+      return db.query(
+        'log_events',
+        where: 'needs_acknowledgement = 1 AND is_acknowledged = 0',
+        orderBy: 'created_at DESC',
+        limit: limit,
+      );
+    } catch (e) {
+      debugPrint('❌ getAllPendingAck: $e');
+      return [];
+    }
+  }
+
+  Future<int> acknowledgeLogEvent(int id) async {
+    try {
+      final db = await database;
+      final r = await db.update(
+        'log_events',
+        {'is_acknowledged': 1},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (r > 0) _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ acknowledgeLogEvent: $e');
+      return 0;
+    }
+  }
+
+  Future<int> acknowledgeAllLogEvents() async {
+    try {
+      final db = await database;
+      final r = await db.update(
+        'log_events',
+        {'is_acknowledged': 1},
+        where: 'is_acknowledged = 0 AND needs_acknowledgement = 1',
+      );
+      if (r > 0) _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ acknowledgeAllLogEvents: $e');
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // الإعدادات
+  // ═══════════════════════════════════════════════════════════
+
   Future<void> setSetting(String key, String value) async {
     final db = await database;
     await db.insert(
@@ -839,7 +1360,22 @@ class DatabaseHelper {
     return r.first['value'] as String?;
   }
 
-  // ============ أدوات للمزامنة ============
+  Future<Map<String, String>> getAllSettings() async {
+    final db = await database;
+    final r = await db.query('settings');
+    final map = <String, String>{};
+    for (final row in r) {
+      final k = row['key'] as String?;
+      final v = row['value'] as String?;
+      if (k != null && v != null) map[k] = v;
+    }
+    return map;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // أدوات للمزامنة
+  // ═══════════════════════════════════════════════════════════
+
   Future<void> clearAll() async {
     final db = await database;
     await db.delete('transactions');
@@ -869,6 +1405,7 @@ class DatabaseHelper {
       SELECT t.*, c.name AS customer_name, c.phone AS customer_phone
       FROM transactions t
       LEFT JOIN customers c ON t.customer_id = c.id
+      WHERE t.is_deleted = 0 OR t.is_deleted IS NULL
       ORDER BY t.created_at DESC
     ''');
   }
