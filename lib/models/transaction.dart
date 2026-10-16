@@ -1,189 +1,73 @@
-import 'account_type.dart';
-
-class Customer {
+class Transaction {
   final int? id;
-  final String? cloudId; // 🆕 UUID عالمي فريد (لا يتغير أبداً)
-  final String name;
-  final String? phone;
-  final String accountType;
-  final String? note;
-  final String? photoPath;
-  final String category;
-  final double? maxBalance;
-  final bool isActive;
-
-  // 🆕 Tracking
-  final String? createdBy;
-  final String? updatedBy;
-  final String? updatedAt;
-
-  // 🆕 Soft Delete + من حذف
-  final bool isDeleted;
-  final String? deletedAt;
-  final String? deletedBy;
-
+  final int customerId;
+  final String? code;
+  final String? accountant;
+  final String? source;
+  final double amount;
+  final String currency;
+  final String type;
+  final String items;
   final String createdAt;
 
-  Customer({
+  Transaction({
     this.id,
-    this.cloudId,
-    required this.name,
-    this.phone,
-    this.accountType = AccountType.customer,
-    this.note,
-    this.photoPath,
-    this.category = 'normal',
-    this.maxBalance,
-    this.isActive = true,
-    this.createdBy,
-    this.updatedBy,
-    this.updatedAt,
-    this.isDeleted = false,
-    this.deletedAt,
-    this.deletedBy,
+    required this.customerId,
+    this.code,
+    this.accountant,
+    this.source,
+    required this.amount,
+    this.currency = 'YER',
+    required this.type,
+    this.items = '',
     required this.createdAt,
   });
 
   Map<String, dynamic> toMap() => {
         'id': id,
-        'cloud_id': cloudId,
-        'name': name,
-        'phone': phone,
-        'account_type': accountType,
-        'note': note,
-        'photo_path': photoPath,
-        'category': category,
-        'max_balance': maxBalance,
-        'is_active': isActive ? 1 : 0,
-        'created_by': createdBy,
-        'updated_by': updatedBy,
-        'updated_at': updatedAt,
-        'is_deleted': isDeleted ? 1 : 0,
-        'deleted_at': deletedAt,
-        'deleted_by': deletedBy,
+        'customer_id': customerId,
+        'code': code,
+        'accountant': accountant,
+        'source': source,
+        'amount': amount,
+        'currency': currency,
+        'type': type,
+        'items': items,
         'created_at': createdAt,
       };
 
-  factory Customer.fromMap(Map<String, dynamic> m) => Customer(
+  factory Transaction.fromMap(Map<String, dynamic> m) => Transaction(
         id: m['id'],
-        cloudId: m['cloud_id'],
-        name: m['name'],
-        phone: m['phone'],
-        accountType: m['account_type'] ?? AccountType.customer,
-        note: m['note'],
-        photoPath: m['photo_path'],
-        category: m['category'] ?? 'normal',
-        maxBalance: m['max_balance'] != null
-            ? (m['max_balance'] as num).toDouble()
-            : null,
-        isActive: m['is_active'] == null || m['is_active'] == 1,
-        createdBy: m['created_by'],
-        updatedBy: m['updated_by'],
-        updatedAt: m['updated_at'],
-        isDeleted: m['is_deleted'] == 1,
-        deletedAt: m['deleted_at'],
-        deletedBy: m['deleted_by'],
-        createdAt: m['created_at'] ?? '',
+        customerId: m['customer_id'],
+        code: m['code'],
+        accountant: m['accountant'],
+        source: m['source'],
+        amount: (m['amount'] as num).toDouble(),
+        currency: m['currency'],
+        type: m['type'],
+        items: m['items'] ?? '',
+        createdAt: m['created_at'],
       );
 
-  Customer copyWith({
-    int? id,
-    String? cloudId,
-    String? name,
-    String? phone,
-    String? accountType,
-    String? note,
-    String? photoPath,
-    String? category,
-    double? maxBalance,
-    bool? isActive,
-    String? createdBy,
-    String? updatedBy,
-    String? updatedAt,
-    bool? isDeleted,
-    String? deletedAt,
-    String? deletedBy,
-    String? createdAt,
-  }) {
-    return Customer(
-      id: id ?? this.id,
-      cloudId: cloudId ?? this.cloudId,
-      name: name ?? this.name,
-      phone: phone ?? this.phone,
-      accountType: accountType ?? this.accountType,
-      note: note ?? this.note,
-      photoPath: photoPath ?? this.photoPath,
-      category: category ?? this.category,
-      maxBalance: maxBalance ?? this.maxBalance,
-      isActive: isActive ?? this.isActive,
-      createdBy: createdBy ?? this.createdBy,
-      updatedBy: updatedBy ?? this.updatedBy,
-      updatedAt: updatedAt ?? this.updatedAt,
-      isDeleted: isDeleted ?? this.isDeleted,
-      deletedAt: deletedAt ?? this.deletedAt,
-      deletedBy: deletedBy ?? this.deletedBy,
-      createdAt: createdAt ?? this.createdAt,
-    );
+  /// الحصول على معلومات المصدر (أيقونة + نص + لون)
+  static ({String label, String emoji, int color}) sourceInfo(String? source) {
+    switch (source) {
+      case 'overlay':
+        return (label: 'الزر العائم', emoji: '🖼️', color: 0xFF9C27B0);
+      case 'voice':
+        return (label: 'التسجيل الصوتي', emoji: '🎤', color: 0xFF2196F3);
+      case 'voice+manual':
+        // 🆕 صوتي + تصحيح يدوي من المعلقات
+        return (
+          label: 'صوتي + مراجَع',
+          emoji: '🎤✏️',
+          color: 0xFFFF6F00
+        );
+      case 'customer_screen':
+        return (label: 'شاشة العميل', emoji: '👤', color: 0xFF4CAF50);
+      case 'manual':
+      default:
+        return (label: 'إضافة يدوية', emoji: '➕', color: 0xFF607D8B);
+    }
   }
-
-  bool isOverLimit(double currentBalance) {
-    if (maxBalance == null) return false;
-    if (maxBalance! <= 0) return false;
-    return currentBalance > maxBalance!;
-  }
-
-  double balanceRatio(double currentBalance) {
-    if (maxBalance == null || maxBalance! <= 0) return 0;
-    return currentBalance / maxBalance!;
-  }
-
-  bool get isCurrentlyActive => isActive && !isDeleted;
-  bool get isTrashed => isDeleted;
-
-  bool get wasModified {
-    if (updatedAt == null || createdAt.isEmpty) return false;
-    return updatedAt != createdAt;
-  }
-
-  bool get wasModifiedByOther {
-    if (!wasModified) return false;
-    if (createdBy == null || updatedBy == null) return false;
-    return createdBy != updatedBy;
-  }
-
-  bool get hasCloudId => cloudId != null && cloudId!.isNotEmpty;
-
-  String get deletedByLabel {
-    if (deletedBy == null || deletedBy!.isEmpty) return 'غير معروف';
-    return deletedBy!;
-  }
-}
-
-class CustomerCategory {
-  static const String normal = 'normal';
-  static const String vip = 'vip';
-  static const String newCustomer = 'new';
-  static const String blocked = 'blocked';
-  static const String family = 'family';
-
-  static const Map<String, String> labelsAr = {
-    normal: 'عادي',
-    vip: 'VIP',
-    newCustomer: 'جديد',
-    blocked: 'محظور',
-    family: 'عائلة',
-  };
-
-  static const Map<String, int> colors = {
-    normal: 0xFF607D8B,
-    vip: 0xFFFFB300,
-    newCustomer: 0xFF4CAF50,
-    blocked: 0xFFE53935,
-    family: 0xFF9C27B0,
-  };
-
-  static List<String> get all => [normal, vip, newCustomer, blocked, family];
-
-  static String label(String key) => labelsAr[key] ?? 'عادي';
-  static int color(String key) => colors[key] ?? 0xFF607D8B;
 }
