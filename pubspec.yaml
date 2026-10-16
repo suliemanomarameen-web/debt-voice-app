@@ -13,6 +13,7 @@ dependencies:
 
   # ============ الحزم الأساسية ============
   cupertino_icons: ^1.0.6
+  uuid: ^4.3.3  # 🆕 للمعرّف السحابي
 
   # ============ قاعدة البيانات ============
   sqflite: ^2.3.0
@@ -22,8 +23,8 @@ dependencies:
   # ============ الصوت ============
   speech_to_text: ^6.6.0
   flutter_tts: ^3.8.5
-  record: ^4.4.4              # 🆕 (نسخة متوافقة)
-  audioplayers: ^5.2.1        # 🆕 (نسخة متوافقة)
+  record: ^4.4.4
+  audioplayers: ^5.2.1
 
   # ============ PDF والتصدير ============
   pdf: ^3.10.7
@@ -31,6 +32,7 @@ dependencies:
   excel: ^4.0.2
   csv: ^5.1.1
   share_plus: ^7.2.1
+  intl: ^0.19.0  # 🆕 مستخدمة في export_service
 
   # ============ Google Drive والمزامنة ============
   google_sign_in: ^6.2.1
