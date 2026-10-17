@@ -14,24 +14,19 @@ class AppSettings {
   static const String retentionDays = 'retention_days';
   static const String autoCleanupDeleted = 'auto_cleanup_deleted';
 
+  /// 🆕 السماح بحذف العمليات
+  static const String allowDeleteTransactions =
+      'allow_delete_transactions';
+
   // ═══════════════════════════════════════════════════════════
-  // ✏️ مجموعة التعديل (مُبسّطة)
+  // ✏️ مجموعة التعديل
   // ═══════════════════════════════════════════════════════════
 
-  /// 🆕 السماح بتعديل الحسابات (كل الحقول)
   static const String allowEditCustomers = 'allow_edit_customers';
-
-  /// السماح بتعديل العمليات (كل الحقول معًا: المبلغ + الأصناف + النوع)
   static const String allowEditTransactions = 'allow_edit_transactions';
-
-  /// السماح بتعديل رصيد العميل مباشرة
   static const String allowEditCustomerBalance =
       'allow_edit_customer_balance';
-
-  /// تسجيل كل تعديل في السجل
   static const String trackEdits = 'track_edits';
-
-  /// طلب سبب عند التعديل
   static const String requireEditReason = 'require_edit_reason';
 
   // ═══════════════════════════════════════════════════════════
@@ -117,6 +112,7 @@ class AppSettings {
     softDeleteEnabled: true,
     retentionDays: 30,
     autoCleanupDeleted: true,
+    allowDeleteTransactions: true, // 🆕
 
     // ✏️ التعديل
     allowEditCustomers: true,
@@ -177,7 +173,6 @@ class AppSettings {
   // 📊 مجموعات للعرض والتحكم
   // ═══════════════════════════════════════════════════════════
 
-  /// إعدادات خطيرة تحتاج كلمة مرور
   static const Set<String> dangerousSettings = {
     blockDeleteNonzeroBalance,
     blockDeleteWithTransactions,
@@ -187,13 +182,13 @@ class AppSettings {
     deletionConflictRestore,
   };
 
-  /// إعدادات مشتركة (تُزامن بين الأجهزة)
   static const Set<String> sharedSettings = {
     blockDeleteNonzeroBalance,
     blockDeleteWithTransactions,
     softDeleteEnabled,
     retentionDays,
     autoCleanupDeleted,
+    allowDeleteTransactions, // 🆕
     allowEditCustomers,
     allowEditTransactions,
     allowEditCustomerBalance,
@@ -212,7 +207,6 @@ class AppSettings {
     notifyDebtOnInactive,
   };
 
-  /// إعدادات محلية فقط (لا تُزامن)
   static const Set<String> localSettings = {
     syncEnabled,
     syncIntervalMinutes,
@@ -238,10 +232,6 @@ class AppSettings {
     showCloudId,
     compactMode,
   };
-
-  // ═══════════════════════════════════════════════════════════
-  // دوال مساعدة
-  // ═══════════════════════════════════════════════════════════
 
   static bool isShared(String key) => sharedSettings.contains(key);
   static bool isLocal(String key) => localSettings.contains(key);
