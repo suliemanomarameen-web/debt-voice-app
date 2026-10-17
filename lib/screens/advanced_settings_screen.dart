@@ -17,17 +17,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    // تأكد من تحميل الإعدادات
     SettingsService.init().then((_) {
       if (mounted) setState(() {});
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تغيير إعداد
-  // ═══════════════════════════════════════════════════════════
   Future<void> _changeBool(String key, bool value) async {
-    // هل الإعداد خطير؟
     if (AppSettings.isDangerous(key) &&
         SettingsService.getBool(
             AppSettings.requirePasswordForDangerousSettings,
@@ -71,9 +66,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     setState(() {});
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة إعداد واحد
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetSetting(String key) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -103,9 +95,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت الاستعادة', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة مجموعة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetGroup(String groupName, List<String> keys) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -136,9 +125,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت استعادة "$groupName"', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة الكل
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetAll() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -178,9 +164,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت استعادة كل الإعدادات', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // طلب كلمة المرور
-  // ═══════════════════════════════════════════════════════════
   Future<bool> _askForPassword() async {
     final enabled = await AuthService.isEnabled();
     if (!enabled) return true;
@@ -274,9 +257,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // الحصول على اسم عربي للإعداد
-  // ═══════════════════════════════════════════════════════════
   String _labelFor(String key) {
     const map = {
       AppSettings.blockDeleteNonzeroBalance:
@@ -286,12 +266,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.softDeleteEnabled: 'الحذف الناعم (سلة المحذوفات)',
       AppSettings.retentionDays: 'مدة الاحتفاظ في السلة',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
+      AppSettings.allowEditCustomers: 'السماح بتعديل الحسابات',
       AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
-      AppSettings.allowEditTransactionAmount: 'السماح بتعديل المبلغ',
-      AppSettings.allowEditTransactionItems:
-          'السماح بتعديل الأصناف',
-      AppSettings.allowEditTransactionType:
-          'السماح بتغيير نوع العملية',
       AppSettings.allowEditCustomerBalance:
           'السماح بتعديل الرصيد مباشرة',
       AppSettings.trackEdits: 'تسجيل كل تعديل في السجل',
@@ -357,14 +333,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'مدة بقاء العنصر في السلة (بالأيام)',
       AppSettings.autoCleanupDeleted:
           'حذف نهائي تلقائي بعد انتهاء المدة',
+      AppSettings.allowEditCustomers:
+          'إذا مُعطّل، لا يمكن تعديل بيانات الحسابات',
       AppSettings.allowEditTransactions:
-          'إذا مُعطّل، لا يمكن تعديل أي عملية',
-      AppSettings.allowEditTransactionAmount:
-          'إذا مُعطّل، المبلغ غير قابل للتعديل',
-      AppSettings.allowEditTransactionItems:
-          'إذا مُعطّل، الأصناف غير قابلة للتعديل',
-      AppSettings.allowEditTransactionType:
-          'إذا مُعطّل، لا يمكن تغيير دين إلى سداد',
+          'إذا مُعطّل، لا يمكن تعديل أي عملية (مبلغ/أصناف/نوع)',
       AppSettings.allowEditCustomerBalance:
           'تعديل الرصيد بدون معاملة',
       AppSettings.trackEdits:
@@ -415,7 +387,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.allowDebtOnInactive:
           'إذا مُعطّل، يُمنع الدين على موقوف',
       AppSettings.notifyDebtOnInactive:
-          'إشعار يحذير عند الدين على موقوف',
+          'إشعار تحذيري عند الدين على موقوف',
       AppSettings.lockEnabled: 'تفعيل قفل التطبيق',
       AppSettings.lockTimeoutMinutes:
           'القفل التلقائي بعد هذه المدة',
@@ -436,9 +408,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     return map[key] ?? '';
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // بناء الواجهة
-  // ═══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -457,7 +426,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         body: ListView(
           padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-            // شريط معلومات
             Container(
               margin: const EdgeInsets.all(12),
               padding: const EdgeInsets.all(14),
@@ -482,9 +450,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ),
             ),
 
-            // ═══════════════════════════════════════════════════
             // 🗑️ الحذف
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '🗑️ الحذف',
               groupName: 'الحذف',
@@ -509,35 +475,27 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
-            // ✏️ التعديل
-            // ═══════════════════════════════════════════════════
+            // ✏️ التعديل (مُبسّط)
             _buildGroup(
               title: '✏️ التعديل',
               groupName: 'التعديل',
               keys: const [
+                AppSettings.allowEditCustomers,
                 AppSettings.allowEditTransactions,
-                AppSettings.allowEditTransactionAmount,
-                AppSettings.allowEditTransactionItems,
-                AppSettings.allowEditTransactionType,
                 AppSettings.allowEditCustomerBalance,
                 AppSettings.trackEdits,
                 AppSettings.requireEditReason,
               ],
               children: [
+                _buildBoolTile(AppSettings.allowEditCustomers),
                 _buildBoolTile(AppSettings.allowEditTransactions),
-                _buildBoolTile(AppSettings.allowEditTransactionAmount),
-                _buildBoolTile(AppSettings.allowEditTransactionItems),
-                _buildBoolTile(AppSettings.allowEditTransactionType),
                 _buildBoolTile(AppSettings.allowEditCustomerBalance),
                 _buildBoolTile(AppSettings.trackEdits),
                 _buildBoolTile(AppSettings.requireEditReason),
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 🔄 المزامنة
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '🔄 المزامنة',
               groupName: 'المزامنة',
@@ -568,9 +526,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 📜 السجل
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '📜 السجل',
               groupName: 'السجل',
@@ -604,9 +560,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 🎤 الصوت
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '🎤 الصوت',
               groupName: 'الصوت',
@@ -633,9 +587,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 💰 الرصيد
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '💰 الرصيد والحدود',
               groupName: 'الرصيد',
@@ -655,9 +607,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 🔒 الأمان
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '🔒 الأمان',
               groupName: 'الأمان',
@@ -683,9 +633,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ═══════════════════════════════════════════════════
             // 📱 الواجهة
-            // ═══════════════════════════════════════════════════
             _buildGroup(
               title: '📱 الواجهة',
               groupName: 'الواجهة',
@@ -710,9 +658,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Group (Accordion)
-  // ═══════════════════════════════════════════════════════════
   Widget _buildGroup({
     required String title,
     required String groupName,
@@ -739,9 +684,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Bool Tile
-  // ═══════════════════════════════════════════════════════════
   Widget _buildBoolTile(String key) {
     final value = SettingsService.getBool(key);
     final isDangerous = AppSettings.isDangerous(key);
@@ -802,9 +744,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Int Tile
-  // ═══════════════════════════════════════════════════════════
   Widget _buildIntTile(
     String key, {
     required int min,
