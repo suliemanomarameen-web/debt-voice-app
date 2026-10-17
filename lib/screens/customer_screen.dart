@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
+import '../models/log_event.dart';
 import '../models/transaction.dart';
 import '../services/accountant_service.dart';
 import '../services/code_service.dart';
@@ -13,6 +14,8 @@ import '../services/export_service.dart';
 import '../services/logger_service.dart';
 import '../services/pdf_service.dart';
 import '../services/whatsapp_service.dart';
+import '../config/app_settings.dart';
+import '../services/settings_service.dart';
 import 'add_account_screen.dart';
 import 'share_receipt_screen.dart';
 
@@ -463,6 +466,15 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             source: 'customer_screen',
                           );
 
+                          // 🆕 تحديث updated_at للعميل
+                          if (accountant != null && accountant.isNotEmpty) {
+                            await db.updateCustomerFields(
+                              _customer.id!,
+                              {},
+                              by: accountant,
+                            );
+                          }
+
                           final newBalance =
                               await db.customerBalance(_customer.id!);
 
@@ -520,6 +532,21 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   // ============ تعديل معاملة ============
   Future<void> _editTransaction(Transaction t) async {
+    // 🆕 فحص السماح بالتعديل
+    if (!SettingsService.getBool(
+      AppSettings.allowEditTransactions,
+      defaultValue: true,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('التعديل على العمليات معطّل من الإعدادات'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     final isDebt = t.type == 'debt';
     final isReturn = t.items.startsWith('مرتجع');
     final amountCtrl = TextEditingController(text: t.amount.toStringAsFixed(0));
@@ -591,22 +618,103 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
             FilledButton(
               onPressed: () async {
+                // 🆕 فحص السماح بتعديل المبلغ
+                if (!SettingsService.getBool(
+                  AppSettings.allowEditTransactionAmount,
+                  defaultValue: true,
+                )) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تعديل المبلغ معطّل من الإعدادات'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
-                await db.updateTransaction(Transaction(
-                  id: t.id,
-                  customerId: t.customerId,
-                  code: t.code,
-                  accountant: t.accountant,
-                  source: t.source,
+
+                // 🆕 فحص السماح بتعديل الأصناف
+                final newItems = isReturn
+                    ? 'مرتجع: ${itemsCtrl.text.trim()}'
+                    : itemsCtrl.text.trim();
+
+                if (newItems != t.items &&
+                    !SettingsService.getBool(
+                      AppSettings.allowEditTransactionItems,
+                      defaultValue: true,
+                    )) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content:
+                          Text('تعديل الأصناف معطّل من الإعدادات'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
+
+                // 🆕 من عدّل
+                final accountant =
+                    await AccountantService.getAccountantName();
+
+                // 🆕 تتبع التغييرات
+                final changedFields = <String>[];
+                if (amt != t.amount) changedFields.add('amount');
+                if (newItems != t.items) changedFields.add('items');
+
+                final updatedTx = t.copyWith(
                   amount: amt,
-                  currency: t.currency,
-                  type: t.type,
-                  items: isReturn
-                      ? 'مرتجع: ${itemsCtrl.text.trim()}'
-                      : itemsCtrl.text.trim(),
-                  createdAt: t.createdAt,
-                ));
+                  items: newItems,
+                  updatedBy: accountant,
+                  updatedAt: DateTime.now().toIso8601String(),
+                  lastModifiedBy: accountant,
+                  lastModifiedFrom: 'customer_screen',
+                );
+
+                await db.updateTransaction(updatedTx, by: accountant);
+
+                // 🆕 تسجيل التعديل في السجل
+                if (changedFields.isNotEmpty &&
+                    SettingsService.getBool(
+                      AppSettings.logTransactionEdits,
+                      defaultValue: true,
+                    )) {
+                  final fieldNames = changedFields.map((f) {
+                    if (f == 'amount') return 'المبلغ';
+                    if (f == 'items') return 'الأصناف';
+                    return f;
+                  }).join('، ');
+
+                  final oldVal = changedFields.contains('amount')
+                      ? t.amount.toStringAsFixed(0)
+                      : t.items;
+                  final newVal = changedFields.contains('amount')
+                      ? amt.toStringAsFixed(0)
+                      : newItems;
+
+                  await LoggerService.log(
+                    action: '✏️ تعديل عملية',
+                    description: 'تم تعديل $fieldNames\n'
+                        'من: $oldVal\n'
+                        'إلى: $newVal\n'
+                        'بواسطة: ${accountant ?? "غير معروف"}',
+                    level: LogLevel.warning,
+                    category: LogCategory.transaction,
+                    accountant: accountant,
+                    relatedId: t.id?.toString(),
+                    needsAck: false,
+                    metadata: {
+                      'fields': changedFields,
+                      'old_amount': t.amount,
+                      'new_amount': amt,
+                      'old_items': t.items,
+                      'new_items': newItems,
+                    },
+                  );
+                }
+
                 if (mounted) Navigator.pop(context);
               },
               child: const Text('حفظ'),
@@ -633,7 +741,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ],
           ),
           content: Text(
-            'سيتم حذف هذه العملية نهائياً:\n\n'
+            'سيتم نقل هذه العملية إلى سلة المحذوفات:\n\n'
             '${t.code != null ? 'الرمز: ${t.code}\n' : ''}'
             '${t.accountant != null ? 'المحاسب: ${t.accountant}\n' : ''}'
             'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
@@ -649,7 +757,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف نهائي'),
+              child: const Text('حذف'),
             ),
           ],
         ),
@@ -657,19 +765,34 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
 
     if (confirmed == true) {
-      await db.deleteTransaction(t.id!);
+      // 🆕 من حذف
+      final accountant = await AccountantService.getAccountantName();
+
+      final useSoft = SettingsService.getBool(
+        AppSettings.softDeleteEnabled,
+        defaultValue: true,
+      );
+
+      if (useSoft) {
+        await db.softDeleteTransaction(t.id!, by: accountant);
+      } else {
+        await db.hardDeleteTransaction(t.id!);
+      }
 
       // 🆕 تسجيل الحدث
       await LoggerService.logTransactionDeleted(
         customerName: _customer.name,
         amount: t.amount,
         code: t.code,
+        accountant: accountant,
       );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم حذف العملية'),
+          SnackBar(
+            content: Text(useSoft
+                ? 'تم نقل العملية إلى سلة المحذوفات'
+                : 'تم حذف العملية نهائيًا'),
             backgroundColor: Colors.red,
           ),
         );
@@ -786,6 +909,37 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       }),
                       const SizedBox(height: 8),
                     ],
+                    // 🆕 معلومات التعديل
+                    if (t.wasModified &&
+                        SettingsService.getBool(
+                          AppSettings.showTrackingInfo,
+                          defaultValue: true,
+                        ))
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.edit,
+                                size: 14, color: Colors.orange),
+                            const SizedBox(width: 6),
+                            Text(
+                              'عُدّلت بواسطة: ${t.lastModifiedBy ?? t.updatedBy ?? "غير معروف"}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.orange,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 8),
                     Text(
                       '${t.amount.toStringAsFixed(0)} ${t.currency}',
                       style: const TextStyle(
@@ -1469,12 +1623,17 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed != true) return;
 
-    await db.setCustomerActive(_customer.id!, !_customer.isActive);
+    // 🆕 من عدّل
+    final accountant = await AccountantService.getAccountantName();
+
+    await db.setCustomerActive(_customer.id!, !_customer.isActive,
+        by: accountant);
 
     // 🆕 تسجيل الحدث
     await LoggerService.logCustomerStatusChanged(
       name: _customer.name,
       isActive: !_customer.isActive,
+      accountant: accountant,
     );
 
     await _load();
@@ -1575,6 +1734,41 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
                               color: Colors.teal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // 🆕 شارة "عُدّلت"
+                  if (t.wasModified &&
+                      SettingsService.getBool(
+                        AppSettings.showTrackingInfo,
+                        defaultValue: true,
+                      ))
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      margin: const EdgeInsets.only(left: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: Colors.orange.withOpacity(0.4),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.edit,
+                              size: 9, color: Colors.orange),
+                          SizedBox(width: 2),
+                          Text(
+                            'مُعدّلة',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange,
                             ),
                           ),
                         ],
@@ -1899,7 +2093,116 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حذف الحساب — مع الفحوصات الكاملة
+  // ═══════════════════════════════════════════════════════════
   Future<void> _showDeleteCustomer() async {
+    // 1) فحص الرصيد
+    final balance = await db.customerBalance(_customer.id!);
+
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteNonzeroBalance,
+          defaultValue: true,
+        ) &&
+        balance != 0) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الحساب "${_customer.name}" رصيده غير صفري.',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                _warningRow(
+                  'الرصيد الحالي',
+                  '${balance.toStringAsFixed(0)} ريال',
+                  balance > 0 ? Colors.red : Colors.green,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '💡 يجب تصفية الرصيد أولاً (سداد كامل أو تعديل) قبل الحذف.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 2) فحص وجود معاملات
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteWithTransactions,
+          defaultValue: true,
+        ) &&
+        _allTx.isNotEmpty) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الحساب "${_customer.name}" عليه ${_allTx.length} عملية.',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '💡 يجب حذف كل معاملاته أولاً قبل حذف الحساب.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 3) تأكيد الحذف
+    final useSoft = SettingsService.getBool(
+      AppSettings.softDeleteEnabled,
+      defaultValue: true,
+    );
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
@@ -1913,8 +2216,12 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             ],
           ),
           content: Text(
-            'سيتم حذف الحساب "${_customer.name}" وكل معاملاته (${_allTx.length} عملية).\n\n'
-            'لا يمكن التراجع عن هذا الإجراء.',
+            useSoft
+                ? 'سيتم حذف الحساب "${_customer.name}" وكل معاملاته (${_allTx.length} عملية).\n\n'
+                    '💰 الرصيد: ${balance.toStringAsFixed(0)} ريال\n'
+                    '🗑️ سيُحفظ في سلة المحذوفات لمدة 30 يومًا.'
+                : '⚠️ سيتم حذف الحساب "${_customer.name}" **نهائيًا**!\n\n'
+                    'لا يمكن التراجع.',
           ),
           actions: [
             TextButton(
@@ -1924,28 +2231,38 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف الحساب'),
+              child: Text(useSoft ? 'حذف' : 'حذف نهائي'),
             ),
           ],
         ),
       ),
     );
 
-    if (confirmed == true) {
-      await db.deleteCustomer(_customer.id!);
+    if (confirmed != true) return;
 
-      // 🆕 تسجيل الحدث
-      await LoggerService.logCustomerDeleted(_customer.name);
+    // 4) تنفيذ الحذف
+    final accountant = await AccountantService.getAccountantName();
 
-      if (mounted) {
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم حذف الحساب'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    if (useSoft) {
+      await db.softDeleteCustomer(_customer.id!, by: accountant);
+    } else {
+      await db.hardDeleteCustomer(_customer.id!);
     }
+
+    await LoggerService.logCustomerDeleted(
+      _customer.name,
+      accountant: accountant,
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context, true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(useSoft
+            ? 'تم الحذف — يمكن استعادته من السلة'
+            : 'تم الحذف النهائي'),
+        backgroundColor: Colors.red,
+      ),
+    );
   }
 }
