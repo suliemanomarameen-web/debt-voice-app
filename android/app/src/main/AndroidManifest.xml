@@ -1,8 +1,78 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 📡 الشبكة (Google Drive, WhatsApp, Sync)                    -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 🎤 الميكروفون والتسجيل الصوتي                                -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 🔔 الإشعارات (Android 13+)                                   -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 🖼️ الزر العائم فوق التطبيقات                                 -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- ⚙️ الخدمات في الخلفية (Overlay + Workmanager + Sync)         -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 🔋 تجاهل تحسين البطارية (مهم على Huawei/Xiaomi/Oppo)         -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 📅 جدولة المهام (ReminderService)                            -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 🖼️ الصور (image_picker)                                      -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- 📞 الهاتف (WhatsApp)                                         -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
     <application
         android:label="دفتر الديون"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="false"
+        tools:targetApi="34">
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- MainActivity                                                 -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -11,22 +81,108 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
+
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- Flutter Overlay Window Service                              -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <service
+            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:ignore="ForegroundServicePermission">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Screen overlay for voice input" />
+        </service>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- Workmanager (النسخ التلقائي)                                -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- flutter_local_notifications                                  -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- flutter_embedding                                            -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
         <meta-data
             android:name="flutterEmbedding"
-            android:value="2"/>
+            android:value="2" />
     </application>
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- queries — للتحقق من وجود التطبيقات الأخرى                    -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
     <queries>
+        <!-- WhatsApp -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+
+        <!-- Google Sign-In -->
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="accounts.google.com" />
+        </intent>
+
+        <!-- فتح روابط خارجية -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+
+        <!-- مشاركة الملفات -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+
+        <!-- Google Drive -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="drive.google.com" />
+        </intent>
+
+        <!-- الاتصال بالهاتف (WhatsApp / الهاتف) -->
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
         </intent>
     </queries>
+
 </manifest>
