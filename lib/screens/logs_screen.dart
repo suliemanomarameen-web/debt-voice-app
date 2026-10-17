@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -328,6 +329,25 @@ class _AllLogsTabState extends State<_AllLogsTab> {
     }
   }
 
+  // 🆕 نسخ رقم العملية
+  Future<void> _copyReference(String ref) async {
+    await Clipboard.setData(ClipboardData(text: ref));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text('✅ تم نسخ: $ref'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = widget.theme;
@@ -336,7 +356,7 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
     return Column(
       children: [
-        // ===== الإحصائيات المضغوطة =====
+        // ===== الإحصائيات =====
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
           child: Row(
@@ -555,12 +575,11 @@ class _AllLogsTabState extends State<_AllLogsTab> {
   // ═══════════════════════════════════════════════════════════
   Widget _buildCompactCard(LogEvent e, ThemeData theme, bool isDark) {
     final levelColor = Color(e.levelColor);
-    final needsAck = e.isPendingAck; // ✅ v11
+    final needsAck = e.isPendingAck;
     final isPlaying = _playingPath != null && _playingPath == e.audioPath;
     final isVoiceLog = e.category == LogCategory.voice;
     final hasAudio = e.audioPath != null && e.audioPath!.isNotEmpty;
 
-    // 🆕 تمييز بصري للإشعارات
     Color? bgColor;
     if (e.isDeletionConflict) {
       bgColor = Colors.red.withOpacity(0.08);
@@ -619,7 +638,6 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                     style: const TextStyle(fontSize: 9),
                   ),
                 ),
-                // 🆕 شارات الحالة
                 if (e.isDeletionConflict)
                   Container(
                     margin: const EdgeInsets.only(right: 3),
@@ -694,6 +712,50 @@ class _AllLogsTabState extends State<_AllLogsTab> {
                 ),
               ],
             ),
+
+            // 🆕 Row 2.5: رقم المرجع (قابل للنسخ)
+            if (e.relatedId != null && e.relatedId!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 3, bottom: 2),
+                child: InkWell(
+                  onTap: () => _copyReference(e.relatedId!),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Colors.blue.withOpacity(0.5),
+                        width: 0.7,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.tag,
+                            size: 11, color: Colors.blue),
+                        const SizedBox(width: 3),
+                        Text(
+                          'المرجع: ${e.relatedId}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.copy,
+                          size: 10,
+                          color: Colors.blue.withOpacity(0.7),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
 
             // ===== Row 3: الوصف + الأزرار =====
             Row(
@@ -906,7 +968,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   bool _loading = true;
   String? _playingPath;
 
-  // 🆕 فلاتر
   bool _filterEmptyVoice = true;
   bool _filterUnclearText = true;
 
@@ -945,7 +1006,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
     final list = await LoggerService.getPendingVoiceLogs();
 
-    // 🆕 فلترة
     final filtered = list.where((e) {
       try {
         final meta = e.metadataMap;
@@ -1143,7 +1203,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                         ),
                       ),
 
-                    // نوع العملية
                     SegmentedButton<String>(
                       style: ButtonStyle(
                         visualDensity: VisualDensity.compact,
@@ -1180,7 +1239,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
                     const SizedBox(height: 10),
 
-                    // العميل
                     if (selectedCustomer != null)
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -1311,7 +1369,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
                     const SizedBox(height: 8),
 
-                    // المبلغ
                     TextField(
                       controller: amountCtrl,
                       keyboardType: TextInputType.number,
@@ -1332,7 +1389,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
 
                     const SizedBox(height: 8),
 
-                    // الأصناف / البيان
                     TextField(
                       controller: itemsCtrl,
                       style: const TextStyle(fontSize: 12),
@@ -1476,6 +1532,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
                             code: code,
                             accountant: accountant,
                             source: sourceValue,
+                            relatedId: code, // 🆕
                           );
 
                           final newBalance = await db
