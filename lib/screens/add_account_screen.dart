@@ -5,6 +5,11 @@ import 'package:path_provider/path_provider.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
+import '../models/log_event.dart';
+import '../services/accountant_service.dart';
+import '../services/logger_service.dart';
+import '../config/app_settings.dart';
+import '../services/settings_service.dart';
 
 class AddAccountScreen extends StatefulWidget {
   final Customer? existing;
@@ -18,7 +23,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   late TextEditingController _name;
   late TextEditingController _phone;
   late TextEditingController _note;
-  late TextEditingController _maxBalance; // 🆕
+  late TextEditingController _maxBalance;
   late String _type;
   late String _category;
   String? _photoPath;
@@ -35,7 +40,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _note = TextEditingController(text: c?.note ?? '');
     _maxBalance = TextEditingController(
       text: c?.maxBalance != null ? c!.maxBalance!.toStringAsFixed(0) : '',
-    ); // 🆕
+    );
     _type = c?.accountType ?? AccountType.customer;
     _category = c?.category ?? CustomerCategory.normal;
     _photoPath = c?.photoPath;
@@ -46,7 +51,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _name.dispose();
     _phone.dispose();
     _note.dispose();
-    _maxBalance.dispose(); // 🆕
+    _maxBalance.dispose();
     super.dispose();
   }
 
@@ -135,6 +140,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     setState(() => _busy = true);
 
     final db = DatabaseHelper.instance;
+    final accountant = await AccountantService.getAccountantName();
+    final now = DateTime.now().toIso8601String();
 
     // 🆕 تحويل الحد الأقصى
     double? maxBalance;
@@ -144,41 +151,232 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     }
 
     if (isEdit) {
-      await db.updateCustomer(Customer(
-        id: widget.existing!.id,
-        name: _name.text.trim(),
-        phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+      // ═══════════════════════════════════════════════════════
+      // تعديل — تتبع التغييرات
+      // ═══════════════════════════════════════════════════════
+      final oldCustomer = widget.existing!;
+      final newName = _name.text.trim();
+      final newPhone =
+          _phone.text.trim().isEmpty ? null : _phone.text.trim();
+      final newNote =
+          _note.text.trim().isEmpty ? null : _note.text.trim();
+
+      // 🆕 اكتشاف الحقول المتغيرة
+      final changedFields = <String>[];
+      if (newName != oldCustomer.name) changedFields.add('name');
+      if (newPhone != oldCustomer.phone) changedFields.add('phone');
+      if (_type != oldCustomer.accountType) {
+        changedFields.add('account_type');
+      }
+      if (newNote != oldCustomer.note) changedFields.add('note');
+      if (_photoPath != oldCustomer.photoPath) changedFields.add('photo');
+      if (_category != oldCustomer.category) {
+        changedFields.add('category');
+      }
+      if (maxBalance != oldCustomer.maxBalance) {
+        changedFields.add('max_balance');
+      }
+
+      final updated = Customer(
+        id: oldCustomer.id,
+        cloudId: oldCustomer.cloudId,
+        name: newName,
+        phone: newPhone,
         accountType: _type,
-        note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+        note: newNote,
         photoPath: _photoPath,
         category: _category,
-        maxBalance: maxBalance, // 🆕
-        createdAt: widget.existing!.createdAt,
-      ));
+        maxBalance: maxBalance,
+        isActive: oldCustomer.isActive,
+        createdBy: oldCustomer.createdBy,
+        createdAt: oldCustomer.createdAt,
+      );
+
+      await db.updateCustomer(updated, by: accountant);
+
+      // 🆕 تسجيل التعديل في السجل
+      if (changedFields.isNotEmpty &&
+          SettingsService.getBool(
+            AppSettings.trackEdits,
+            defaultValue: true,
+          )) {
+        final fieldNames = changedFields.map(_fieldNameAr).join('، ');
+        await LoggerService.log(
+          action: '✏️ تعديل حساب',
+          description: 'تم تعديل $fieldNames '
+              'للحساب "${oldCustomer.name}"\n'
+              'بواسطة: ${accountant ?? "غير معروف"}',
+          level: LogLevel.info,
+          category: LogCategory.customer,
+          accountant: accountant,
+          relatedId: oldCustomer.id?.toString(),
+          metadata: {
+            'fields': changedFields,
+            'customer_name': oldCustomer.name,
+          },
+        );
+      }
     } else {
-      await db.insertCustomer(Customer(
+      // ═══════════════════════════════════════════════════════
+      // إنشاء جديد
+      // ═══════════════════════════════════════════════════════
+      final newCustomer = Customer(
         name: _name.text.trim(),
         phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
         accountType: _type,
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
         photoPath: _photoPath,
         category: _category,
-        maxBalance: maxBalance, // 🆕
-        createdAt: DateTime.now().toIso8601String(),
-      ));
+        maxBalance: maxBalance,
+        createdBy: accountant,
+        updatedBy: accountant,
+        updatedAt: now,
+        createdAt: now,
+      );
+
+      final id = await db.insertCustomer(newCustomer);
+
+      // 🆕 تسجيل الحدث
+      await LoggerService.logCustomerAdded(
+        newCustomer.name,
+        accountant: accountant,
+      );
+
+      debugPrint('✅ Customer created: id=$id, name=${newCustomer.name}');
     }
+
     if (mounted) Navigator.pop(context, true);
   }
 
   // ============== حذف ==============
   Future<void> _delete() async {
+    if (!isEdit) return;
+
+    // ═══════════════════════════════════════════════════════════
+    // 1) فحص الرصيد
+    // ═══════════════════════════════════════════════════════════
+    final db = DatabaseHelper.instance;
+    final balance = await db.customerBalance(widget.existing!.id!);
+
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteNonzeroBalance,
+          defaultValue: true,
+        ) &&
+        balance != 0) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الحساب "${widget.existing!.name}" رصيده غير صفري.',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('الرصيد الحالي',
+                        style: TextStyle(fontSize: 13)),
+                    Text(
+                      '${balance.toStringAsFixed(0)} ريال',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: balance > 0 ? Colors.red : Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '💡 يجب تصفية الرصيد أولاً قبل الحذف.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 2) فحص وجود معاملات
+    // ═══════════════════════════════════════════════════════════
+    final txCount =
+        await db.countCustomerTransactions(widget.existing!.id!);
+
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteWithTransactions,
+          defaultValue: true,
+        ) &&
+        txCount > 0) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Text(
+              'الحساب "${widget.existing!.name}" عليه $txCount عملية.\n\n'
+              '💡 يجب حذف كل معاملاته أولاً.',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 3) تأكيد الحذف
+    // ═══════════════════════════════════════════════════════════
+    final useSoft = SettingsService.getBool(
+      AppSettings.softDeleteEnabled,
+      defaultValue: true,
+    );
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           title: const Text('تأكيد الحذف'),
-          content: Text('سيتم حذف "${widget.existing!.name}" وكل معاملاته.'),
+          content: Text(
+            useSoft
+                ? 'سيتم نقل "${widget.existing!.name}" وكل معاملاته إلى سلة المحذوفات.'
+                : '⚠️ سيتم حذف "${widget.existing!.name}" **نهائيًا**!\nلا يمكن التراجع.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -187,15 +385,44 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف'),
+              child: Text(useSoft ? 'حذف' : 'حذف نهائي'),
             ),
           ],
         ),
       ),
     );
     if (ok != true) return;
-    await DatabaseHelper.instance.deleteCustomer(widget.existing!.id!);
+
+    // ═══════════════════════════════════════════════════════════
+    // 4) تنفيذ الحذف
+    // ═══════════════════════════════════════════════════════════
+    final accountant = await AccountantService.getAccountantName();
+
+    if (useSoft) {
+      await db.softDeleteCustomer(widget.existing!.id!, by: accountant);
+    } else {
+      await db.hardDeleteCustomer(widget.existing!.id!);
+    }
+
+    await LoggerService.logCustomerDeleted(
+      widget.existing!.name,
+      accountant: accountant,
+    );
+
     if (mounted) Navigator.pop(context, true);
+  }
+
+  String _fieldNameAr(String field) {
+    const map = {
+      'name': 'الاسم',
+      'phone': 'الهاتف',
+      'account_type': 'النوع',
+      'note': 'الملاحظة',
+      'photo': 'الصورة',
+      'category': 'التصنيف',
+      'max_balance': 'الحد الأقصى',
+    };
+    return map[field] ?? field;
   }
 
   @override
@@ -213,7 +440,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               IconButton(
                 icon: const Icon(Icons.delete, color: Colors.red),
                 tooltip: 'حذف الحساب',
-                onPressed: _delete,
+                onPressed: _busy ? null : _delete,
               ),
           ],
         ),
@@ -367,7 +594,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               ),
               const SizedBox(height: 12),
 
-              // ============== 🆕 الحد الأقصى للرصيد ==============
+              // ============== الحد الأقصى للرصيد ==============
               TextFormField(
                 controller: _maxBalance,
                 keyboardType: TextInputType.number,
@@ -375,7 +602,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   labelText: 'الحد الأقصى للرصيد (اختياري)',
                   hintText: 'مثال: 5000',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.warning_amber, color: Colors.orange),
+                  prefixIcon: Icon(Icons.warning_amber,
+                      color: Colors.orange),
                   suffixText: 'ريال',
                 ),
                 validator: (v) {
