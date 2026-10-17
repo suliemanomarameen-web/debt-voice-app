@@ -27,6 +27,8 @@ import '../screens/gdrive_screen.dart';
 import '../screens/keywords_screen.dart';
 import '../screens/logs_screen.dart';
 import '../screens/stats_screen.dart';
+import '../screens/deleted_bin_screen.dart';
+import '../screens/advanced_settings_screen.dart';
 
 class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key});
@@ -2115,7 +2117,88 @@ Future<void> _editAccountantName() async {
               child: const Text('تفعيل'),
             ),
           ),
+        
+// ═══════════════════════════════════════════════════════════
+// 🆕 الإعدادات المتقدمة
+// ═══════════════════════════════════════════════════════════
+const _SectionHeader('التحكم الكامل'),
+ListTile(
+  leading: const Icon(Icons.tune, color: Colors.deepPurple),
+  title: const Text('الإعدادات المتقدمة'),
+  subtitle: const Text('47 إعدادًا للتحكم الكامل في سلوك التطبيق'),
+  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const AdvancedSettingsScreen(),
+      ),
+    ).then((_) {
+      if (mounted) setState(() {});
+    });
+  },
+),
 
+// ═══════════════════════════════════════════════════════════
+// 🆕 سلة المحذوفات
+// ═══════════════════════════════════════════════════════════
+FutureBuilder<Map<String, int>>(
+  future: DatabaseHelper.instance.getDeletedCount(),
+  builder: (_, snap) {
+    final counts = snap.data ?? {'customers': 0, 'transactions': 0};
+    final total = (counts['customers'] ?? 0) + (counts['transactions'] ?? 0);
+
+    return ListTile(
+      leading: Icon(
+        Icons.delete_outline,
+        color: total > 0 ? Colors.red : Colors.grey,
+      ),
+      title: const Text('سلة المحذوفات'),
+      subtitle: Text(
+        total > 0
+            ? '(${counts['customers']} عميل، ${counts['transactions']} عملية)'
+            : 'فارغة',
+        style: TextStyle(
+          color: total > 0 ? Colors.red : Colors.grey,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (total > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$total',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          const SizedBox(width: 4),
+          const Icon(Icons.arrow_forward_ios, size: 16),
+        ],
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const DeletedBinScreen(),
+          ),
+        ).then((_) {
+          if (mounted) setState(() {});
+        });
+      },
+    );
+  },
+),
+          
           // ========== معلومات ==========
           const _SectionHeader('معلومات'),
           ListTile(
