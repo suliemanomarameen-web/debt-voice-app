@@ -64,7 +64,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         _customer.maxBalance != null) {
       _alertShown = true;
 
-      // 🆕 تسجيل تجاوز الحد الأقصى
       await LoggerService.logCustomerLimitExceeded(
         name: _customer.name,
         balance: bal,
@@ -96,7 +95,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ نسخ الرمز ============
   Future<void> _copyCode(String code) async {
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
@@ -115,7 +113,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
   }
 
-  // ============ تنبيه تجاوز الحد ============
   void _showLimitWarning() {
     showDialog(
       context: context,
@@ -183,7 +180,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
   }
 
-  // ============ إرسال تذكير واتساب ============
   Future<void> _sendWhatsAppReminder() async {
     if (_customer.phone == null || _customer.phone!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -213,7 +209,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ فلتر التاريخ ============
   Future<void> _showDateFilter() async {
     final result = await showModalBottomSheet<DateFilter>(
       context: context,
@@ -277,7 +272,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
@@ -450,7 +444,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          // 🆕 تسجيل الحدث
                           final typeLabel = {
                             'debt': 'دين',
                             'payment': 'سداد',
@@ -466,7 +459,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             source: 'customer_screen',
                           );
 
-                          // 🆕 تحديث updated_at للعميل
                           if (accountant != null && accountant.isNotEmpty) {
                             await db.updateCustomerFields(
                               _customer.id!,
@@ -530,9 +522,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ============ تعديل معاملة ============
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 تعديل معاملة — مع الإصلاحات
+  // ═══════════════════════════════════════════════════════════
   Future<void> _editTransaction(Transaction t) async {
-    // 🆕 فحص السماح بالتعديل
+    // فحص السماح بتعديل العمليات
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -618,52 +612,22 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                // 🆕 فحص السماح بتعديل المبلغ
-                if (!SettingsService.getBool(
-                  AppSettings.allowEditTransactionAmount,
-                  defaultValue: true,
-                )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تعديل المبلغ معطّل من الإعدادات'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
-                // 🆕 فحص السماح بتعديل الأصناف
                 final newItems = isReturn
                     ? 'مرتجع: ${itemsCtrl.text.trim()}'
                     : itemsCtrl.text.trim();
 
-                if (newItems != t.items &&
-                    !SettingsService.getBool(
-                      AppSettings.allowEditTransactionItems,
-                      defaultValue: true,
-                    )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content:
-                          Text('تعديل الأصناف معطّل من الإعدادات'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-
-                // 🆕 من عدّل
                 final accountant =
                     await AccountantService.getAccountantName();
 
-                // 🆕 تتبع التغييرات
+                // تتبع التغييرات
                 final changedFields = <String>[];
                 if (amt != t.amount) changedFields.add('amount');
                 if (newItems != t.items) changedFields.add('items');
 
+                // ✅ إصلاح: تحديث مع الحفاظ على cloudId
                 final updatedTx = t.copyWith(
                   amount: amt,
                   items: newItems,
@@ -675,7 +639,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
                 await db.updateTransaction(updatedTx, by: accountant);
 
-                // 🆕 تسجيل التعديل في السجل
+                // تسجيل التعديل
                 if (changedFields.isNotEmpty &&
                     SettingsService.getBool(
                       AppSettings.logTransactionEdits,
@@ -716,6 +680,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 }
 
                 if (mounted) Navigator.pop(context);
+                // ✅ إصلاح: إعادة تحميل لضمان إمكانية التعديل مرة أخرى
+                await _load();
               },
               child: const Text('حفظ'),
             ),
@@ -723,10 +689,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
       ),
     );
-    _load();
   }
 
-  // ============ حذف معاملة ============
   Future<void> _deleteTransaction(Transaction t) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -765,7 +729,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
 
     if (confirmed == true) {
-      // 🆕 من حذف
       final accountant = await AccountantService.getAccountantName();
 
       final useSoft = SettingsService.getBool(
@@ -779,7 +742,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         await db.hardDeleteTransaction(t.id!);
       }
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logTransactionDeleted(
         customerName: _customer.name,
         amount: t.amount,
@@ -797,11 +759,10 @@ class _CustomerScreenState extends State<CustomerScreen> {
           ),
         );
       }
-      _load();
+      await _load();
     }
   }
 
-  // ============ قائمة العمليات ============
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
@@ -909,7 +870,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       }),
                       const SizedBox(height: 8),
                     ],
-                    // 🆕 معلومات التعديل
                     if (t.wasModified &&
                         SettingsService.getBool(
                           AppSettings.showTrackingInfo,
@@ -959,7 +919,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
               ),
               const Divider(height: 1),
-
               ListTile(
                 leading: const Icon(Icons.message, color: Colors.green),
                 title: const Text('إرسال عبر واتساب'),
@@ -992,7 +951,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   }
                 },
               ),
-
               ListTile(
                 leading: const Icon(Icons.share, color: Colors.blue),
                 title: const Text('مشاركة'),
@@ -1018,7 +976,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   await Share.share(text);
                 },
               ),
-
               ListTile(
                 leading: const Icon(Icons.print, color: Colors.orange),
                 title: const Text('طباعة / حفظ PDF للعملية'),
@@ -1040,9 +997,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   }
                 },
               ),
-
               const Divider(height: 1),
-
               ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('تعديل'),
@@ -1051,7 +1006,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   _editTransaction(t);
                 },
               ),
-
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('حذف', style: TextStyle(color: Colors.red)),
@@ -1072,7 +1026,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     await ExportService.shareFile(f, text: 'كشف حساب ${_customer.name}');
   }
 
-  // ============ PDF ============
   Future<void> _exportPdf() async {
     DateTime? fromDate;
     DateTime? toDate;
@@ -1578,7 +1531,25 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }[t] ?? 'عميل';
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 إيقاف/تفعيل الحساب — مع فحص allowEditCustomers
+  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleCustomerActive() async {
+    // فحص السماح بتعديل الحسابات
+    if (!SettingsService.getBool(
+      AppSettings.allowEditCustomers,
+      defaultValue: true,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعديل الحسابات معطّل من الإعدادات'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     final willStop = _customer.isActive;
 
     final confirmed = await showDialog<bool>(
@@ -1623,13 +1594,11 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed != true) return;
 
-    // 🆕 من عدّل
     final accountant = await AccountantService.getAccountantName();
 
     await db.setCustomerActive(_customer.id!, !_customer.isActive,
         by: accountant);
 
-    // 🆕 تسجيل الحدث
     await LoggerService.logCustomerStatusChanged(
       name: _customer.name,
       isActive: !_customer.isActive,
@@ -1739,7 +1708,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         ],
                       ),
                     ),
-                  // 🆕 شارة "عُدّلت"
+                  // شارة "مُعدّلة" — فقط إذا عُدّلت فعلاً
                   if (t.wasModified &&
                       SettingsService.getBool(
                         AppSettings.showTrackingInfo,
@@ -2093,11 +2062,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حذف الحساب — مع الفحوصات الكاملة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _showDeleteCustomer() async {
-    // 1) فحص الرصيد
     final balance = await db.customerBalance(_customer.id!);
 
     if (SettingsService.getBool(
@@ -2151,7 +2116,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
-    // 2) فحص وجود معاملات
     if (SettingsService.getBool(
           AppSettings.blockDeleteWithTransactions,
           defaultValue: true,
@@ -2197,7 +2161,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
-    // 3) تأكيد الحذف
     final useSoft = SettingsService.getBool(
       AppSettings.softDeleteEnabled,
       defaultValue: true,
@@ -2240,7 +2203,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed != true) return;
 
-    // 4) تنفيذ الحذف
     final accountant = await AccountantService.getAccountantName();
 
     if (useSoft) {
