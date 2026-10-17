@@ -276,6 +276,9 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // إضافة عملية — مع إصلاح البيان للسداد
+  // ═══════════════════════════════════════════════════════════
   Future<void> _addTransaction(String type) async {
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
@@ -373,12 +376,18 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   enabled: !isSaving,
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                 ),
-                if (type != 'payment')
-                  TextField(
-                    controller: itemsCtrl,
-                    enabled: !isSaving,
-                    decoration: const InputDecoration(labelText: 'الأصناف'),
+                const SizedBox(height: 8),
+                // 🆕 يظهر دائمًا — "البيان" للسداد، "الأصناف" للدين/المرتجع
+                TextField(
+                  controller: itemsCtrl,
+                  enabled: !isSaving,
+                  decoration: InputDecoration(
+                    labelText: type == 'payment' ? 'البيان' : 'الأصناف',
+                    hintText: type == 'payment'
+                        ? 'مثال: دفعة شهر أكتوبر...'
+                        : 'مثال: رز، شاي، سكر...',
                   ),
+                ),
               ],
             ),
             actions: [
@@ -601,11 +610,17 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'المبلغ'),
               ),
-              if (isDebt || isReturn)
-                TextField(
-                  controller: itemsCtrl,
-                  decoration: const InputDecoration(labelText: 'الأصناف'),
+              const SizedBox(height: 8),
+              // 🆕 يظهر دائمًا
+              TextField(
+                controller: itemsCtrl,
+                decoration: InputDecoration(
+                  labelText: isDebt || isReturn ? 'الأصناف' : 'البيان',
+                  hintText: isDebt || isReturn
+                      ? 'مثال: رز، شاي...'
+                      : 'مثال: دفعة...',
                 ),
+              ),
             ],
           ),
           actions: [
@@ -805,9 +820,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 قائمة العمليات — تشمل تعديل وحذف في الأعلى
-  // ═══════════════════════════════════════════════════════════
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
@@ -907,9 +919,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
                 const Divider(height: 1),
 
-                // ═══════════════════════════════════════════════════
-                // ✏️ تعديل — بارز جدًا
-                // ═══════════════════════════════════════════════════
+                // ✏️ تعديل
                 ListTile(
                   leading: const Icon(Icons.edit,
                       color: Colors.blue, size: 28),
@@ -935,9 +945,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   },
                 ),
 
-                // ═══════════════════════════════════════════════════
-                // 🗑️ حذف — بارز جدًا
-                // ═══════════════════════════════════════════════════
+                // 🗑️ حذف
                 ListTile(
                   leading: const Icon(Icons.delete,
                       color: Colors.red, size: 28),
@@ -965,7 +973,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
                 const Divider(height: 1),
 
-                // واتساب
                 ListTile(
                   leading: const Icon(Icons.message, color: Colors.green),
                   title: const Text('إرسال عبر واتساب'),
@@ -1000,7 +1007,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   },
                 ),
 
-                // مشاركة
                 ListTile(
                   leading: const Icon(Icons.share, color: Colors.blue),
                   title: const Text('مشاركة'),
@@ -1027,7 +1033,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   },
                 ),
 
-                // PDF
                 ListTile(
                   leading: const Icon(Icons.print, color: Colors.orange),
                   title: const Text('طباعة / حفظ PDF للعملية'),
