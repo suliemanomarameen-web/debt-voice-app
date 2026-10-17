@@ -15,19 +15,23 @@ class AppSettings {
   static const String autoCleanupDeleted = 'auto_cleanup_deleted';
 
   // ═══════════════════════════════════════════════════════════
-  // ✏️ مجموعة التعديل
+  // ✏️ مجموعة التعديل (مُبسّطة)
   // ═══════════════════════════════════════════════════════════
 
+  /// 🆕 السماح بتعديل الحسابات (كل الحقول)
+  static const String allowEditCustomers = 'allow_edit_customers';
+
+  /// السماح بتعديل العمليات (كل الحقول معًا: المبلغ + الأصناف + النوع)
   static const String allowEditTransactions = 'allow_edit_transactions';
-  static const String allowEditTransactionAmount =
-      'allow_edit_transaction_amount';
-  static const String allowEditTransactionItems =
-      'allow_edit_transaction_items';
-  static const String allowEditTransactionType =
-      'allow_edit_transaction_type';
+
+  /// السماح بتعديل رصيد العميل مباشرة
   static const String allowEditCustomerBalance =
       'allow_edit_customer_balance';
+
+  /// تسجيل كل تعديل في السجل
   static const String trackEdits = 'track_edits';
+
+  /// طلب سبب عند التعديل
   static const String requireEditReason = 'require_edit_reason';
 
   // ═══════════════════════════════════════════════════════════
@@ -115,10 +119,8 @@ class AppSettings {
     autoCleanupDeleted: true,
 
     // ✏️ التعديل
+    allowEditCustomers: true,
     allowEditTransactions: true,
-    allowEditTransactionAmount: true,
-    allowEditTransactionItems: true,
-    allowEditTransactionType: false,
     allowEditCustomerBalance: false,
     trackEdits: true,
     requireEditReason: false,
@@ -192,10 +194,8 @@ class AppSettings {
     softDeleteEnabled,
     retentionDays,
     autoCleanupDeleted,
+    allowEditCustomers,
     allowEditTransactions,
-    allowEditTransactionAmount,
-    allowEditTransactionItems,
-    allowEditTransactionType,
     allowEditCustomerBalance,
     trackEdits,
     requireEditReason,
