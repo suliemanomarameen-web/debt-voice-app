@@ -276,9 +276,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إضافة عملية — مع إصلاح البيان للسداد
-  // ═══════════════════════════════════════════════════════════
   Future<void> _addTransaction(String type) async {
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
@@ -470,6 +467,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             code: code,
                             accountant: accountant,
                             source: 'customer_screen',
+                            relatedId: code, // 🆕
                           );
 
                           if (accountant != null && accountant.isNotEmpty) {
@@ -611,7 +609,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 decoration: const InputDecoration(labelText: 'المبلغ'),
               ),
               const SizedBox(height: 8),
-              // 🆕 يظهر دائمًا
               TextField(
                 controller: itemsCtrl,
                 decoration: InputDecoration(
@@ -682,15 +679,24 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       return f;
                     }).join('، ');
 
+                    final oldVal = changedFields.contains('amount')
+                        ? t.amount.toStringAsFixed(0)
+                        : t.items;
+                    final newVal = changedFields.contains('amount')
+                        ? amt.toStringAsFixed(0)
+                        : newItems;
+
                     await LoggerService.log(
                       action: '✏️ تعديل عملية',
                       description: 'تم تعديل $fieldNames\n'
-                          'للعملية ${t.code ?? ""}\n'
+                          'من: $oldVal\n'
+                          'إلى: $newVal\n'
+                          'العميل: ${_customer.name}\n'
                           'بواسطة: ${accountant ?? "غير معروف"}',
                       level: LogLevel.warning,
                       category: LogCategory.transaction,
                       accountant: accountant,
-                      relatedId: t.id?.toString(),
+                      relatedId: t.code, // 🆕 كود العملية
                       needsAck: false,
                       metadata: {
                         'fields': changedFields,
@@ -698,6 +704,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                         'new_amount': amt,
                         'old_items': t.items,
                         'new_items': newItems,
+                        'customer_name': _customer.name,
+                        'transaction_code': t.code,
                       },
                     );
                   }
@@ -869,6 +877,34 @@ class _CustomerScreenState extends State<CustomerScreen> {
                         ),
                         const SizedBox(height: 8),
                       ],
+                      if (t.accountant != null &&
+                          t.accountant!.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.person,
+                                  size: 14, color: Colors.teal),
+                              const SizedBox(width: 6),
+                              Text(
+                                t.accountant!,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.teal,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       if (t.wasModified &&
                           SettingsService.getBool(
                             AppSettings.showTrackingInfo,
@@ -919,7 +955,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
                 const Divider(height: 1),
 
-                // ✏️ تعديل
                 ListTile(
                   leading: const Icon(Icons.edit,
                       color: Colors.blue, size: 28),
@@ -945,7 +980,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   },
                 ),
 
-                // 🗑️ حذف
                 ListTile(
                   leading: const Icon(Icons.delete,
                       color: Colors.red, size: 28),
