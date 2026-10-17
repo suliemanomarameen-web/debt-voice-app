@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
+import '../models/log_event.dart';
+import '../services/accountant_service.dart';
 import '../services/export_service.dart';
 import '../services/logger_service.dart';
+import '../config/app_settings.dart';
+import '../services/settings_service.dart';
 import '../screens/add_account_screen.dart';
 import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
-import '../widgets/quick_transaction_dialog.dart'; // 🆕
+import '../widgets/quick_transaction_dialog.dart';
 
 enum CustomerStatusFilter {
   active,
@@ -76,7 +80,116 @@ class _CustomersTabState extends State<CustomersTab> {
     _refresh();
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حذف عميل — مع الفحوصات الكاملة
+  // ═══════════════════════════════════════════════════════════
   Future<void> _deleteCustomer(Customer c) async {
+    // 1) فحص الرصيد
+    final balance = await db.customerBalance(c.id!);
+
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteNonzeroBalance,
+          defaultValue: true,
+        ) &&
+        balance != 0) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الحساب "${c.name}" رصيده غير صفري.',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('الرصيد الحالي',
+                        style: TextStyle(fontSize: 13)),
+                    Text(
+                      '${balance.toStringAsFixed(0)} ريال',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: balance > 0 ? Colors.red : Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '💡 يجب تصفية الرصيد أولاً قبل الحذف.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 2) فحص وجود معاملات
+    final txCount = await db.countCustomerTransactions(c.id!);
+
+    if (SettingsService.getBool(
+          AppSettings.blockDeleteWithTransactions,
+          defaultValue: true,
+        ) &&
+        txCount > 0) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('لا يمكن الحذف'),
+              ],
+            ),
+            content: Text(
+              'الحساب "${c.name}" عليه $txCount عملية.\n\n'
+              '💡 يجب حذف كل معاملاته أولاً.',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 3) تأكيد الحذف
+    final useSoft = SettingsService.getBool(
+      AppSettings.softDeleteEnabled,
+      defaultValue: true,
+    );
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
@@ -89,8 +202,12 @@ class _CustomersTabState extends State<CustomersTab> {
               Text('تأكيد الحذف'),
             ],
           ),
-          content:
-              Text('سيتم حذف "${c.name}" وكل معاملاته.\n\nلا يمكن التراجع.'),
+          content: Text(
+            useSoft
+                ? 'سيتم نقل "${c.name}" وكل معاملاته إلى سلة المحذوفات.\n\n'
+                    'يمكن استعادته خلال 30 يومًا.'
+                : '⚠️ سيتم حذف "${c.name}" **نهائيًا**!\n\nلا يمكن التراجع.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -99,17 +216,39 @@ class _CustomersTabState extends State<CustomersTab> {
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف'),
+              child: Text(useSoft ? 'حذف' : 'حذف نهائي'),
             ),
           ],
         ),
       ),
     );
-    if (ok == true) {
-      await db.deleteCustomer(c.id!);
-      await LoggerService.logCustomerDeleted(c.name);
-      _refresh();
+    if (ok != true) return;
+
+    // 4) تنفيذ الحذف + تسجيل من حذف
+    final accountant = await AccountantService.getAccountantName();
+
+    if (useSoft) {
+      await db.softDeleteCustomer(c.id!, by: accountant);
+    } else {
+      await db.hardDeleteCustomer(c.id!);
     }
+
+    await LoggerService.logCustomerDeleted(
+      c.name,
+      accountant: accountant,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(useSoft
+            ? 'تم نقل "${c.name}" إلى سلة المحذوفات'
+            : 'تم حذف "${c.name}" نهائيًا'),
+        backgroundColor: Colors.red,
+      ),
+    );
+
+    _refresh();
   }
 
   Future<void> _toggleActive(Customer c) async {
@@ -156,11 +295,15 @@ class _CustomersTabState extends State<CustomersTab> {
 
     if (confirmed != true) return;
 
-    await db.setCustomerActive(c.id!, !c.isActive);
+    // 🆕 من عدّل
+    final accountant = await AccountantService.getAccountantName();
+
+    await db.setCustomerActive(c.id!, !c.isActive, by: accountant);
 
     await LoggerService.logCustomerStatusChanged(
       name: c.name,
       isActive: !c.isActive,
+      accountant: accountant,
     );
 
     await _refresh();
@@ -181,9 +324,6 @@ class _CustomersTabState extends State<CustomersTab> {
     await ExportService.shareFile(f, text: 'كشف حساب ${c.name}');
   }
 
-  // ============================================================
-  // 🆕 نافذة عملية جديدة — تستخدم Widget المشترك
-  // ============================================================
   Future<void> _addTransactionQuick() async {
     final changed = await QuickTransactionDialog.show(context);
     if (changed == true && mounted) {
