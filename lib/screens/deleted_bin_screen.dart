@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/log_event.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
