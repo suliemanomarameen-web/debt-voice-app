@@ -161,31 +161,47 @@ class Transaction {
   bool get isCurrentlyActive => !isDeleted;
   bool get isTrashed => isDeleted;
 
+  /// 🆕 هل تم تعديلها بعد الإنشاء؟
+  /// يعتبر "معدّل" فقط إذا مر أكثر من 5 ثوانٍ بين createdAt و updatedAt
   bool get wasModified {
-    if (updatedAt == null || createdAt.isEmpty) return false;
-    return updatedAt != createdAt;
+    if (updatedAt == null || updatedAt!.isEmpty) return false;
+    if (createdAt.isEmpty) return false;
+
+    try {
+      final u = DateTime.parse(updatedAt!);
+      final c = DateTime.parse(createdAt);
+      return u.difference(c).inSeconds.abs() > 5;
+    } catch (_) {
+      return false;
+    }
   }
 
+  /// 🆕 هل تم تعديلها بواسطة شخص مختلف عن المنشئ؟
   bool get wasModifiedByOther {
     if (!wasModified) return false;
     if (accountant == null || updatedBy == null) return false;
     return accountant != updatedBy;
   }
 
+  /// 🆕 هل لها معرّف سحابي؟
   bool get hasCloudId => cloudId != null && cloudId!.isNotEmpty;
 
+  /// 🆕 نص وصفي لمن حذف العملية
   String get deletedByLabel {
     if (deletedBy == null || deletedBy!.isEmpty) return 'غير معروف';
     return deletedBy!;
   }
 
+  /// 🆕 نص وصفي لآخر تعديل — يظهر فقط إذا عُدّلت فعلاً
   String get lastModifiedLabel {
+    if (!wasModified) return 'لا تعديلات';
     if (lastModifiedBy == null || lastModifiedBy!.isEmpty) {
-      return 'لا تعديلات';
+      return 'تم التعديل';
     }
     return 'آخر تعديل: $lastModifiedBy';
   }
 
+  /// 🆕 ملخص العملية للعرض
   String get displayLabel {
     if (isReturn) return 'مرتجع';
     if (isDebt) return 'دين';
