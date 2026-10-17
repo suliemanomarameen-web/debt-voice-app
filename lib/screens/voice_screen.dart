@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
+import '../models/log_event.dart';
 import '../models/transaction.dart';
 import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
@@ -12,6 +13,8 @@ import '../services/parser_service.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
+import '../config/app_settings.dart';
+import '../services/settings_service.dart';
 
 class VoiceScreen extends StatefulWidget {
   final String? initialText;
@@ -54,10 +57,25 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  // ============================================================
-  // 🎤 زر التحدث (Speech-to-Text)
-  // ============================================================
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 فحص التفعيل
+  // ═══════════════════════════════════════════════════════════
+  bool _isVoiceEnabled() {
+    return SettingsService.getBool(
+      AppSettings.voiceEnabled,
+      defaultValue: true,
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🎤 زر التحدث
+  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleSpeech() async {
+    if (!_isVoiceEnabled()) {
+      _showDisabledMessage();
+      return;
+    }
+
     if (_recording) {
       await _audioService.stopRecording();
       setState(() => _recording = false);
@@ -93,10 +111,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // ============================================================
-  // 🔴 زر التسجيل (Record فقط)
-  // ============================================================
+  // ═══════════════════════════════════════════════════════════
+  // 🔴 زر التسجيل
+  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleRecording() async {
+    if (!_isVoiceEnabled()) {
+      _showDisabledMessage();
+      return;
+    }
+
     if (_listening) {
       await _speech.stop();
       setState(() => _listening = false);
@@ -111,10 +134,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       });
 
       if (path != null) {
-        // ═══════════════════════════════════════════════════════
-        // 🆕 حفظ كـ "معلّق" بدلاً من "ناجح"
-        // لأن الملف الصوتي لا يُفهم آلياً
-        // ═══════════════════════════════════════════════════════
         await LoggerService.logVoicePending(
           rawText: '(تسجيل صوتي محفوظ - بانتظار المراجعة)',
           audioPath: path,
@@ -168,9 +187,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  // ============================================================
+  void _showDisabledMessage() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('الإدخال الصوتي معطّل من الإعدادات'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // معالجة النص
-  // ============================================================
+  // ═══════════════════════════════════════════════════════════
   Future<void> _process() async {
     if (_autoProcessed) return;
     _autoProcessed = true;
@@ -205,9 +234,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _isProcessing = false;
         });
 
-        // ═══════════════════════════════════════════════════════
-        // 🆕 حفظ كـ معلّق
-        // ═══════════════════════════════════════════════════════
         await LoggerService.logVoicePending(
           rawText: _text,
           audioPath: audioPath,
@@ -245,9 +271,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _isProcessing = false;
         });
 
-        // ═══════════════════════════════════════════════════════
-        // 🆕 حفظ كـ معلّق مع partial parse
-        // ═══════════════════════════════════════════════════════
         await LoggerService.logVoicePending(
           rawText: _text,
           audioPath: audioPath,
@@ -331,6 +354,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حفظ حساب جديد — مع إصلاح bug
+  // ═══════════════════════════════════════════════════════════
   Future<void> _saveAccount() async {
     if (_isSavingAccount) return;
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
@@ -339,32 +365,43 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     try {
       final db = DatabaseHelper.instance;
+      final accountant = await AccountantService.getAccountantName();
+      final customerName = _parsed!.customerName;
 
-      final existing = await db.findExactCustomer(_parsed!.customerName);
+      final existing = await db.findExactCustomer(customerName);
       if (existing != null) {
         if (!mounted) return;
         setState(() {
           _errorMessage = 'الحساب موجود مسبقاً';
           _parsed = null;
         });
-        TtsService.speakExistsBefore(_parsed!.customerName);
+        // ✅ إصلاح: استخدام متغير محلي قبل التصفير
+        TtsService.speakExistsBefore(customerName);
         return;
       }
 
+      final now = DateTime.now().toIso8601String();
+
       await db.insertCustomer(Customer(
-        name: _parsed!.customerName,
+        name: customerName,
         accountType: _parsed!.accountType,
-        createdAt: DateTime.now().toIso8601String(),
+        createdBy: accountant,
+        updatedBy: accountant,
+        updatedAt: now,
+        createdAt: now,
       ));
 
-      await LoggerService.logCustomerAdded(_parsed!.customerName);
+      await LoggerService.logCustomerAdded(
+        customerName,
+        accountant: accountant,
+      );
 
       if (!mounted) return;
-      TtsService.speakAccountCreated(_parsed!.customerName);
+      TtsService.speakAccountCreated(customerName);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ تم إنشاء حساب: ${_parsed!.customerName}'),
+          content: Text('✅ تم إنشاء حساب: $customerName'),
           backgroundColor: Colors.green,
         ),
       );
@@ -379,6 +416,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // حفظ عملية — مع tracking
+  // ═══════════════════════════════════════════════════════════
   Future<void> _saveTransaction() async {
     if (_isSavingTransaction) return;
 
@@ -435,6 +475,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
             : p.items,
         createdAt: DateTime.now().toIso8601String(),
       ));
+
+      // 🆕 تحديث updated_at للعميل
+      if (accountant != null && accountant.isNotEmpty) {
+        await db.updateCustomerFields(
+          c.id!,
+          {},
+          by: accountant,
+        );
+      }
 
       final newBalance = await db.customerBalance(c.id!);
       if (!mounted) return;
@@ -529,6 +578,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final voiceEnabled = _isVoiceEnabled();
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -538,6 +588,24 @@ class _VoiceScreenState extends State<VoiceScreen> {
           children: [
             if (_isProcessing)
               const LinearProgressIndicator(minHeight: 3),
+            if (!voiceEnabled)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                color: Colors.orange.withOpacity(0.15),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'الإدخال الصوتي معطّل من الإعدادات',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
@@ -581,7 +649,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // ===== زرّان: التحدث + التسجيل =====
+                    // ===== زرّان =====
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -589,21 +657,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
                         Column(
                           children: [
                             GestureDetector(
-                              onTap: _isProcessing ? null : _toggleSpeech,
+                              onTap: (_isProcessing || !voiceEnabled)
+                                  ? null
+                                  : _toggleSpeech,
                               child: Container(
                                 width: 100,
                                 height: 100,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: _listening
-                                      ? Colors.red
-                                      : theme.colorScheme.primary,
+                                  color: !voiceEnabled
+                                      ? Colors.grey
+                                      : (_listening
+                                          ? Colors.red
+                                          : theme.colorScheme.primary),
                                   boxShadow: [
                                     BoxShadow(
                                       color: (_listening
                                               ? Colors.red
                                               : theme.colorScheme.primary)
-                                          .withOpacity(0.4),
+                                          .withOpacity(
+                                              voiceEnabled ? 0.4 : 0.0),
                                       blurRadius: 15,
                                       spreadRadius: 3,
                                     ),
@@ -622,9 +695,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
-                                color: _listening
-                                    ? Colors.red
-                                    : theme.colorScheme.onSurface,
+                                color: !voiceEnabled
+                                    ? Colors.grey
+                                    : (_listening
+                                        ? Colors.red
+                                        : theme.colorScheme.onSurface),
                               ),
                             ),
                             const Text(
@@ -639,21 +714,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
                         Column(
                           children: [
                             GestureDetector(
-                              onTap: _isProcessing ? null : _toggleRecording,
+                              onTap: (_isProcessing || !voiceEnabled)
+                                  ? null
+                                  : _toggleRecording,
                               child: Container(
                                 width: 100,
                                 height: 100,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: _recording
-                                      ? Colors.red
-                                      : Colors.deepOrange,
+                                  color: !voiceEnabled
+                                      ? Colors.grey
+                                      : (_recording
+                                          ? Colors.red
+                                          : Colors.deepOrange),
                                   boxShadow: [
                                     BoxShadow(
                                       color: (_recording
                                               ? Colors.red
                                               : Colors.deepOrange)
-                                          .withOpacity(0.4),
+                                          .withOpacity(
+                                              voiceEnabled ? 0.4 : 0.0),
                                       blurRadius: 15,
                                       spreadRadius: 3,
                                     ),
@@ -674,9 +754,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
-                                color: _recording
-                                    ? Colors.red
-                                    : theme.colorScheme.onSurface,
+                                color: !voiceEnabled
+                                    ? Colors.grey
+                                    : (_recording
+                                        ? Colors.red
+                                        : theme.colorScheme.onSurface),
                               ),
                             ),
                             const Text(
@@ -693,13 +775,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
                     // ===== رسالة الحالة =====
                     Text(
-                      _isProcessing
-                          ? '⏳ جاري المعالجة...'
-                          : _listening
-                              ? '🎙️ أستمع... تحدث بوضوح'
-                              : _recording
-                                  ? '🔴 جاري التسجيل... اضغط ⏹️ للحفظ'
-                                  : 'اضغط "تحدث" للتعرف، أو "سجّل" لحفظ الصوت',
+                      !voiceEnabled
+                          ? 'الإدخال الصوتي معطّل'
+                          : _isProcessing
+                              ? '⏳ جاري المعالجة...'
+                              : _listening
+                                  ? '🎙️ أستمع... تحدث بوضوح'
+                                  : _recording
+                                      ? '🔴 جاري التسجيل... اضغط ⏹️ للحفظ'
+                                      : 'اضغط "تحدث" للتعرف، أو "سجّل" لحفظ الصوت',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
