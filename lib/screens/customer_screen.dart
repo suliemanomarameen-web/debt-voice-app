@@ -43,37 +43,41 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _load() async {
-    final bal = await db.customerBalance(_customer.id!);
-    final allTx = await db.customerTransactions(_customer.id!);
+    try {
+      final bal = await db.customerBalance(_customer.id!);
+      final allTx = await db.customerTransactions(_customer.id!);
 
-    final all = await db.allCustomers();
-    final updated = all.where((c) => c.id == _customer.id).toList();
-    if (updated.isNotEmpty) {
-      _customer = updated.first;
-    }
+      final all = await db.allCustomers();
+      final updated = all.where((c) => c.id == _customer.id).toList();
+      if (updated.isNotEmpty) {
+        _customer = updated.first;
+      }
 
-    if (!mounted) return;
-    setState(() {
-      _balance = bal;
-      _allTx = allTx;
-      _applyFilter();
-    });
-
-    if (!_alertShown &&
-        _customer.isOverLimit(bal) &&
-        _customer.maxBalance != null) {
-      _alertShown = true;
-
-      await LoggerService.logCustomerLimitExceeded(
-        name: _customer.name,
-        balance: bal,
-        maxBalance: _customer.maxBalance!,
-      );
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _showLimitWarning();
+      if (!mounted) return;
+      setState(() {
+        _balance = bal;
+        _allTx = allTx;
+        _applyFilter();
       });
+
+      if (!_alertShown &&
+          _customer.isOverLimit(bal) &&
+          _customer.maxBalance != null) {
+        _alertShown = true;
+
+        await LoggerService.logCustomerLimitExceeded(
+          name: _customer.name,
+          balance: bal,
+          maxBalance: _customer.maxBalance!,
+        );
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showLimitWarning();
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ _load error: $e');
     }
   }
 
@@ -522,11 +526,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 تعديل معاملة — مع الإصلاحات
-  // ═══════════════════════════════════════════════════════════
   Future<void> _editTransaction(Transaction t) async {
-    // فحص السماح بتعديل العمليات
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -549,8 +549,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ? t.items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '')
             : t.items);
 
+    bool didSave = false;
+
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
@@ -613,22 +616,35 @@ class _CustomerScreenState extends State<CustomerScreen> {
             FilledButton(
               onPressed: () async {
                 final amt = double.tryParse(amountCtrl.text);
-                if (amt == null || amt <= 0) return;
+                if (amt == null || amt <= 0) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('أدخل مبلغًا صحيحًا'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
 
                 final newItems = isReturn
                     ? 'مرتجع: ${itemsCtrl.text.trim()}'
                     : itemsCtrl.text.trim();
 
-                final accountant =
-                    await AccountantService.getAccountantName();
-
-                // تتبع التغييرات
                 final changedFields = <String>[];
                 if (amt != t.amount) changedFields.add('amount');
                 if (newItems != t.items) changedFields.add('items');
 
-                // ✅ إصلاح: تحديث مع الحفاظ على cloudId
-                final updatedTx = t.copyWith(
+                if (changedFields.isEmpty) {
+                  if (!mounted) return;
+                  Navigator.pop(context);
+                  return;
+                }
+
+                final accountant =
+                    await AccountantService.getAccountantName();
+
+                final updated = t.copyWith(
                   amount: amt,
                   items: newItems,
                   updatedBy: accountant,
@@ -637,51 +653,63 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   lastModifiedFrom: 'customer_screen',
                 );
 
-                await db.updateTransaction(updatedTx, by: accountant);
+                try {
+                  final r = await db.updateTransaction(updated, by: accountant);
+                  debugPrint('✅ Updated transaction: $r rows');
 
-                // تسجيل التعديل
-                if (changedFields.isNotEmpty &&
-                    SettingsService.getBool(
-                      AppSettings.logTransactionEdits,
-                      defaultValue: true,
-                    )) {
-                  final fieldNames = changedFields.map((f) {
-                    if (f == 'amount') return 'المبلغ';
-                    if (f == 'items') return 'الأصناف';
-                    return f;
-                  }).join('، ');
+                  if (SettingsService.getBool(
+                    AppSettings.logTransactionEdits,
+                    defaultValue: true,
+                  )) {
+                    final fieldNames = changedFields.map((f) {
+                      if (f == 'amount') return 'المبلغ';
+                      if (f == 'items') return 'الأصناف';
+                      return f;
+                    }).join('، ');
 
-                  final oldVal = changedFields.contains('amount')
-                      ? t.amount.toStringAsFixed(0)
-                      : t.items;
-                  final newVal = changedFields.contains('amount')
-                      ? amt.toStringAsFixed(0)
-                      : newItems;
+                    await LoggerService.log(
+                      action: '✏️ تعديل عملية',
+                      description: 'تم تعديل $fieldNames\n'
+                          'للعملية ${t.code ?? ""}\n'
+                          'بواسطة: ${accountant ?? "غير معروف"}',
+                      level: LogLevel.warning,
+                      category: LogCategory.transaction,
+                      accountant: accountant,
+                      relatedId: t.id?.toString(),
+                      needsAck: false,
+                      metadata: {
+                        'fields': changedFields,
+                        'old_amount': t.amount,
+                        'new_amount': amt,
+                        'old_items': t.items,
+                        'new_items': newItems,
+                      },
+                    );
+                  }
 
-                  await LoggerService.log(
-                    action: '✏️ تعديل عملية',
-                    description: 'تم تعديل $fieldNames\n'
-                        'من: $oldVal\n'
-                        'إلى: $newVal\n'
-                        'بواسطة: ${accountant ?? "غير معروف"}',
-                    level: LogLevel.warning,
-                    category: LogCategory.transaction,
-                    accountant: accountant,
-                    relatedId: t.id?.toString(),
-                    needsAck: false,
-                    metadata: {
-                      'fields': changedFields,
-                      'old_amount': t.amount,
-                      'new_amount': amt,
-                      'old_items': t.items,
-                      'new_items': newItems,
-                    },
+                  didSave = true;
+
+                  if (!mounted) return;
+                  Navigator.pop(context);
+
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ تم التعديل'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                } catch (e) {
+                  debugPrint('❌ update error: $e');
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('فشل: $e'),
+                      backgroundColor: Colors.red,
+                    ),
                   );
                 }
-
-                if (mounted) Navigator.pop(context);
-                // ✅ إصلاح: إعادة تحميل لضمان إمكانية التعديل مرة أخرى
-                await _load();
               },
               child: const Text('حفظ'),
             ),
@@ -689,6 +717,10 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
       ),
     );
+
+    if (didSave && mounted) {
+      await _load();
+    }
   }
 
   Future<void> _deleteTransaction(Transaction t) async {
@@ -707,7 +739,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
           content: Text(
             'سيتم نقل هذه العملية إلى سلة المحذوفات:\n\n'
             '${t.code != null ? 'الرمز: ${t.code}\n' : ''}'
-            '${t.accountant != null ? 'المحاسب: ${t.accountant}\n' : ''}'
             'النوع: ${t.type == 'debt' ? 'دين' : 'سداد'}\n'
             'المبلغ: ${t.amount.toStringAsFixed(0)} ${t.currency}\n'
             '${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}'
@@ -728,7 +759,9 @@ class _CustomerScreenState extends State<CustomerScreen> {
       ),
     );
 
-    if (confirmed == true) {
+    if (confirmed != true) return;
+
+    try {
       final accountant = await AccountantService.getAccountantName();
 
       final useSoft = SettingsService.getBool(
@@ -749,219 +782,236 @@ class _CustomerScreenState extends State<CustomerScreen> {
         accountant: accountant,
       );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(useSoft
-                ? 'تم نقل العملية إلى سلة المحذوفات'
-                : 'تم حذف العملية نهائيًا'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(useSoft
+              ? '✅ تم نقل العملية إلى سلة المحذوفات'
+              : '✅ تم الحذف النهائي'),
+          backgroundColor: Colors.red,
+        ),
+      );
+
       await _load();
+    } catch (e) {
+      debugPrint('❌ delete error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('فشل الحذف: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 قائمة العمليات — تشمل تعديل وحذف في الأعلى
+  // ═══════════════════════════════════════════════════════════
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    if (t.code != null && t.code!.isNotEmpty) ...[
-                      InkWell(
-                        onTap: () => _copyCode(t.code!),
-                        borderRadius: BorderRadius.circular(20),
-                        child: Container(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      if (t.code != null && t.code!.isNotEmpty) ...[
+                        InkWell(
+                          onTap: () => _copyCode(t.code!),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.qr_code,
+                                    size: 14, color: Colors.blue),
+                                const SizedBox(width: 6),
+                                Text(
+                                  t.code!,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.copy,
+                                    size: 12, color: Colors.blue),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (t.wasModified &&
+                          SettingsService.getBool(
+                            AppSettings.showTrackingInfo,
+                            defaultValue: true,
+                          ))
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.15),
+                            color: Colors.orange.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.qr_code,
-                                  size: 14, color: Colors.blue),
+                              const Icon(Icons.edit,
+                                  size: 14, color: Colors.orange),
                               const SizedBox(width: 6),
                               Text(
-                                t.code!,
+                                'عُدّلت بواسطة: ${t.lastModifiedBy ?? t.updatedBy ?? "غير معروف"}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(Icons.copy,
-                                  size: 12, color: Colors.blue),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (t.accountant != null && t.accountant!.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.teal.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.person,
-                                size: 14, color: Colors.teal),
-                            const SizedBox(width: 6),
-                            Text(
-                              t.accountant!,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.teal,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (t.source != null && t.source!.isNotEmpty) ...[
-                      Builder(builder: (_) {
-                        final info = Transaction.sourceInfo(t.source);
-                        final c = Color(info.color);
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: c.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                info.emoji,
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                info.label,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: c,
-                                  fontSize: 13,
+                                  color: Colors.orange,
+                                  fontSize: 12,
                                 ),
                               ),
                             ],
                           ),
-                        );
-                      }),
-                      const SizedBox(height: 8),
+                        ),
+                      Text(
+                        '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatDateTime(t.createdAt),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
                     ],
-                    if (t.wasModified &&
-                        SettingsService.getBool(
-                          AppSettings.showTrackingInfo,
-                          defaultValue: true,
-                        ))
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.edit,
-                                size: 14, color: Colors.orange),
-                            const SizedBox(width: 6),
-                            Text(
-                              'عُدّلت بواسطة: ${t.lastModifiedBy ?? t.updatedBy ?? "غير معروف"}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDateTime(t.createdAt),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.message, color: Colors.green),
-                title: const Text('إرسال عبر واتساب'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  if (_customer.phone == null ||
-                      _customer.phone!.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('لا يوجد رقم هاتف لهذا العميل'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
-                  try {
-                    await WhatsAppService.sendTransactionNotification(
-                      phone: _customer.phone,
-                      customerName: _customer.name,
-                      type: t.type,
-                      amount: t.amount,
-                      newBalance: _balance,
-                    );
-                  } catch (e) {
+                const Divider(height: 1),
+
+                // ═══════════════════════════════════════════════════
+                // ✏️ تعديل — بارز جدًا
+                // ═══════════════════════════════════════════════════
+                ListTile(
+                  leading: const Icon(Icons.edit,
+                      color: Colors.blue, size: 28),
+                  title: const Text(
+                    'تعديل العملية',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'تعديل المبلغ أو الأصناف',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await Future.delayed(
+                        const Duration(milliseconds: 300));
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('خطأ: $e')),
-                      );
+                      await _editTransaction(t);
                     }
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.share, color: Colors.blue),
-                title: const Text('مشاركة'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final typeLabel = t.type == 'debt'
-                      ? 'دين'
-                      : t.items.startsWith('مرتجع')
-                          ? 'مرتجع'
-                          : 'سداد';
-                  final text = '''
+                  },
+                ),
+
+                // ═══════════════════════════════════════════════════
+                // 🗑️ حذف — بارز جدًا
+                // ═══════════════════════════════════════════════════
+                ListTile(
+                  leading: const Icon(Icons.delete,
+                      color: Colors.red, size: 28),
+                  title: const Text(
+                    'حذف العملية',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'نقلها إلى سلة المحذوفات',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await Future.delayed(
+                        const Duration(milliseconds: 300));
+                    if (mounted) {
+                      await _deleteTransaction(t);
+                    }
+                  },
+                ),
+
+                const Divider(height: 1),
+
+                // واتساب
+                ListTile(
+                  leading: const Icon(Icons.message, color: Colors.green),
+                  title: const Text('إرسال عبر واتساب'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    if (_customer.phone == null ||
+                        _customer.phone!.isEmpty) {
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('لا يوجد رقم هاتف لهذا العميل'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                    try {
+                      await WhatsAppService.sendTransactionNotification(
+                        phone: _customer.phone,
+                        customerName: _customer.name,
+                        type: t.type,
+                        amount: t.amount,
+                        newBalance: _balance,
+                      );
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('خطأ: $e')),
+                        );
+                      }
+                    }
+                  },
+                ),
+
+                // مشاركة
+                ListTile(
+                  leading: const Icon(Icons.share, color: Colors.blue),
+                  title: const Text('مشاركة'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final typeLabel = t.type == 'debt'
+                        ? 'دين'
+                        : t.items.startsWith('مرتجع')
+                            ? 'مرتجع'
+                            : 'سداد';
+                    final text = '''
 السلام عليكم ${_customer.name}،
 تم تسجيل العملية التالية:
 
@@ -973,48 +1023,36 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
 شكراً لتعاملكم معنا
 ''';
-                  await Share.share(text);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.print, color: Colors.orange),
-                title: const Text('طباعة / حفظ PDF للعملية'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    final file = await PdfService.generateStatement(
-                      _customer,
-                      fromDate: DateTime.parse(t.createdAt),
-                      toDate: DateTime.parse(t.createdAt),
-                    );
-                    await PdfService.share(file, _customer.name);
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('فشل: $e')),
+                    await Share.share(text);
+                  },
+                ),
+
+                // PDF
+                ListTile(
+                  leading: const Icon(Icons.print, color: Colors.orange),
+                  title: const Text('طباعة / حفظ PDF للعملية'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    try {
+                      final file = await PdfService.generateStatement(
+                        _customer,
+                        fromDate: DateTime.parse(t.createdAt),
+                        toDate: DateTime.parse(t.createdAt),
                       );
+                      await PdfService.share(file, _customer.name);
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('فشل: $e')),
+                        );
+                      }
                     }
-                  }
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('تعديل'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _editTransaction(t);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('حذف', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _deleteTransaction(t);
-                },
-              ),
-            ],
+                  },
+                ),
+
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         ),
       ),
@@ -1531,11 +1569,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     }[t] ?? 'عميل';
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 إيقاف/تفعيل الحساب — مع فحص allowEditCustomers
-  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleCustomerActive() async {
-    // فحص السماح بتعديل الحسابات
     if (!SettingsService.getBool(
       AppSettings.allowEditCustomers,
       defaultValue: true,
@@ -1708,7 +1742,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         ],
                       ),
                     ),
-                  // شارة "مُعدّلة" — فقط إذا عُدّلت فعلاً
                   if (t.wasModified &&
                       SettingsService.getBool(
                         AppSettings.showTrackingInfo,
