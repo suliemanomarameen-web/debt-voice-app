@@ -27,6 +27,7 @@ class SyncResult {
   final int customersUpdated;
   final int transactionsUpdated;
   final int customersRestored;
+  final int transactionsRestored;
   final int logsAdded;
   final int conflictsCount;
   final bool hasConflict;
@@ -40,6 +41,7 @@ class SyncResult {
     this.customersUpdated = 0,
     this.transactionsUpdated = 0,
     this.customersRestored = 0,
+    this.transactionsRestored = 0,
     this.logsAdded = 0,
     this.conflictsCount = 0,
     this.hasConflict = false,
@@ -49,7 +51,7 @@ class SyncResult {
 
 /// تعارض
 class SyncConflict {
-  final String type; // 'customer' | 'transaction'
+  final String type;
   final String itemName;
   final List<String> fields;
   final DateTime localTime;
@@ -257,7 +259,7 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // المزامنة الفعلية
+  // 🆕 المزامنة الفعلية — بترتيب "ارفع أولاً"
   // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> _performSync({required bool silent}) async {
     if (!silent) _setStatus(SyncStatus.syncing);
@@ -273,14 +275,15 @@ class SyncService {
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
 
       final hasLocalChanges =
           lastLocal != null && (lastSync == null || lastLocal.isAfter(lastSync));
       final hasCloudChanges = cloudModified != null &&
           (lastSync == null || cloudModified.isAfter(lastSync));
 
+      // ═══════════════════════════════════════════════════════
       // لا تغييرات
+      // ═══════════════════════════════════════════════════════
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
         await prefs.setString(_keyLastSyncTime, now.toIso8601String());
@@ -300,28 +303,23 @@ class SyncService {
       int updatedCustomers = 0;
       int updatedTransactions = 0;
       int restoredCustomers = 0;
+      int restoredTransactions = 0;
       int addedLogs = 0;
       int conflictsCount = 0;
 
+      Map<String, dynamic>? cloudData;
+
       // ═══════════════════════════════════════════════════════
-      // دمج السحابة مع المحلي
+      // 🆕 الخطوة 1: اقرأ السحابة (بدون تطبيق)
       // ═══════════════════════════════════════════════════════
-      if (hasCloudChanges && cloudData != null) {
-        if (!silent) _setStatus(SyncStatus.downloading);
-        final result = await _mergeCloudData(cloudData);
-        addedCustomers = result['customers_added'] ?? 0;
-        addedTransactions = result['transactions_added'] ?? 0;
-        updatedCustomers = result['customers_updated'] ?? 0;
-        updatedTransactions = result['transactions_updated'] ?? 0;
-        restoredCustomers = result['customers_restored'] ?? 0;
-        addedLogs = result['logs_added'] ?? 0;
-        conflictsCount = result['conflicts'] ?? 0;
+      if (hasCloudChanges) {
+        cloudData = await GDriveService.downloadSyncFile();
       }
 
       // ═══════════════════════════════════════════════════════
-      // رفع الحالة
+      // 🆕 الخطوة 2: ارفع الحالة المحلية أولاً
       // ═══════════════════════════════════════════════════════
-      if (hasLocalChanges || hasCloudChanges) {
+      if (hasLocalChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
         final uploadOk = await _uploadCurrentState();
 
@@ -334,6 +332,24 @@ class SyncService {
           if (!_resultController.isClosed) _resultController.add(errResult);
           return errResult;
         }
+
+        debugPrint('✅ [Sync] Uploaded local state first');
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // 🆕 الخطوة 3: نزّل السحابة الآن (بعد الرفع)
+      // ═══════════════════════════════════════════════════════
+      if (hasCloudChanges && cloudData != null) {
+        if (!silent) _setStatus(SyncStatus.downloading);
+        final result = await _mergeCloudData(cloudData);
+        addedCustomers = result['customers_added'] ?? 0;
+        addedTransactions = result['transactions_added'] ?? 0;
+        updatedCustomers = result['customers_updated'] ?? 0;
+        updatedTransactions = result['transactions_updated'] ?? 0;
+        restoredCustomers = result['customers_restored'] ?? 0;
+        restoredTransactions = result['transactions_restored'] ?? 0;
+        addedLogs = result['logs_added'] ?? 0;
+        conflictsCount = result['conflicts'] ?? 0;
       }
 
       // ═══════════════════════════════════════════════════════
@@ -349,7 +365,6 @@ class SyncService {
 
       if (!silent) _setStatus(SyncStatus.idle);
 
-      // تسجيل في السجل
       if (!silent) {
         await LoggerService.logSyncSuccess(
           transactionsAdded: addedTransactions,
@@ -369,6 +384,7 @@ class SyncService {
         customersUpdated: updatedCustomers,
         transactionsUpdated: updatedTransactions,
         customersRestored: restoredCustomers,
+        transactionsRestored: restoredTransactions,
         logsAdded: addedLogs,
         conflictsCount: conflictsCount,
         hasConflict: conflictsCount > 0,
@@ -402,7 +418,7 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // دمج البيانات السحابية
+  // دمج البيانات السحابية (بعد الرفع)
   // ═══════════════════════════════════════════════════════════
   static Future<Map<String, int>> _mergeCloudData(
       Map<String, dynamic> cloudData) async {
@@ -413,6 +429,7 @@ class SyncService {
     int updatedCustomers = 0;
     int updatedTransactions = 0;
     int restoredCustomers = 0;
+    int restoredTransactions = 0;
     int addedLogs = 0;
     int conflicts = 0;
 
@@ -436,7 +453,7 @@ class SyncService {
       }
 
       // ═══════════════════════════════════════════════════════
-      // 2. العملاء — مطابقة بـ cloud_id
+      // 2. العملاء
       // ═══════════════════════════════════════════════════════
       final Map<int, int> cloudIdToLocalId = {};
 
@@ -445,7 +462,6 @@ class SyncService {
         final cloudName = cc['name'] as String? ?? '';
 
         if (cloudId == null || cloudId.isEmpty) {
-          // fallback: مطابقة بالاسم + created_at
           final cloudCreated = cc['created_at'] as String? ?? '';
           final localId =
               await db.findCustomerIdByNameAndDate(cloudName, cloudCreated);
@@ -456,21 +472,18 @@ class SyncService {
           continue;
         }
 
-        // ابحث في المحلي بـ cloud_id
         final localRows = await db.database.then((d) => d.query('customers',
             where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
 
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
-          // 🆕 جديد من السحابة → نزّل
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
           addedCustomers++;
           if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = newId;
 
-          // تسجيل نشاط
           if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
             await _logRemoteActivity(
               item: 'حساب "$cloudName"',
@@ -479,7 +492,6 @@ class SyncService {
             );
           }
         } else {
-          // موجود → قارن
           final localId = localRows.first['id'] as int;
           if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = localId;
 
@@ -499,7 +511,7 @@ class SyncService {
       }
 
       // ═══════════════════════════════════════════════════════
-      // 3. المعاملات — مطابقة بـ cloud_id
+      // 3. المعاملات
       // ═══════════════════════════════════════════════════════
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
@@ -507,15 +519,10 @@ class SyncService {
 
         if (cloudCustomerId == null) continue;
 
-        // ترجم customer_id
         final localCustomerId = cloudIdToLocalId[cloudCustomerId];
-        if (localCustomerId == null) {
-          // العميل غير موجود محليًا — تجاهل (سيُعالَج في مزامنة قادمة)
-          continue;
-        }
+        if (localCustomerId == null) continue;
 
         if (cloudId == null || cloudId.isEmpty) {
-          // fallback: مطابقة بـ (customer + amount + type + created_at)
           final amount = (ct['amount'] as num?)?.toDouble() ?? 0;
           final type = ct['type'] as String? ?? 'debt';
           final createdAt = ct['created_at'] as String? ?? '';
@@ -536,12 +543,10 @@ class SyncService {
           continue;
         }
 
-        // مطابقة بـ cloud_id
         final localRows = await db.database.then((d) => d.query('transactions',
             where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
 
         if (localRows.isEmpty) {
-          // جديد
           final newMap = Map<String, dynamic>.from(ct);
           newMap.remove('id');
           newMap['customer_id'] = localCustomerId;
@@ -556,7 +561,6 @@ class SyncService {
             );
           }
         } else {
-          // موجود → قارن
           final resolution = await _resolveTransactionConflict(
             localRow: localRows.first,
             cloudRow: ct,
@@ -564,6 +568,8 @@ class SyncService {
 
           if (resolution.action == 'updated') {
             updatedTransactions++;
+          } else if (resolution.action == 'restored') {
+            restoredTransactions++;
           } else if (resolution.action == 'conflict') {
             conflicts++;
           }
@@ -571,7 +577,7 @@ class SyncService {
       }
 
       // ═══════════════════════════════════════════════════════
-      // 4. الأحداث (log_events)
+      // 4. الأحداث
       // ═══════════════════════════════════════════════════════
       if (SettingsService.getBool(AppSettings.syncLogs)) {
         for (final cl in cloudLogs) {
@@ -596,7 +602,7 @@ class SyncService {
       }
 
       debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts');
+          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, ~$restoredTransactions restored, +$addedLogs logs, $conflicts conflicts');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
     }
@@ -607,13 +613,14 @@ class SyncService {
       'customers_restored': restoredCustomers,
       'transactions_added': addedTransactions,
       'transactions_updated': updatedTransactions,
+      'transactions_restored': restoredTransactions,
       'logs_added': addedLogs,
       'conflicts': conflicts,
     };
   }
 
   // ═══════════════════════════════════════════════════════════
-  // حل تعارض العميل
+  // 🆕 حل تعارض العميل
   // ═══════════════════════════════════════════════════════════
   static Future<_ResolutionResult> _resolveCustomerConflict({
     required Map<String, dynamic> localRow,
@@ -648,29 +655,27 @@ class SyncService {
     // الحالة 2: تعارض حذف
     // ═══════════════════════════════════════════════════════
     if (localDeleted != cloudDeleted) {
-      // القاعدة: الحذف يُلغى دائمًا + تنبيه
-
+      // محلي حذف + سحابي نشط = تعارض حقيقي → استعادة + تنبيه
       if (localDeleted && !cloudDeleted) {
-        // المحلي حذف، السحابي نشط → استعد محليًا
         await db.restoreCustomer(localId, by: 'المزامنة');
         await _logDeletionConflict(
           item: 'حساب "$name"',
           deletedBy: localRow['deleted_by'] as String?,
           deletedAt: localRow['deleted_at'] as String?,
           restoredBy: 'المزامنة',
-          reason: 'السحابة لا تزال نشطة',
+          reason: 'السحابة لا تزال نشطة — تم استعادة الحساب',
         );
         return _ResolutionResult('restored');
       }
 
+      // محلي نشط + سحابي محذوف = تعارض حقيقي → تنبيه فقط (لا حذف)
       if (!localDeleted && cloudDeleted) {
-        // السحابي حذف، المحلي نشط → لا نحذف (فقط تنبيه)
         await _logDeletionConflict(
           item: 'حساب "$name"',
           deletedBy: cloudRow['deleted_by'] as String?,
           deletedAt: cloudRow['deleted_at'] as String?,
           restoredBy: 'جهاز آخر',
-          reason: 'الحساب نشط على هذا الجهاز',
+          reason: 'الحساب نشط على هذا الجهاز — يُترك كما هو',
         );
         return _ResolutionResult('conflict');
       }
@@ -683,15 +688,12 @@ class SyncService {
       final localIsNewer = localTime.isAfter(cloudTime);
 
       if (localIsNewer) {
-        // المحلي أحدث → لا تغيير (سنرفع)
         return _ResolutionResult('no_change');
       }
 
-      // السحابي أحدث → طبّق الفروقات
       final changedFields = <String>[];
       final updateData = <String, dynamic>{};
 
-      // الحقول القابلة للتعديل
       final fields = [
         'name',
         'phone',
@@ -718,7 +720,6 @@ class SyncService {
 
         await db.updateCustomerFields(localId, updateData);
 
-        // سجّل التنبيه
         await _logFieldConflict(
           item: 'حساب "$name"',
           fields: changedFields,
@@ -735,7 +736,7 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // حل تعارض المعاملة
+  // 🆕 حل تعارض المعاملة
   // ═══════════════════════════════════════════════════════════
   static Future<_ResolutionResult> _resolveTransactionConflict({
     required Map<String, dynamic> localRow,
@@ -760,40 +761,47 @@ class SyncService {
     final code = localRow['code'] as String? ?? '';
     final amount = (localRow['amount'] as num?)?.toDouble() ?? 0;
 
+    // ═══════════════════════════════════════════════════════
     // الحالة 1: لا تغييرات
+    // ═══════════════════════════════════════════════════════
     if (localUpdatedAt == cloudUpdatedAt &&
         localDeleted == cloudDeleted) {
       return _ResolutionResult('no_change');
     }
 
+    // ═══════════════════════════════════════════════════════
     // الحالة 2: تعارض حذف
+    // ═══════════════════════════════════════════════════════
     if (localDeleted != cloudDeleted) {
+      // محلي حذف + سحابي نشط = تعارض حقيقي → استعادة + تنبيه
       if (localDeleted && !cloudDeleted) {
-        // استعادة
         await db.restoreTransaction(localId, by: 'المزامنة');
         await _logDeletionConflict(
           item: 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
           deletedBy: localRow['deleted_by'] as String?,
           deletedAt: localRow['deleted_at'] as String?,
           restoredBy: 'المزامنة',
-          reason: 'السحابة لا تزال نشطة',
+          reason: 'السحابة لا تزال نشطة — تم استعادة العملية',
         );
         return _ResolutionResult('restored');
       }
 
+      // محلي نشط + سحابي محذوف = تعارض حقيقي → تنبيه فقط (لا حذف)
       if (!localDeleted && cloudDeleted) {
         await _logDeletionConflict(
           item: 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
           deletedBy: cloudRow['deleted_by'] as String?,
           deletedAt: cloudRow['deleted_at'] as String?,
           restoredBy: 'جهاز آخر',
-          reason: 'العملية نشطة على هذا الجهاز',
+          reason: 'العملية نشطة على هذا الجهاز — تُترك كما هي',
         );
         return _ResolutionResult('conflict');
       }
     }
 
+    // ═══════════════════════════════════════════════════════
     // الحالة 3: تعارض تعديل
+    // ═══════════════════════════════════════════════════════
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
 
@@ -801,7 +809,6 @@ class SyncService {
         return _ResolutionResult('no_change');
       }
 
-      // السحابي أحدث → طبّق
       final changedFields = <String>[];
       final updateData = <String, dynamic>{};
 
@@ -877,7 +884,7 @@ class SyncService {
           desc.write('وقت الحذف: ${_fmtDt(dt)}\n');
         }
       }
-      if (restoredBy != null) desc.write('أعاد: $restoredBy\n');
+      if (restoredBy != null) desc.write('أعاده: $restoredBy\n');
       if (reason != null) desc.write('السبب: $reason');
 
       await LoggerService.log(
