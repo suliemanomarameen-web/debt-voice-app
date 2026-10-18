@@ -51,19 +51,20 @@ class BackupService {
   /// إنشاء نسخة احتياطية محلية
   static Future<BackupResult> createBackup() async {
     try {
-      final db = DatabaseHelper.instance.database;
-      final dbi = await db;
+      final dbi = await DatabaseHelper.instance.database;
 
       // قراءة كل البيانات
       final customersRaw = await dbi.query('customers');
       final transactionsRaw = await dbi.query('transactions');
+      final usedCodesRaw = await dbi.query('used_codes');
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 1,
+        'version': 2,
         'created_at': DateTime.now().toIso8601String(),
         'customers': customersRaw,
         'transactions': transactionsRaw,
+        'used_codes': usedCodesRaw, // 🆕
       };
 
       final jsonStr = jsonEncode(data);
@@ -134,7 +135,8 @@ class BackupService {
     return false;
   }
 
-  /// استعادة من ملف
+  /// 🆕 استعادة من ملف — مع إصلاح مشكلة الرموز
+  ///
   /// mode: 'replace' (استبدال كامل) أو 'merge' (دمج)
   static Future<RestoreResult> restoreFromFile(
     String filePath, {
@@ -167,18 +169,25 @@ class BackupService {
       int addedCustomers = 0;
       int addedTransactions = 0;
 
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 إصلاح: امسح used_codes و log_events القديمة عند replace
+      // ═══════════════════════════════════════════════════════════
       if (mode == 'replace') {
-        // 🆕 حذف كل شيء (بما فيها used_codes و log_events)
+        debugPrint('🔄 [Restore] Replace mode - clearing all tables');
+
+        // امسح كل شيء (بما فيها used_codes و log_events)
         await dbi.delete('transactions');
         await dbi.delete('customers');
-        await dbi.delete('used_codes'); // 🆕 منع تعارض الرموز
-        // ✅ ملاحظة: لا نحذف log_events (السجل مهم)
+        await dbi.delete('used_codes'); // 🆕 مهم جداً
+        await dbi.delete('log_events'); // 🆕 لمنع تكرار الأحداث
       }
 
       // خريطة المعرفات القديمة → الجديدة
       final idMap = <int, int>{};
 
+      // ═══════════════════════════════════════════════════════════
       // استيراد الزبائن
+      // ═══════════════════════════════════════════════════════════
       for (final c in customers) {
         final oldId = c['id'] as int;
         final name = c['name'] as String;
@@ -189,19 +198,21 @@ class BackupService {
         final maxBalance = c['max_balance'];
         final isActive = c['is_active'] ?? 1;
         final createdAt = c['created_at'] as String;
+        final cloudId = c['cloud_id'] as String?;
+        final createdBy = c['created_by'] as String?;
 
         if (mode == 'merge') {
           // ابحث عن زبون بنفس الاسم
           final existing = await dbi.query('customers',
               where: 'name = ?', whereArgs: [name], limit: 1);
           if (existing.isNotEmpty) {
-            // موجود → لا نضيفه، نحفظ الـ mapping
             idMap[oldId] = existing.first['id'] as int;
             continue;
           }
         }
 
         final newId = await dbi.insert('customers', {
+          'cloud_id': cloudId,
           'name': name,
           'phone': phone,
           'account_type': accountType,
@@ -209,20 +220,22 @@ class BackupService {
           'category': category,
           'max_balance': maxBalance,
           'is_active': isActive,
+          'created_by': createdBy,
           'created_at': createdAt,
         });
         idMap[oldId] = newId;
         addedCustomers++;
       }
 
+      // ═══════════════════════════════════════════════════════════
       // استيراد المعاملات
+      // ═══════════════════════════════════════════════════════════
       for (final t in transactions) {
         final oldCustomerId = t['customer_id'] as int;
         final newCustomerId = idMap[oldCustomerId];
-        if (newCustomerId == null) continue; // الزبون غير موجود
+        if (newCustomerId == null) continue;
 
         if (mode == 'merge') {
-          // تحقق من وجود معاملة مطابقة
           final amount = (t['amount'] as num).toDouble();
           final createdAt = t['created_at'] as String;
           final existing = await dbi.query('transactions',
@@ -232,7 +245,10 @@ class BackupService {
           if (existing.isNotEmpty) continue;
         }
 
+        final cloudId = t['cloud_id'] as String?;
+
         await dbi.insert('transactions', {
+          'cloud_id': cloudId,
           'customer_id': newCustomerId,
           'code': t['code'] as String?,
           'accountant': t['accountant'] as String?,
@@ -254,12 +270,32 @@ class BackupService {
               'created_at':
                   t['created_at'] as String? ?? DateTime.now().toIso8601String(),
             });
-          } catch (_) {
+          } catch (e) {
             // الرمز موجود مسبقاً — تجاهل
+            debugPrint('⚠️ [Restore] Code exists: $code');
           }
         }
 
         addedTransactions++;
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // 🆕 استيراد الرموز المحفوظة (احتياطي)
+      // ═══════════════════════════════════════════════════════════
+      final savedCodes = (data['used_codes'] as List?)?.cast<Map>() ?? [];
+      for (final uc in savedCodes) {
+        final code = uc['code'] as String?;
+        if (code == null) continue;
+        try {
+          await dbi.insert('used_codes', {
+            'code': code,
+            'type': uc['type'] as String? ?? 'debt',
+            'created_at': uc['created_at'] as String? ??
+                DateTime.now().toIso8601String(),
+          });
+        } catch (e) {
+          // موجود مسبقاً — تجاهل
+        }
       }
 
       return RestoreResult(
@@ -294,6 +330,7 @@ class BackupService {
         'created_at': data['created_at'],
         'customers_count': (data['customers'] as List).length,
         'transactions_count': (data['transactions'] as List).length,
+        'used_codes_count': (data['used_codes'] as List?)?.length ?? 0,
       };
     } catch (e) {
       debugPrint('Peek error: $e');
