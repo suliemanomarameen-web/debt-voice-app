@@ -266,6 +266,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.softDeleteEnabled: 'الحذف الناعم (سلة المحذوفات)',
       AppSettings.retentionDays: 'مدة الاحتفاظ في السلة',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
+      AppSettings.allowDeleteTransactions: 'السماح بحذف العمليات', // 🆕
       AppSettings.allowEditCustomers: 'السماح بتعديل الحسابات',
       AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
       AppSettings.allowEditCustomerBalance:
@@ -333,6 +334,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'مدة بقاء العنصر في السلة (بالأيام)',
       AppSettings.autoCleanupDeleted:
           'حذف نهائي تلقائي بعد انتهاء المدة',
+      AppSettings.allowDeleteTransactions:
+          'إذا مُعطّل، لا يمكن حذف أي عملية', // 🆕
       AppSettings.allowEditCustomers:
           'إذا مُعطّل، لا يمكن تعديل بيانات الحسابات',
       AppSettings.allowEditTransactions:
@@ -450,13 +453,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ),
             ),
 
-            // 🗑️ الحذف
+            // 🗑️ الحذف (مع allowDeleteTransactions)
             _buildGroup(
               title: '🗑️ الحذف',
               groupName: 'الحذف',
               keys: const [
                 AppSettings.blockDeleteNonzeroBalance,
                 AppSettings.blockDeleteWithTransactions,
+                AppSettings.allowDeleteTransactions, // 🆕
                 AppSettings.softDeleteEnabled,
                 AppSettings.retentionDays,
                 AppSettings.autoCleanupDeleted,
@@ -464,6 +468,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               children: [
                 _buildBoolTile(AppSettings.blockDeleteNonzeroBalance),
                 _buildBoolTile(AppSettings.blockDeleteWithTransactions),
+                _buildBoolTile(AppSettings.allowDeleteTransactions), // 🆕
                 _buildBoolTile(AppSettings.softDeleteEnabled),
                 _buildIntTile(
                   AppSettings.retentionDays,
@@ -475,7 +480,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               ],
             ),
 
-            // ✏️ التعديل (مُبسّط)
+            // ✏️ التعديل (بدون allowDeleteTransactions)
             _buildGroup(
               title: '✏️ التعديل',
               groupName: 'التعديل',
