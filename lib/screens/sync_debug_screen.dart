@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import '../db/database_helper.dart';
 import '../services/gdrive_service.dart';
 import '../services/sync_service.dart';
+import '../services/logger_service.dart';
+import '../models/log_event.dart';
 
 class SyncDebugScreen extends StatefulWidget {
   const SyncDebugScreen({super.key});
@@ -37,10 +39,12 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
       final localCustomers = await db.allCustomersRaw();
       final localTransactions = await db.allTransactionsRaw();
       final localLogs = await db.allLogEventsRaw();
+      final localCodes = await db.allUsedCodesRaw();
 
       result['localCustomers'] = localCustomers.length;
       result['localTransactions'] = localTransactions.length;
       result['localLogs'] = localLogs.length;
+      result['localCodes'] = localCodes.length;
 
       result['localDeletedCustomers'] =
           localCustomers.where((c) => c['is_deleted'] == 1).length;
@@ -61,10 +65,12 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
           final cloudTransactions =
               (cloudData['transactions'] as List?) ?? [];
           final cloudLogs = (cloudData['log_events'] as List?) ?? [];
+          final cloudCodes = (cloudData['used_codes'] as List?) ?? [];
 
           result['cloudCustomers'] = cloudCustomers.length;
           result['cloudTransactions'] = cloudTransactions.length;
           result['cloudLogs'] = cloudLogs.length;
+          result['cloudCodes'] = cloudCodes.length;
 
           result['cloudCreatedAt'] = cloudData['created_at'] ?? '—';
           result['cloudVersion'] = cloudData['version'] ?? '—';
@@ -82,6 +88,7 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
           result['diffTransactions'] =
               localTransactions.length - cloudTransactions.length;
           result['diffLogs'] = localLogs.length - cloudLogs.length;
+          result['diffCodes'] = localCodes.length - cloudCodes.length;
         } else {
           result['cloudData'] = '❌ null';
         }
@@ -100,14 +107,147 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // إجراءات
+  // إصلاح الرموز المكررة
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _fixDuplicateCodes() async {
+    final confirm = await _confirmDialog(
+      title: '🔧 إصلاح الرموز المكررة',
+      message:
+          'سيتم:\n'
+          '1. مسح جدول "used_codes" بالكامل\n'
+          '2. إعادة بنائه من المعاملات الحالية فقط\n'
+          '3. حذف أي رموز يتيمة (بدون معاملة)\n\n'
+          '✅ آمن — لن تحذف أي معاملة',
+    );
+    if (!confirm) return;
+
+    setState(() => _busy = true);
+
+    try {
+      final db = DatabaseHelper.instance;
+
+      // 1) احفظ عدد الرموز القديمة
+      final oldCodes = await db.allUsedCodesRaw();
+      final oldCount = oldCodes.length;
+
+      // 2) امسح كل الرموز
+      await db.database.then((d) => d.delete('used_codes'));
+
+      // 3) اقرأ كل المعاملات
+      final transactions = await db.allTransactionsRaw();
+
+      // 4) أعد بناء الرموز من المعاملات
+      int rebuilt = 0;
+      for (final t in transactions) {
+        final code = t['code'] as String?;
+        if (code == null || code.isEmpty) continue;
+
+        try {
+          await db.database.then((d) => d.insert('used_codes', {
+                'code': code,
+                'type': t['type'] as String? ?? 'debt',
+                'created_at': t['created_at'] as String? ??
+                    DateTime.now().toIso8601String(),
+              }));
+          rebuilt++;
+        } catch (e) {
+          // مكرر في المعاملات — تجاهل
+        }
+      }
+
+      // 5) سجّل النتيجة
+      await LoggerService.log(
+        action: '🔧 إصلاح الرموز',
+        description: 'تم مسح $oldCount رمز وإعادة بناء $rebuilt رمز',
+        level: LogLevel.info,
+        category: LogCategory.system,
+      );
+
+      if (!mounted) return;
+      setState(() => _busy = false);
+
+      _showResult(true, '✅ تم الإصلاح: $oldCount → $rebuilt رمز');
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _showResult(false, 'خطأ: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // مسح الرموز اليتيمة فقط (بدون لمس الصحيحة)
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _cleanOrphanCodes() async {
+    final confirm = await _confirmDialog(
+      title: '🗑️ مسح الرموز اليتيمة',
+      message:
+          'سيتم حذف الرموز التي لا تقابلها معاملة في جدول transactions.\n\n'
+          '✅ آمن — الرموز المستخدمة في معاملات حقيقية تبقى.',
+    );
+    if (!confirm) return;
+
+    setState(() => _busy = true);
+
+    try {
+      final db = DatabaseHelper.instance;
+      final dbi = await db.database;
+
+      // 1) كل الرموز في used_codes
+      final usedCodes = await dbi.query('used_codes');
+      final usedCodesSet =
+          usedCodes.map((r) => r['code'] as String).toSet();
+
+      // 2) كل الرموز في transactions
+      final txCodes = await dbi.query(
+        'transactions',
+        columns: ['code'],
+        where: 'code IS NOT NULL AND code != ""',
+      );
+      final txCodesSet =
+          txCodes.map((r) => r['code'] as String).toSet();
+
+      // 3) الرموز اليتيمة = في used_codes لكن ليس في transactions
+      final orphans = usedCodesSet.difference(txCodesSet);
+
+      // 4) احذفها
+      int deleted = 0;
+      for (final code in orphans) {
+        try {
+          await dbi.delete('used_codes',
+              where: 'code = ?', whereArgs: [code]);
+          deleted++;
+        } catch (_) {}
+      }
+
+      await LoggerService.log(
+        action: '🗑️ مسح الرموز اليتيمة',
+        description: 'تم حذف $deleted رمز يتيم',
+        level: LogLevel.info,
+        category: LogCategory.system,
+      );
+
+      if (!mounted) return;
+      setState(() => _busy = false);
+
+      _showResult(true, '✅ تم حذف $deleted رمز يتيم');
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _showResult(false, 'خطأ: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // الإجراءات الأصلية
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _forceSync() async {
     final confirm = await _confirmDialog(
       title: '🔄 مزامنة كاملة',
       message:
-          'سيتم:\n1. قراءة السحابة\n2. حل التعارضات\n3. رفع كل البيانات المحلية\n4. التحقق من التطابق',
+          'سيتم:\n1. قراءة السحابة\n2. حل التعارضات\n3. دمج البيانات\n4. رفع الحالة الكاملة',
     );
     if (!confirm) return;
 
@@ -131,8 +271,8 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
     final confirm = await _confirmDialog(
       title: '⬆️ رفع قسري',
       message:
-          'سيتم رفع كل البيانات المحلية إلى السحابة (استبدال كامل).\n\n'
-          '⚠️ لا يحل التعارضات — فقط يرفع.',
+          'سيتم دمج البيانات المحلية مع السحابة (بدون حذف أي شيء).\n\n'
+          '✅ آمن — لا يمسح بيانات الآخرين.',
     );
     if (!confirm) return;
 
@@ -245,7 +385,9 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
                       const SizedBox(height: 12),
                       _buildDiffCard(),
                       const SizedBox(height: 16),
-                      _buildActions(),
+                      _buildMainActions(),
+                      const SizedBox(height: 16),
+                      _buildMaintenanceActions(),
                       const SizedBox(height: 24),
                     ],
                   ),
@@ -312,6 +454,7 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
             _row('العملاء', _data['localCustomers']),
             _row('المعاملات', _data['localTransactions']),
             _row('الأحداث', _data['localLogs']),
+            _row('الرموز', _data['localCodes']),
             const Divider(),
             _row('عملاء محذوفون', _data['localDeletedCustomers'],
                 color: Colors.red),
@@ -336,6 +479,7 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
             _row('العملاء', _data['cloudCustomers']),
             _row('المعاملات', _data['cloudTransactions']),
             _row('الأحداث', _data['cloudLogs']),
+            _row('الرموز', _data['cloudCodes']),
             const Divider(),
             _row('عملاء محذوفون', _data['cloudDeletedCustomers'],
                 color: Colors.red),
@@ -358,9 +502,12 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
     final diffCustomers = (_data['diffCustomers'] as int?) ?? 0;
     final diffTransactions = (_data['diffTransactions'] as int?) ?? 0;
     final diffLogs = (_data['diffLogs'] as int?) ?? 0;
+    final diffCodes = (_data['diffCodes'] as int?) ?? 0;
 
-    final hasDiff =
-        diffCustomers != 0 || diffTransactions != 0 || diffLogs != 0;
+    final hasDiff = diffCustomers != 0 ||
+        diffTransactions != 0 ||
+        diffLogs != 0 ||
+        diffCodes != 0;
 
     return Card(
       color: hasDiff
@@ -397,13 +544,15 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
                 color: diffTransactions != 0 ? Colors.orange : Colors.green),
             _row('فرق الأحداث', diffLogs,
                 color: diffLogs != 0 ? Colors.orange : Colors.green),
+            _row('فرق الرموز', diffCodes,
+                color: diffCodes != 0 ? Colors.orange : Colors.green),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildActions() {
+  Widget _buildMainActions() {
     return Column(
       children: [
         SizedBox(
@@ -446,26 +595,87 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () async {
-              final json = _data.toString();
-              await Clipboard.setData(ClipboardData(text: json));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('✅ تم نسخ التقرير')),
-              );
-            },
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('نسخ التقرير'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 45),
-            ),
-          ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildMaintenanceActions() {
+    return Card(
+      color: Colors.orange.withOpacity(0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.build, color: Colors.orange),
+                SizedBox(width: 8),
+                Text(
+                  '🔧 أدوات الصيانة',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: Colors.orange,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'استخدم هذه الأدوات إذا واجهت مشاكل في الرموز أو التكرار',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _fixDuplicateCodes,
+                icon: const Icon(Icons.build_circle, color: Colors.orange),
+                label: const Text('🔧 إصلاح الرموز المكررة'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orange,
+                  side: const BorderSide(color: Colors.orange),
+                  minimumSize: const Size(0, 45),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _cleanOrphanCodes,
+                icon: const Icon(Icons.cleaning_services, color: Colors.red),
+                label: const Text('🗑️ مسح الرموز اليتيمة'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.red),
+                  minimumSize: const Size(0, 45),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final json = _data.toString();
+                  await Clipboard.setData(ClipboardData(text: json));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('✅ تم نسخ التقرير')),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 18),
+                label: const Text('نسخ التقرير'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 45),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
