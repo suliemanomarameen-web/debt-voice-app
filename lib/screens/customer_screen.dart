@@ -374,7 +374,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                 ),
                 const SizedBox(height: 8),
-                // 🆕 يظهر دائمًا — "البيان" للسداد، "الأصناف" للدين/المرتجع
                 TextField(
                   controller: itemsCtrl,
                   enabled: !isSaving,
@@ -467,7 +466,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             code: code,
                             accountant: accountant,
                             source: 'customer_screen',
-                            relatedId: code, // 🆕
+                            relatedId: code,
                           );
 
                           if (accountant != null && accountant.isNotEmpty) {
@@ -696,7 +695,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       level: LogLevel.warning,
                       category: LogCategory.transaction,
                       accountant: accountant,
-                      relatedId: t.code, // 🆕 كود العملية
+                      relatedId: t.code,
                       needsAck: false,
                       metadata: {
                         'fields': changedFields,
@@ -746,7 +745,26 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حذف معاملة — مع فحص allowDeleteTransactions
+  // ═══════════════════════════════════════════════════════════
   Future<void> _deleteTransaction(Transaction t) async {
+    // 🆕 فحص السماح بحذف العمليات
+    if (!SettingsService.getBool(
+      AppSettings.allowDeleteTransactions,
+      defaultValue: true,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('حذف العمليات معطّل من الإعدادات'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
