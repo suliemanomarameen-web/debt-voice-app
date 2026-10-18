@@ -745,9 +745,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حذف معاملة — مع فحص allowDeleteTransactions
-  // ═══════════════════════════════════════════════════════════
   Future<void> _deleteTransaction(Transaction t) async {
     // 🆕 فحص السماح بحذف العمليات
     if (!SettingsService.getBool(
