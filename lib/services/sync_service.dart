@@ -49,23 +49,6 @@ class SyncResult {
   });
 }
 
-/// تعارض
-class SyncConflict {
-  final String type;
-  final String itemName;
-  final List<String> fields;
-  final DateTime localTime;
-  final DateTime cloudTime;
-
-  SyncConflict({
-    required this.type,
-    required this.itemName,
-    required this.fields,
-    required this.localTime,
-    required this.cloudTime,
-  });
-}
-
 class SyncService {
   // ═══════════════════════════════════════════════════════════
   // المفاتيح
@@ -97,9 +80,6 @@ class SyncService {
 
   static final _resultController = StreamController<SyncResult>.broadcast();
   static Stream<SyncResult> get resultStream => _resultController.stream;
-
-  static SyncConflict? _lastConflict;
-  static SyncConflict? get lastConflict => _lastConflict;
 
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
@@ -206,7 +186,7 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // مزامنة أولية / يدوية
+  // مزامنة أولية / يدوية / قسرية
   // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> initialSync() async {
     if (!GDriveService.isSignedIn) {
@@ -220,7 +200,7 @@ class SyncService {
       );
     }
 
-    return _runSync(silent: false);
+    return _runSync(silent: false, force: false);
   }
 
   static Future<SyncResult> manualSync() async {
@@ -231,10 +211,91 @@ class SyncService {
       }
     }
 
-    return _runSync(silent: false);
+    return _runSync(silent: false, force: false);
   }
 
-  static Future<SyncResult> _runSync({required bool silent}) async {
+  /// 🆕 مزامنة قسرية — ترفع كل شيء وتنزّل كل شيء
+  static Future<SyncResult> forceSync() async {
+    if (!GDriveService.isSignedIn) {
+      final err = await GDriveService.signInWithError();
+      if (err != null) {
+        return SyncResult(success: false, message: err);
+      }
+    }
+
+    return _runSync(silent: false, force: true);
+  }
+
+  /// 🆕 رفع قسري فقط
+  static Future<bool> forceUpload() async {
+    try {
+      _setStatus(SyncStatus.uploading);
+      final ok = await _uploadCurrentState();
+      _setStatus(ok ? SyncStatus.idle : SyncStatus.error);
+
+      if (ok) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+            _keyLastSyncTime, DateTime.now().toIso8601String());
+        await prefs.setString(
+            _keyLastUpload, DateTime.now().toIso8601String());
+      }
+
+      return ok;
+    } catch (e) {
+      debugPrint('❌ forceUpload: $e');
+      _setStatus(SyncStatus.error);
+      return false;
+    }
+  }
+
+  /// 🆕 تنزيل قسري فقط
+  static Future<SyncResult> forceDownload() async {
+    try {
+      _setStatus(SyncStatus.downloading);
+      final cloudData = await GDriveService.downloadSyncFile();
+
+      if (cloudData == null) {
+        _setStatus(SyncStatus.error);
+        return SyncResult(
+          success: false,
+          message: 'لا توجد بيانات في السحابة',
+        );
+      }
+
+      final result = await _mergeCloudData(cloudData);
+      _setStatus(SyncStatus.idle);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          _keyLastSyncTime, DateTime.now().toIso8601String());
+      await prefs.setString(
+          _keyLastDownload, DateTime.now().toIso8601String());
+
+      return SyncResult(
+        success: true,
+        message: 'تم التنزيل',
+        customersAdded: result['customers_added'] ?? 0,
+        transactionsAdded: result['transactions_added'] ?? 0,
+        customersUpdated: result['customers_updated'] ?? 0,
+        transactionsUpdated: result['transactions_updated'] ?? 0,
+        customersRestored: result['customers_restored'] ?? 0,
+        transactionsRestored: result['transactions_restored'] ?? 0,
+        logsAdded: result['logs_added'] ?? 0,
+        conflictsCount: result['conflicts'] ?? 0,
+        timestamp: DateTime.now(),
+      );
+    } catch (e) {
+      debugPrint('❌ forceDownload: $e');
+      _setStatus(SyncStatus.error);
+      return SyncResult(success: false, message: 'فشل: $e');
+    }
+  }
+
+  static Future<SyncResult> _runSync({
+    required bool silent,
+    required bool force,
+  }) async {
     if (_isSyncing && _currentSyncFuture != null) {
       try {
         return await _currentSyncFuture!;
@@ -248,7 +309,7 @@ class SyncService {
 
     try {
       _isSyncing = true;
-      final future = _performSync(silent: silent);
+      final future = _performSync(silent: silent, force: force);
       _currentSyncFuture = future;
       final result = await future;
       return result;
@@ -259,133 +320,186 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 المزامنة الفعلية — بترتيب "ارفع أولاً"
+  // المزامنة الفعلية — المزامنة الحقيقية
   // ═══════════════════════════════════════════════════════════
-  static Future<SyncResult> _performSync({required bool silent}) async {
+  static Future<SyncResult> _performSync({
+    required bool silent,
+    bool force = false,
+  }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final lastSyncStr = prefs.getString(_keyLastSyncTime);
-      final lastLocalStr = prefs.getString(_keyLastLocalChange);
-
-      final lastSync =
-          lastSyncStr != null ? DateTime.parse(lastSyncStr) : null;
-      final lastLocal =
-          lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
-
-      final cloudModified = await GDriveService.getSyncFileModifiedTime();
-
-      final hasLocalChanges =
-          lastLocal != null && (lastSync == null || lastLocal.isAfter(lastSync));
-      final hasCloudChanges = cloudModified != null &&
-          (lastSync == null || cloudModified.isAfter(lastSync));
+      final db = DatabaseHelper.instance;
 
       // ═══════════════════════════════════════════════════════
-      // لا تغييرات
+      // 1) قراءة السحابة
       // ═══════════════════════════════════════════════════════
-      if (!hasLocalChanges && !hasCloudChanges) {
-        final now = DateTime.now();
-        await prefs.setString(_keyLastSyncTime, now.toIso8601String());
-        if (!silent) _setStatus(SyncStatus.idle);
-
-        final r = SyncResult(
-          success: true,
-          message: 'لا توجد تغييرات',
-          timestamp: now,
-        );
-        if (!_resultController.isClosed) _resultController.add(r);
-        return r;
-      }
-
-      int addedCustomers = 0;
-      int addedTransactions = 0;
-      int updatedCustomers = 0;
-      int updatedTransactions = 0;
-      int restoredCustomers = 0;
-      int restoredTransactions = 0;
-      int addedLogs = 0;
-      int conflictsCount = 0;
-
       Map<String, dynamic>? cloudData;
-
-      // ═══════════════════════════════════════════════════════
-      // 🆕 الخطوة 1: اقرأ السحابة (بدون تطبيق)
-      // ═══════════════════════════════════════════════════════
-      if (hasCloudChanges) {
+      try {
         cloudData = await GDriveService.downloadSyncFile();
+      } catch (e) {
+        debugPrint('⚠️ [Sync] Download error: $e');
       }
 
-      // ═══════════════════════════════════════════════════════
-      // 🆕 الخطوة 2: ارفع الحالة المحلية أولاً
-      // ═══════════════════════════════════════════════════════
-      if (hasLocalChanges) {
-        if (!silent) _setStatus(SyncStatus.uploading);
-        final uploadOk = await _uploadCurrentState();
-
-        if (!uploadOk) {
-          if (!silent) _setStatus(SyncStatus.error);
-          final errResult = SyncResult(
-            success: false,
-            message: 'فشل رفع البيانات إلى Drive',
-          );
-          if (!_resultController.isClosed) _resultController.add(errResult);
-          return errResult;
-        }
-
-        debugPrint('✅ [Sync] Uploaded local state first');
-      }
+      final cloudCustomers =
+          (cloudData?['customers'] as List?)?.cast<Map>() ?? [];
+      final cloudTransactions =
+          (cloudData?['transactions'] as List?)?.cast<Map>() ?? [];
 
       // ═══════════════════════════════════════════════════════
-      // 🆕 الخطوة 3: نزّل السحابة الآن (بعد الرفع)
+      // 2) قراءة المحلي
       // ═══════════════════════════════════════════════════════
-      if (hasCloudChanges && cloudData != null) {
-        if (!silent) _setStatus(SyncStatus.downloading);
+      final localCustomers = await db.allCustomersRaw();
+      final localTransactions = await db.allTransactionsRaw();
+
+      debugPrint(
+          '📊 [Sync] Before: Local ${localTransactions.length} tx, Cloud ${cloudTransactions.length} tx');
+
+      // ═══════════════════════════════════════════════════════
+      // 3) مزامنة ذكية — مقارنة بالأعداد
+      // ═══════════════════════════════════════════════════════
+      final customersDiff =
+          localCustomers.length - cloudCustomers.length;
+      final transactionsDiff =
+          localTransactions.length - cloudTransactions.length;
+
+      // هل هناك تغييرات معلقة محلياً؟
+      final pendingRaw = prefs.getBool(_keyHasPendingChanges) ?? false;
+
+      // هل هناك اختلاف في الأعداد؟
+      final hasCountMismatch =
+          customersDiff != 0 || transactionsDiff != 0;
+
+      // هل القوة مطلوبة؟
+      final shouldSync = force || pendingRaw || hasCountMismatch;
+
+      debugPrint(
+          '🔍 [Sync] Diffs: customers=$customersDiff, transactions=$transactionsDiff, pending=$pendingRaw, force=$force');
+
+      // ═══════════════════════════════════════════════════════
+      // 4) اكتشف التعارضات قبل أي شيء
+      // ═══════════════════════════════════════════════════════
+      int conflictsCount = 0;
+      int customersRestored = 0;
+      int transactionsRestored = 0;
+      int customersUpdated = 0;
+      int transactionsUpdated = 0;
+      int customersAdded = 0;
+      int transactionsAdded = 0;
+      int logsAdded = 0;
+
+      if (cloudData != null) {
         final result = await _mergeCloudData(cloudData);
-        addedCustomers = result['customers_added'] ?? 0;
-        addedTransactions = result['transactions_added'] ?? 0;
-        updatedCustomers = result['customers_updated'] ?? 0;
-        updatedTransactions = result['transactions_updated'] ?? 0;
-        restoredCustomers = result['customers_restored'] ?? 0;
-        restoredTransactions = result['transactions_restored'] ?? 0;
-        addedLogs = result['logs_added'] ?? 0;
+        customersAdded = result['customers_added'] ?? 0;
+        transactionsAdded = result['transactions_added'] ?? 0;
+        customersUpdated = result['customers_updated'] ?? 0;
+        transactionsUpdated = result['transactions_updated'] ?? 0;
+        customersRestored = result['customers_restored'] ?? 0;
+        transactionsRestored = result['transactions_restored'] ?? 0;
+        logsAdded = result['logs_added'] ?? 0;
         conflictsCount = result['conflicts'] ?? 0;
       }
 
       // ═══════════════════════════════════════════════════════
-      // تحديث الأوقات
+      // 5) ارفع الحالة الكاملة (دائماً إذا كان هناك تغييرات)
+      // ═══════════════════════════════════════════════════════
+      bool uploadOk = true;
+
+      if (shouldSync || customersAdded > 0 || transactionsAdded > 0) {
+        if (!silent) _setStatus(SyncStatus.uploading);
+        uploadOk = await _uploadCurrentState();
+
+        if (!uploadOk) {
+          if (!silent) _setStatus(SyncStatus.error);
+          return SyncResult(
+            success: false,
+            message: 'فشل رفع البيانات إلى Drive',
+          );
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // 6) تحقق من التطابق بعد الرفع
+      // ═══════════════════════════════════════════════════════
+      int? verifyLocalCount;
+      int? verifyCloudCount;
+
+      if (shouldSync) {
+        try {
+          final verifyCloud = await GDriveService.downloadSyncFile();
+          verifyCloudCount =
+              (verifyCloud?['transactions'] as List?)?.length ?? 0;
+          final verifyLocal = await db.allTransactionsRaw();
+          verifyLocalCount = verifyLocal.length;
+
+          debugPrint(
+              '🔍 [Sync] Verify: Local $verifyLocalCount, Cloud $verifyCloudCount');
+
+          if (verifyCloudCount != verifyLocalCount) {
+            // الرفع لم ينجح فعلياً
+            await LoggerService.log(
+              action: '⚠️ تحذير: عدم تطابق بعد الرفع',
+              description:
+                  'المحلي: $verifyLocalCount عملية\nالسحابة: $verifyCloudCount عملية\n'
+                  'قد يكون هناك فشل في الرفع',
+              level: LogLevel.warning,
+              category: LogCategory.sync,
+              needsAck: true,
+            );
+          }
+        } catch (e) {
+          debugPrint('⚠️ [Sync] Verify error: $e');
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // 7) تحديث الأوقات
       // ═══════════════════════════════════════════════════════
       final now = DateTime.now();
       await prefs.setString(_keyLastSyncTime, now.toIso8601String());
       await prefs.setString(_keyLastUpload, now.toIso8601String());
-      if (hasCloudChanges) {
+      if (cloudData != null) {
         await prefs.setString(_keyLastDownload, now.toIso8601String());
       }
       await _saveHasPendingChanges(false);
 
       if (!silent) _setStatus(SyncStatus.idle);
 
+      // ═══════════════════════════════════════════════════════
+      // 8) تسجيل النتائج
+      // ═══════════════════════════════════════════════════════
       if (!silent) {
         await LoggerService.logSyncSuccess(
-          transactionsAdded: addedTransactions,
-          customersAdded: addedCustomers + restoredCustomers,
-          customersUpdated: updatedCustomers + updatedTransactions,
+          transactionsAdded: transactionsAdded + transactionsRestored,
+          customersAdded: customersAdded + customersRestored,
+          customersUpdated: customersUpdated + transactionsUpdated,
           hasConflict: conflictsCount > 0,
         );
       }
 
+      // ═══════════════════════════════════════════════════════
+      // 9) النتيجة النهائية
+      // ═══════════════════════════════════════════════════════
+      final message = _buildResultMessage(
+        shouldSync: shouldSync,
+        customersDiff: customersDiff,
+        transactionsDiff: transactionsDiff,
+        conflictsCount: conflictsCount,
+        verifyLocalCount: verifyLocalCount,
+        verifyCloudCount: verifyCloudCount,
+      );
+
       final finalResult = SyncResult(
         success: true,
-        message: conflictsCount > 0
-            ? 'تمت المزامنة مع $conflictsCount تعارض'
-            : 'تمت المزامنة بنجاح',
-        customersAdded: addedCustomers,
-        transactionsAdded: addedTransactions,
-        customersUpdated: updatedCustomers,
-        transactionsUpdated: updatedTransactions,
-        customersRestored: restoredCustomers,
-        transactionsRestored: restoredTransactions,
-        logsAdded: addedLogs,
+        message: message,
+        customersAdded: customersAdded,
+        transactionsAdded: transactionsAdded,
+        customersUpdated: customersUpdated,
+        transactionsUpdated: transactionsUpdated,
+        customersRestored: customersRestored,
+        transactionsRestored: transactionsRestored,
+        logsAdded: logsAdded,
         conflictsCount: conflictsCount,
         hasConflict: conflictsCount > 0,
         timestamp: now,
@@ -404,21 +518,51 @@ class SyncService {
         await LoggerService.logSyncError(e.toString());
       }
 
-      final errResult = SyncResult(
+      return SyncResult(
         success: false,
         message: 'فشل المزامنة: $e',
       );
-
-      if (!_resultController.isClosed) {
-        _resultController.add(errResult);
-      }
-
-      return errResult;
     }
   }
 
   // ═══════════════════════════════════════════════════════════
-  // دمج البيانات السحابية (بعد الرفع)
+  // بناء رسالة النتيجة
+  // ═══════════════════════════════════════════════════════════
+  static String _buildResultMessage({
+    required bool shouldSync,
+    required int customersDiff,
+    required int transactionsDiff,
+    required int conflictsCount,
+    int? verifyLocalCount,
+    int? verifyCloudCount,
+  }) {
+    if (!shouldSync) {
+      return '✅ لا توجد تغييرات';
+    }
+
+    final parts = <String>[];
+
+    if (conflictsCount > 0) {
+      parts.add('⚠️ $conflictsCount تعارض');
+    }
+
+    if (verifyLocalCount != null &&
+        verifyCloudCount != null &&
+        verifyLocalCount != verifyCloudCount) {
+      parts.add(
+          '⚠️ عدم تطابق: محلي $verifyLocalCount ≠ سحابة $verifyCloudCount');
+    } else {
+      parts.add('✅ تمت المزامنة');
+      if (verifyLocalCount != null) {
+        parts.add('($verifyLocalCount عملية متطابقة)');
+      }
+    }
+
+    return parts.join(' — ');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // دمج البيانات السحابية
   // ═══════════════════════════════════════════════════════════
   static Future<Map<String, int>> _mergeCloudData(
       Map<String, dynamic> cloudData) async {
@@ -434,10 +578,14 @@ class SyncService {
     int conflicts = 0;
 
     try {
-      final cloudCustomers = (cloudData['customers'] as List?) ?? [];
-      final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
-      final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
-      final cloudLogs = (cloudData['log_events'] as List?) ?? [];
+      final cloudCustomers =
+          (cloudData['customers'] as List?)?.cast<Map>() ?? [];
+      final cloudTransactions =
+          (cloudData['transactions'] as List?)?.cast<Map>() ?? [];
+      final cloudUsedCodes =
+          (cloudData['used_codes'] as List?)?.cast<Map>() ?? [];
+      final cloudLogs =
+          (cloudData['log_events'] as List?)?.cast<Map>() ?? [];
 
       // ═══════════════════════════════════════════════════════
       // 1. الرموز
@@ -472,12 +620,16 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('customers',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final localRows = await db.database.then((d) => d.query(
+            'customers',
+            where: 'cloud_id = ?',
+            whereArgs: [cloudId],
+            limit: 1));
 
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
+          // جديد من السحابة
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -500,11 +652,11 @@ class SyncService {
             cloudRow: cc,
           );
 
-          if (resolution.action == 'updated') {
+          if (resolution == 'updated') {
             updatedCustomers++;
-          } else if (resolution.action == 'restored') {
+          } else if (resolution == 'restored') {
             restoredCustomers++;
-          } else if (resolution.action == 'conflict') {
+          } else if (resolution == 'conflict') {
             conflicts++;
           }
         }
@@ -543,8 +695,11 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('transactions',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final localRows = await db.database.then((d) => d.query(
+            'transactions',
+            where: 'cloud_id = ?',
+            whereArgs: [cloudId],
+            limit: 1));
 
         if (localRows.isEmpty) {
           final newMap = Map<String, dynamic>.from(ct);
@@ -566,11 +721,11 @@ class SyncService {
             cloudRow: ct,
           );
 
-          if (resolution.action == 'updated') {
+          if (resolution == 'updated') {
             updatedTransactions++;
-          } else if (resolution.action == 'restored') {
+          } else if (resolution == 'restored') {
             restoredTransactions++;
-          } else if (resolution.action == 'conflict') {
+          } else if (resolution == 'conflict') {
             conflicts++;
           }
         }
@@ -602,7 +757,7 @@ class SyncService {
       }
 
       debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, ~$restoredTransactions restored, +$addedLogs logs, $conflicts conflicts');
+          '✅ [Sync] Merged: +$addedCustomers c, ~$updatedCustomers u, ~$restoredCustomers r, +$addedTransactions t, ~$updatedTransactions ut, ~$restoredTransactions rt, +$addedLogs l, $conflicts conflicts');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
     }
@@ -620,9 +775,9 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 حل تعارض العميل
+  // حل تعارض العميل
   // ═══════════════════════════════════════════════════════════
-  static Future<_ResolutionResult> _resolveCustomerConflict({
+  static Future<String> _resolveCustomerConflict({
     required Map<String, dynamic> localRow,
     required Map<String, dynamic> cloudRow,
   }) async {
@@ -643,20 +798,15 @@ class SyncService {
     final localTime = DateTime.tryParse(localUpdatedAt) ?? DateTime(2000);
     final cloudTime = DateTime.tryParse(cloudUpdatedAt) ?? DateTime(2000);
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 1: لا تغييرات
-    // ═══════════════════════════════════════════════════════
-    if (localUpdatedAt == cloudUpdatedAt &&
-        localDeleted == cloudDeleted) {
-      return _ResolutionResult('no_change');
+    // حالة 1: لا تغييرات
+    if (localUpdatedAt == cloudUpdatedAt && localDeleted == cloudDeleted) {
+      return 'no_change';
     }
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 2: تعارض حذف
-    // ═══════════════════════════════════════════════════════
+    // حالة 2: تعارض حذف
     if (localDeleted != cloudDeleted) {
-      // محلي حذف + سحابي نشط = تعارض حقيقي → استعادة + تنبيه
       if (localDeleted && !cloudDeleted) {
+        // تعارض حقيقي — السحابة نشطة
         await db.restoreCustomer(localId, by: 'المزامنة');
         await _logDeletionConflict(
           item: 'حساب "$name"',
@@ -665,11 +815,11 @@ class SyncService {
           restoredBy: 'المزامنة',
           reason: 'السحابة لا تزال نشطة — تم استعادة الحساب',
         );
-        return _ResolutionResult('restored');
+        return 'restored';
       }
 
-      // محلي نشط + سحابي محذوف = تعارض حقيقي → تنبيه فقط (لا حذف)
       if (!localDeleted && cloudDeleted) {
+        // تعارض حقيقي — السحابة حذفت
         await _logDeletionConflict(
           item: 'حساب "$name"',
           deletedBy: cloudRow['deleted_by'] as String?,
@@ -677,18 +827,16 @@ class SyncService {
           restoredBy: 'جهاز آخر',
           reason: 'الحساب نشط على هذا الجهاز — يُترك كما هو',
         );
-        return _ResolutionResult('conflict');
+        return 'conflict';
       }
     }
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 3: تعارض تعديل
-    // ═══════════════════════════════════════════════════════
+    // حالة 3: تعارض تعديل
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
 
       if (localIsNewer) {
-        return _ResolutionResult('no_change');
+        return 'no_change';
       }
 
       final changedFields = <String>[];
@@ -728,17 +876,17 @@ class SyncService {
           by: cloudRow['updated_by'] as String?,
         );
 
-        return _ResolutionResult('conflict');
+        return 'conflict';
       }
     }
 
-    return _ResolutionResult('no_change');
+    return 'no_change';
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 حل تعارض المعاملة
+  // حل تعارض المعاملة
   // ═══════════════════════════════════════════════════════════
-  static Future<_ResolutionResult> _resolveTransactionConflict({
+  static Future<String> _resolveTransactionConflict({
     required Map<String, dynamic> localRow,
     required Map<String, dynamic> cloudRow,
   }) async {
@@ -761,19 +909,13 @@ class SyncService {
     final code = localRow['code'] as String? ?? '';
     final amount = (localRow['amount'] as num?)?.toDouble() ?? 0;
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 1: لا تغييرات
-    // ═══════════════════════════════════════════════════════
-    if (localUpdatedAt == cloudUpdatedAt &&
-        localDeleted == cloudDeleted) {
-      return _ResolutionResult('no_change');
+    // حالة 1: لا تغييرات
+    if (localUpdatedAt == cloudUpdatedAt && localDeleted == cloudDeleted) {
+      return 'no_change';
     }
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 2: تعارض حذف
-    // ═══════════════════════════════════════════════════════
+    // حالة 2: تعارض حذف
     if (localDeleted != cloudDeleted) {
-      // محلي حذف + سحابي نشط = تعارض حقيقي → استعادة + تنبيه
       if (localDeleted && !cloudDeleted) {
         await db.restoreTransaction(localId, by: 'المزامنة');
         await _logDeletionConflict(
@@ -783,10 +925,9 @@ class SyncService {
           restoredBy: 'المزامنة',
           reason: 'السحابة لا تزال نشطة — تم استعادة العملية',
         );
-        return _ResolutionResult('restored');
+        return 'restored';
       }
 
-      // محلي نشط + سحابي محذوف = تعارض حقيقي → تنبيه فقط (لا حذف)
       if (!localDeleted && cloudDeleted) {
         await _logDeletionConflict(
           item: 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
@@ -795,18 +936,16 @@ class SyncService {
           restoredBy: 'جهاز آخر',
           reason: 'العملية نشطة على هذا الجهاز — تُترك كما هي',
         );
-        return _ResolutionResult('conflict');
+        return 'conflict';
       }
     }
 
-    // ═══════════════════════════════════════════════════════
-    // الحالة 3: تعارض تعديل
-    // ═══════════════════════════════════════════════════════
+    // حالة 3: تعارض تعديل
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
 
       if (localIsNewer) {
-        return _ResolutionResult('no_change');
+        return 'no_change';
       }
 
       final changedFields = <String>[];
@@ -840,11 +979,11 @@ class SyncService {
               cloudRow['updated_by'] as String?,
         );
 
-        return _ResolutionResult('conflict');
+        return 'conflict';
       }
     }
 
-    return _ResolutionResult('no_change');
+    return 'no_change';
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -981,6 +1120,9 @@ class SyncService {
       final usedCodes = await db.allUsedCodesRaw();
       final logEvents = await db.allLogEventsRaw();
 
+      debugPrint(
+          '⬆️ [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions, ${logEvents.length} logs');
+
       final data = {
         'app': 'debt_voice_app',
         'version': 4,
@@ -991,7 +1133,10 @@ class SyncService {
         'log_events': logEvents,
       };
 
-      return await GDriveService.uploadSyncFile(data);
+      final ok = await GDriveService.uploadSyncFile(data);
+      debugPrint('⬆️ [Sync] Upload result: $ok');
+
+      return ok;
     } catch (e) {
       debugPrint('❌ [Sync] Upload state error: $e');
       return false;
@@ -1033,12 +1178,4 @@ class SyncService {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyHasPendingChanges) ?? false;
   }
-}
-
-// ═══════════════════════════════════════════════════════════
-// نتائج داخلية
-// ═══════════════════════════════════════════════════════════
-class _ResolutionResult {
-  final String action; // 'no_change' | 'updated' | 'restored' | 'conflict'
-  _ResolutionResult(this.action);
 }
