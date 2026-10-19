@@ -8,7 +8,6 @@ import 'logger_service.dart';
 import 'settings_service.dart';
 import '../models/log_event.dart';
 
-/// حالة المزامنة
 enum SyncStatus {
   idle,
   uploading,
@@ -18,7 +17,6 @@ enum SyncStatus {
   error,
 }
 
-/// نتيجة المزامنة
 class SyncResult {
   final bool success;
   final String message;
@@ -77,9 +75,6 @@ class SyncService {
 
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
-  // ═══════════════════════════════════════════════════════════
-  // التهيئة
-  // ═══════════════════════════════════════════════════════════
   static Future<void> init() async {
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
 
@@ -207,12 +202,10 @@ class SyncService {
     return _runSync(silent: false, force: true);
   }
 
-  /// 🆕 رفع قسري — مع الدمج (وليس استبدال)
   static Future<bool> forceUpload() async {
     try {
       _setStatus(SyncStatus.uploading);
 
-      // 1) اقرأ السحابة
       Map<String, dynamic>? existingCloud;
       try {
         existingCloud = await GDriveService.downloadSyncFile();
@@ -220,10 +213,7 @@ class SyncService {
         debugPrint('⚠️ [ForceUpload] No cloud data: $e');
       }
 
-      // 2) ادمج
       final merged = await _mergeForUpload(existingCloud);
-
-      // 3) ارفع الدمج
       final ok = await GDriveService.uploadSyncFile(merged);
 
       _setStatus(ok ? SyncStatus.idle : SyncStatus.error);
@@ -244,7 +234,6 @@ class SyncService {
     }
   }
 
-  /// 🆕 تنزيل قسري
   static Future<SyncResult> forceDownload() async {
     try {
       _setStatus(SyncStatus.downloading);
@@ -313,254 +302,272 @@ class SyncService {
       _currentSyncFuture = null;
     }
   }
+// ═══════════════════════════════════════════════════════════
+// المزامنة الفعلية — _performSync
+// ═══════════════════════════════════════════════════════════
+static Future<SyncResult> _performSync({
+  required bool silent,
+  bool force = false,
+}) async {
+  if (!silent) _setStatus(SyncStatus.syncing);
 
-  // ═══════════════════════════════════════════════════════════
-  // المزامنة الفعلية
-  // ═══════════════════════════════════════════════════════════
-  static Future<SyncResult> _performSync({
-    required bool silent,
-    bool force = false,
-  }) async {
-    if (!silent) _setStatus(SyncStatus.syncing);
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final db = DatabaseHelper.instance;
 
+    // 1) قراءة السحابة
+    Map<String, dynamic>? cloudData;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final db = DatabaseHelper.instance;
+      cloudData = await GDriveService.downloadSyncFile();
+    } catch (e) {
+      debugPrint('⚠️ [Sync] Download error: $e');
+    }
 
-      // 1) قراءة السحابة
-      Map<String, dynamic>? cloudData;
-      try {
-        cloudData = await GDriveService.downloadSyncFile();
-      } catch (e) {
-        debugPrint('⚠️ [Sync] Download error: $e');
-      }
+    final cloudCustomers =
+        (cloudData?['customers'] as List?)?.cast<Map>() ?? [];
+    final cloudTransactions =
+        (cloudData?['transactions'] as List?)?.cast<Map>() ?? [];
 
-      final cloudCustomers =
-          (cloudData?['customers'] as List?)?.cast<Map>() ?? [];
-      final cloudTransactions =
-          (cloudData?['transactions'] as List?)?.cast<Map>() ?? [];
+    // 2) قراءة المحلي
+    final localCustomers = await db.allCustomersRaw();
+    final localTransactions = await db.allTransactionsRaw();
 
-      // 2) قراءة المحلي
-      final localCustomers = await db.allCustomersRaw();
-      final localTransactions = await db.allTransactionsRaw();
+    debugPrint(
+        '📊 [Sync] Before: Local ${localTransactions.length} tx, Cloud ${cloudTransactions.length} tx');
 
-      debugPrint(
-          '📊 [Sync] Before: Local ${localTransactions.length} tx, Cloud ${cloudTransactions.length} tx');
+    // 3) مقارنة
+    final customersDiff =
+        localCustomers.length - cloudCustomers.length;
+    final transactionsDiff =
+        localTransactions.length - cloudTransactions.length;
 
-      // 3) مقارنة
-      final customersDiff =
-          localCustomers.length - cloudCustomers.length;
-      final transactionsDiff =
-          localTransactions.length - cloudTransactions.length;
+    final pendingRaw = prefs.getBool(_keyHasPendingChanges) ?? false;
+    final hasCountMismatch =
+        customersDiff != 0 || transactionsDiff != 0;
+    final shouldSync = force || pendingRaw || hasCountMismatch;
 
-      final pendingRaw = prefs.getBool(_keyHasPendingChanges) ?? false;
-      final hasCountMismatch =
-          customersDiff != 0 || transactionsDiff != 0;
-      final shouldSync = force || pendingRaw || hasCountMismatch;
+    debugPrint(
+        '🔍 [Sync] Diffs: customers=$customersDiff, transactions=$transactionsDiff, pending=$pendingRaw, force=$force');
 
-      debugPrint(
-          '🔍 [Sync] Diffs: customers=$customersDiff, transactions=$transactionsDiff, pending=$pendingRaw, force=$force');
+    // 4) اكتشاف التعارضات
+    int conflictsCount = 0;
+    int customersRestored = 0;
+    int transactionsRestored = 0;
+    int customersUpdated = 0;
+    int transactionsUpdated = 0;
+    int customersAdded = 0;
+    int transactionsAdded = 0;
+    int logsAdded = 0;
 
-      // 4) اكتشاف التعارضات
-      int conflictsCount = 0;
-      int customersRestored = 0;
-      int transactionsRestored = 0;
-      int customersUpdated = 0;
-      int transactionsUpdated = 0;
-      int customersAdded = 0;
-      int transactionsAdded = 0;
-      int logsAdded = 0;
+    if (cloudData != null) {
+      final result = await _mergeCloudData(cloudData);
+      customersAdded = result['customers_added'] ?? 0;
+      transactionsAdded = result['transactions_added'] ?? 0;
+      customersUpdated = result['customers_updated'] ?? 0;
+      transactionsUpdated = result['transactions_updated'] ?? 0;
+      customersRestored = result['customers_restored'] ?? 0;
+      transactionsRestored = result['transactions_restored'] ?? 0;
+      logsAdded = result['logs_added'] ?? 0;
+      conflictsCount = result['conflicts'] ?? 0;
+    }
 
-      if (cloudData != null) {
-        final result = await _mergeCloudData(cloudData);
-        customersAdded = result['customers_added'] ?? 0;
-        transactionsAdded = result['transactions_added'] ?? 0;
-        customersUpdated = result['customers_updated'] ?? 0;
-        transactionsUpdated = result['transactions_updated'] ?? 0;
-        customersRestored = result['customers_restored'] ?? 0;
-        transactionsRestored = result['transactions_restored'] ?? 0;
-        logsAdded = result['logs_added'] ?? 0;
-        conflictsCount = result['conflicts'] ?? 0;
-      }
+    // 5) ارفع الحالة الكاملة (مع دمج)
+    bool uploadOk = true;
 
-      // 5) ارفع الحالة الكاملة (مع دمج)
-      bool uploadOk = true;
+    if (shouldSync || customersAdded > 0 || transactionsAdded > 0) {
+      if (!silent) _setStatus(SyncStatus.uploading);
+      uploadOk = await _uploadCurrentState();
 
-      if (shouldSync || customersAdded > 0 || transactionsAdded > 0) {
-        if (!silent) _setStatus(SyncStatus.uploading);
-        uploadOk = await _uploadCurrentState();
-
-        if (!uploadOk) {
-          if (!silent) _setStatus(SyncStatus.error);
-          return SyncResult(
-            success: false,
-            message: 'فشل رفع البيانات إلى Drive',
-          );
-        }
-      }
-
-      // 6) تحقق
-      int? verifyLocalCount;
-      int? verifyCloudCount;
-
-      if (shouldSync) {
-        try {
-          final verifyCloud = await GDriveService.downloadSyncFile();
-          verifyCloudCount =
-              (verifyCloud?['transactions'] as List?)?.length ?? 0;
-          final verifyLocal = await db.allTransactionsRaw();
-          verifyLocalCount = verifyLocal.length;
-
-          debugPrint(
-              '🔍 [Sync] Verify: Local $verifyLocalCount, Cloud $verifyCloudCount');
-        } catch (e) {
-          debugPrint('⚠️ [Sync] Verify error: $e');
-        }
-      }
-
-      // 7) تحديث الأوقات
-      final now = DateTime.now();
-      await prefs.setString(_keyLastSyncTime, now.toIso8601String());
-      await prefs.setString(_keyLastUpload, now.toIso8601String());
-      if (cloudData != null) {
-        await prefs.setString(_keyLastDownload, now.toIso8601String());
-      }
-      await _saveHasPendingChanges(false);
-
-      if (!silent) _setStatus(SyncStatus.idle);
-
-      // 8) تسجيل
-      if (!silent) {
-        await LoggerService.logSyncSuccess(
-          transactionsAdded: transactionsAdded + transactionsRestored,
-          customersAdded: customersAdded + customersRestored,
-          customersUpdated: customersUpdated + transactionsUpdated,
-          hasConflict: conflictsCount > 0,
+      if (!uploadOk) {
+        if (!silent) _setStatus(SyncStatus.error);
+        return SyncResult(
+          success: false,
+          message: 'فشل رفع البيانات إلى Drive',
         );
       }
+    }
 
-      // 9) النتيجة
-      final message = _buildResultMessage(
-        shouldSync: shouldSync,
-        customersDiff: customersDiff,
-        transactionsDiff: transactionsDiff,
-        conflictsCount: conflictsCount,
-        verifyLocalCount: verifyLocalCount,
-        verifyCloudCount: verifyCloudCount,
-      );
+    // 6) تحقق
+    int? verifyLocalCount;
+    int? verifyCloudCount;
 
-      final finalResult = SyncResult(
-        success: true,
-        message: message,
-        customersAdded: customersAdded,
-        transactionsAdded: transactionsAdded,
-        customersUpdated: customersUpdated,
-        transactionsUpdated: transactionsUpdated,
-        customersRestored: customersRestored,
-        transactionsRestored: transactionsRestored,
-        logsAdded: logsAdded,
-        conflictsCount: conflictsCount,
+    if (shouldSync) {
+      try {
+        final verifyCloud = await GDriveService.downloadSyncFile();
+        verifyCloudCount =
+            (verifyCloud?['transactions'] as List?)?.length ?? 0;
+        final verifyLocal = await db.allTransactionsRaw();
+        verifyLocalCount = verifyLocal.length;
+
+        debugPrint(
+            '🔍 [Sync] Verify: Local $verifyLocalCount, Cloud $verifyCloudCount');
+      } catch (e) {
+        debugPrint('⚠️ [Sync] Verify error: $e');
+      }
+    }
+
+    // 7) تحديث الأوقات
+    final now = DateTime.now();
+    await prefs.setString(_keyLastSyncTime, now.toIso8601String());
+    await prefs.setString(_keyLastUpload, now.toIso8601String());
+    if (cloudData != null) {
+      await prefs.setString(_keyLastDownload, now.toIso8601String());
+    }
+    await _saveHasPendingChanges(false);
+
+    if (!silent) _setStatus(SyncStatus.idle);
+
+    // 8) تسجيل
+    if (!silent) {
+      await LoggerService.logSyncSuccess(
+        transactionsAdded: transactionsAdded + transactionsRestored,
+        customersAdded: customersAdded + customersRestored,
+        customersUpdated: customersUpdated + transactionsUpdated,
         hasConflict: conflictsCount > 0,
-        timestamp: now,
       );
+    }
 
-      if (!_resultController.isClosed) {
-        _resultController.add(finalResult);
-      }
+    // 9) النتيجة
+    final message = _buildResultMessage(
+      shouldSync: shouldSync,
+      customersDiff: customersDiff,
+      transactionsDiff: transactionsDiff,
+      conflictsCount: conflictsCount,
+      verifyLocalCount: verifyLocalCount,
+      verifyCloudCount: verifyCloudCount,
+    );
 
-      return finalResult;
-    } catch (e) {
-      debugPrint('❌ [Sync] Error: $e');
-      if (!silent) _setStatus(SyncStatus.error);
-      if (!silent) {
-        await LoggerService.logSyncError(e.toString());
-      }
-      return SyncResult(
-        success: false,
-        message: 'فشل المزامنة: $e',
-      );
+    final finalResult = SyncResult(
+      success: true,
+      message: message,
+      customersAdded: customersAdded,
+      transactionsAdded: transactionsAdded,
+      customersUpdated: customersUpdated,
+      transactionsUpdated: transactionsUpdated,
+      customersRestored: customersRestored,
+      transactionsRestored: transactionsRestored,
+      logsAdded: logsAdded,
+      conflictsCount: conflictsCount,
+      hasConflict: conflictsCount > 0,
+      timestamp: now,
+    );
+
+    if (!_resultController.isClosed) {
+      _resultController.add(finalResult);
+    }
+
+    return finalResult;
+  } catch (e) {
+    debugPrint('❌ [Sync] Error: $e');
+    if (!silent) _setStatus(SyncStatus.error);
+    if (!silent) {
+      await LoggerService.logSyncError(e.toString());
+    }
+    return SyncResult(
+      success: false,
+      message: 'فشل المزامنة: $e',
+    );
+  }
+}
+
+static String _buildResultMessage({
+  required bool shouldSync,
+  required int customersDiff,
+  required int transactionsDiff,
+  required int conflictsCount,
+  int? verifyLocalCount,
+  int? verifyCloudCount,
+}) {
+  if (!shouldSync) return '✅ لا توجد تغييرات';
+
+  final parts = <String>[];
+
+  if (conflictsCount > 0) parts.add('⚠️ $conflictsCount تعارض');
+
+  if (verifyLocalCount != null &&
+      verifyCloudCount != null &&
+      verifyLocalCount != verifyCloudCount) {
+    parts.add(
+        '⚠️ عدم تطابق: محلي $verifyLocalCount ≠ سحابة $verifyCloudCount');
+  } else {
+    parts.add('✅ تمت المزامنة');
+    if (verifyLocalCount != null) {
+      parts.add('($verifyLocalCount عملية متطابقة)');
     }
   }
 
-  static String _buildResultMessage({
-    required bool shouldSync,
-    required int customersDiff,
-    required int transactionsDiff,
-    required int conflictsCount,
-    int? verifyLocalCount,
-    int? verifyCloudCount,
-  }) {
-    if (!shouldSync) return '✅ لا توجد تغييرات';
+  return parts.join(' — ');
+}
 
-    final parts = <String>[];
+// ═══════════════════════════════════════════════════════════
+// 🆕 دمج السحابة مع المحلي — مع try/catch لكل إدخال
+// ═══════════════════════════════════════════════════════════
+static Future<Map<String, int>> _mergeCloudData(
+    Map<String, dynamic> cloudData) async {
+  final db = DatabaseHelper.instance;
 
-    if (conflictsCount > 0) parts.add('⚠️ $conflictsCount تعارض');
+  int addedCustomers = 0;
+  int addedTransactions = 0;
+  int updatedCustomers = 0;
+  int updatedTransactions = 0;
+  int restoredCustomers = 0;
+  int restoredTransactions = 0;
+  int addedLogs = 0;
+  int conflicts = 0;
+  int failedCustomers = 0;
+  int failedTransactions = 0;
 
-    if (verifyLocalCount != null &&
-        verifyCloudCount != null &&
-        verifyLocalCount != verifyCloudCount) {
-      parts.add(
-          '⚠️ عدم تطابق: محلي $verifyLocalCount ≠ سحابة $verifyCloudCount');
-    } else {
-      parts.add('✅ تمت المزامنة');
-      if (verifyLocalCount != null) {
-        parts.add('($verifyLocalCount عملية متطابقة)');
-      }
-    }
+  try {
+    final cloudCustomers =
+        (cloudData['customers'] as List?)?.cast<Map>() ?? [];
+    final cloudTransactions =
+        (cloudData['transactions'] as List?)?.cast<Map>() ?? [];
+    final cloudUsedCodes =
+        (cloudData['used_codes'] as List?)?.cast<Map>() ?? [];
+    final cloudLogs =
+        (cloudData['log_events'] as List?)?.cast<Map>() ?? [];
 
-    return parts.join(' — ');
-  }  // ═══════════════════════════════════════════════════════════
-  // 🆕 دمج السحابة مع المحلي (بعد الرفع)
-  // ═══════════════════════════════════════════════════════════
-  static Future<Map<String, int>> _mergeCloudData(
-      Map<String, dynamic> cloudData) async {
-    final db = DatabaseHelper.instance;
+    debugPrint(
+        '🔄 [Merge] Starting: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions, ${cloudLogs.length} logs');
 
-    int addedCustomers = 0;
-    int addedTransactions = 0;
-    int updatedCustomers = 0;
-    int updatedTransactions = 0;
-    int restoredCustomers = 0;
-    int restoredTransactions = 0;
-    int addedLogs = 0;
-    int conflicts = 0;
+    // ═══════════════════════════════════════════════════════════
+    // 1. الرموز
+    // ═══════════════════════════════════════════════════════════
+    for (final uc in cloudUsedCodes) {
+      final code = uc['code'] as String?;
+      final type = uc['type'] as String?;
+      if (code == null || type == null) continue;
 
-    try {
-      final cloudCustomers =
-          (cloudData['customers'] as List?)?.cast<Map>() ?? [];
-      final cloudTransactions =
-          (cloudData['transactions'] as List?)?.cast<Map>() ?? [];
-      final cloudUsedCodes =
-          (cloudData['used_codes'] as List?)?.cast<Map>() ?? [];
-      final cloudLogs =
-          (cloudData['log_events'] as List?)?.cast<Map>() ?? [];
-
-      // 1. الرموز
-      for (final uc in cloudUsedCodes) {
-        final code = uc['code'] as String?;
-        final type = uc['type'] as String?;
-        if (code == null || type == null) continue;
+      try {
         final exists = await db.codeExists(code);
         if (!exists) {
           await db.addUsedCode(code: code, type: type);
         }
+      } catch (e) {
+        debugPrint('❌ [Merge] Failed to add code "$code": $e');
       }
+    }
 
-      // 2. العملاء
-      final Map<int, int> cloudIdToLocalId = {};
+    // ═══════════════════════════════════════════════════════════
+    // 2. العملاء
+    // ═══════════════════════════════════════════════════════════
+    final Map<int, int> cloudIdToLocalId = {};
 
-      for (final ccMap in cloudCustomers) {
-        final cc = Map<String, dynamic>.from(ccMap);
-        final cloudId = cc['cloud_id'] as String?;
-        final cloudName = cc['name'] as String? ?? '';
+    for (final ccMap in cloudCustomers) {
+      final cc = Map<String, dynamic>.from(ccMap);
+      final cloudId = cc['cloud_id'] as String?;
+      final cloudName = cc['name'] as String? ?? '';
 
+      try {
         if (cloudId == null || cloudId.isEmpty) {
           final cloudCreated = cc['created_at'] as String? ?? '';
           final localId =
               await db.findCustomerIdByNameAndDate(cloudName, cloudCreated);
           if (localId != null) {
             final oldCloudId = cc['id'] as int?;
-            if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = localId;
+            if (oldCloudId != null) {
+              cloudIdToLocalId[oldCloudId] = localId;
+            }
           }
           continue;
         }
@@ -577,48 +584,70 @@ class SyncService {
           // جديد من السحابة
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
-          final newId = await db.insertCustomerRaw(newMap);
-          addedCustomers++;
-          if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = newId;
 
-          if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
-            await _logRemoteActivity(
-              item: 'حساب "$cloudName"',
-              action: 'إضافة من جهاز آخر',
-              by: cc['created_by'] as String?,
-            );
+          try {
+            final newId = await db.insertCustomerRaw(newMap);
+            addedCustomers++;
+            if (oldCloudId != null) {
+              cloudIdToLocalId[oldCloudId] = newId;
+            }
+
+            if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
+              await _logRemoteActivity(
+                item: 'حساب "$cloudName"',
+                action: 'إضافة من جهاز آخر',
+                by: cc['created_by'] as String?,
+              );
+            }
+          } catch (e) {
+            debugPrint('❌ [Merge] Failed to insert customer "$cloudName": $e');
+            failedCustomers++;
           }
         } else {
           final localId = localRows.first['id'] as int;
-          if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = localId;
+          if (oldCloudId != null) {
+            cloudIdToLocalId[oldCloudId] = localId;
+          }
 
-          final localMap = Map<String, dynamic>.from(localRows.first);
-          final resolution = await _resolveCustomerConflict(
-            localRow: localMap,
-            cloudRow: cc,
-          );
+          try {
+            final localMap = Map<String, dynamic>.from(localRows.first);
+            final resolution = await _resolveCustomerConflict(
+              localRow: localMap,
+              cloudRow: cc,
+            );
 
-          if (resolution == 'updated') {
-            updatedCustomers++;
-          } else if (resolution == 'restored') {
-            restoredCustomers++;
-          } else if (resolution == 'conflict') {
-            conflicts++;
+            if (resolution == 'updated') {
+              updatedCustomers++;
+            } else if (resolution == 'restored') {
+              restoredCustomers++;
+            } else if (resolution == 'conflict') {
+              conflicts++;
+            }
+          } catch (e) {
+            debugPrint('❌ [Merge] Customer conflict error: $e');
+            failedCustomers++;
           }
         }
+      } catch (e) {
+        debugPrint('❌ [Merge] Customer loop error: $e');
+        failedCustomers++;
       }
+    }
 
-      // 3. المعاملات
-      for (final ctMap in cloudTransactions) {
-        final ct = Map<String, dynamic>.from(ctMap);
-        final cloudId = ct['cloud_id'] as String?;
-        final cloudCustomerId = ct['customer_id'] as int?;
+    // ═══════════════════════════════════════════════════════════
+    // 3. المعاملات
+    // ═══════════════════════════════════════════════════════════
+    for (final ctMap in cloudTransactions) {
+      final ct = Map<String, dynamic>.from(ctMap);
+      final cloudId = ct['cloud_id'] as String?;
+      final cloudCustomerId = ct['customer_id'] as int?;
 
-        if (cloudCustomerId == null) continue;
+      if (cloudCustomerId == null) continue;
 
-        final localCustomerId = cloudIdToLocalId[cloudCustomerId];
-        if (localCustomerId == null) continue;
+      final localCustomerId = cloudIdToLocalId[cloudCustomerId];
+      if (localCustomerId == null) continue;
 
+      try {
         if (cloudId == null || cloudId.isEmpty) {
           final amount = (ct['amount'] as num?)?.toDouble() ?? 0;
           final type = ct['type'] as String? ?? 'debt';
@@ -634,8 +663,24 @@ class SyncService {
             final newMap = Map<String, dynamic>.from(ct);
             newMap.remove('id');
             newMap['customer_id'] = localCustomerId;
-            await db.insertTransactionRaw(newMap);
-            addedTransactions++;
+
+            // تجاوز الرمز المكرر
+            final code = newMap['code'] as String?;
+            if (code != null && code.isNotEmpty) {
+              try {
+                if (await db.codeExists(code)) {
+                  newMap['code'] = null;
+                }
+              } catch (_) {}
+            }
+
+            try {
+              await db.insertTransactionRaw(newMap);
+              addedTransactions++;
+            } catch (e) {
+              debugPrint('❌ [Merge] Failed to insert tx: $e');
+              failedTransactions++;
+            }
           }
           continue;
         }
@@ -650,40 +695,70 @@ class SyncService {
           final newMap = Map<String, dynamic>.from(ct);
           newMap.remove('id');
           newMap['customer_id'] = localCustomerId;
-          await db.insertTransactionRaw(newMap);
-          addedTransactions++;
 
-          if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
-            await _logRemoteActivity(
-              item: 'عملية بمبلغ ${(ct['amount'] as num).toStringAsFixed(0)}',
-              action: 'إضافة من جهاز آخر',
-              by: ct['accountant'] as String?,
-            );
+          // تجاوز الرمز المكرر
+          final code = newMap['code'] as String?;
+          if (code != null && code.isNotEmpty) {
+            try {
+              if (await db.codeExists(code)) {
+                newMap['code'] = null;
+              }
+            } catch (_) {}
+          }
+
+          try {
+            await db.insertTransactionRaw(newMap);
+            addedTransactions++;
+
+            if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
+              await _logRemoteActivity(
+                item:
+                    'عملية بمبلغ ${(ct['amount'] as num).toStringAsFixed(0)}',
+                action: 'إضافة من جهاز آخر',
+                by: ct['accountant'] as String?,
+              );
+            }
+          } catch (e) {
+            debugPrint('❌ [Merge] Failed to insert tx: $e');
+            debugPrint('   Data: $newMap');
+            failedTransactions++;
           }
         } else {
-          final localMap = Map<String, dynamic>.from(localRows.first);
-          final resolution = await _resolveTransactionConflict(
-            localRow: localMap,
-            cloudRow: ct,
-          );
+          try {
+            final localMap = Map<String, dynamic>.from(localRows.first);
+            final resolution = await _resolveTransactionConflict(
+              localRow: localMap,
+              cloudRow: ct,
+            );
 
-          if (resolution == 'updated') {
-            updatedTransactions++;
-          } else if (resolution == 'restored') {
-            restoredTransactions++;
-          } else if (resolution == 'conflict') {
-            conflicts++;
+            if (resolution == 'updated') {
+              updatedTransactions++;
+            } else if (resolution == 'restored') {
+              restoredTransactions++;
+            } else if (resolution == 'conflict') {
+              conflicts++;
+            }
+          } catch (e) {
+            debugPrint('❌ [Merge] Tx conflict error: $e');
+            failedTransactions++;
           }
         }
+      } catch (e) {
+        debugPrint('❌ [Merge] Tx loop error: $e');
+        failedTransactions++;
       }
+    }
 
-      // 4. الأحداث
-      if (SettingsService.getBool(AppSettings.syncLogs)) {
-        for (final cl in cloudLogs) {
-          final action = cl['action'] as String? ?? '';
-          final createdAt = cl['created_at'] as String? ?? '';
-          if (action.isEmpty || createdAt.isEmpty) continue;
+    // ═══════════════════════════════════════════════════════════
+    // 4. الأحداث
+    // ═══════════════════════════════════════════════════════════
+    if (SettingsService.getBool(AppSettings.syncLogs)) {
+      for (final cl in cloudLogs) {
+        final action = cl['action'] as String? ?? '';
+        final createdAt = cl['created_at'] as String? ?? '';
+        if (action.isEmpty || createdAt.isEmpty) continue;
 
+        try {
           final accountant = cl['accountant'] as String?;
           final exists = await db.logEventExists(
             action: action,
@@ -694,195 +769,198 @@ class SyncService {
           if (!exists) {
             final newMap = Map<String, dynamic>.from(cl);
             newMap.remove('id');
-            await db.insertLogEventRaw(newMap);
-            addedLogs++;
+
+            try {
+              await db.insertLogEventRaw(newMap);
+              addedLogs++;
+            } catch (e) {
+              debugPrint('❌ [Merge] Failed to insert log: $e');
+            }
           }
+        } catch (e) {
+          debugPrint('❌ [Merge] Log loop error: $e');
         }
-      }
-
-      debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers c, ~$updatedCustomers u, ~$restoredCustomers r, +$addedTransactions t, ~$updatedTransactions ut, ~$restoredTransactions rt, +$addedLogs l, $conflicts conflicts');
-    } catch (e) {
-      debugPrint('❌ [Sync] Merge error: $e');
-    }
-
-    return {
-      'customers_added': addedCustomers,
-      'customers_updated': updatedCustomers,
-      'customers_restored': restoredCustomers,
-      'transactions_added': addedTransactions,
-      'transactions_updated': updatedTransactions,
-      'transactions_restored': restoredTransactions,
-      'logs_added': addedLogs,
-      'conflicts': conflicts,
-    };
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 دالة دمج للسحابة عند الرفع
-  // ═══════════════════════════════════════════════════════════
-  static Future<Map<String, dynamic>> _mergeForUpload(
-      Map<String, dynamic>? existingCloud) async {
-    final db = DatabaseHelper.instance;
-
-    // 1) المحلي
-    final localCustomers = await db.allCustomersRaw();
-    final localTransactions = await db.allTransactionsRaw();
-    final localUsedCodes = await db.allUsedCodesRaw();
-    final localLogs = await db.allLogEventsRaw();
-
-    // 2) العملاء — merge
-    final Map<String, Map<String, dynamic>> mergedCustomers = {};
-
-    // السحابي أولاً
-    if (existingCloud != null) {
-      for (final c in (existingCloud['customers'] as List?) ?? []) {
-        final cm = Map<String, dynamic>.from(c);
-        final key = _customerKey(cm);
-        if (key.isNotEmpty) mergedCustomers[key] = cm;
-      }
-    }
-
-    // ثم المحلي
-    for (final c in localCustomers) {
-      final key = _customerKey(c);
-      if (key.isEmpty) continue;
-
-      if (mergedCustomers.containsKey(key)) {
-        final existing = mergedCustomers[key]!;
-        final existingUpdated = existing['updated_at'] as String? ?? '';
-        final localUpdated = c['updated_at'] as String? ?? '';
-
-        // ✅ الأحدث يفوز
-        if (localUpdated.compareTo(existingUpdated) > 0) {
-          mergedCustomers[key] = c;
-        }
-      } else {
-        mergedCustomers[key] = c;
-      }
-    }
-
-    // 3) المعاملات — merge
-    final Map<String, Map<String, dynamic>> mergedTransactions = {};
-
-    if (existingCloud != null) {
-      for (final t in (existingCloud['transactions'] as List?) ?? []) {
-        final tm = Map<String, dynamic>.from(t);
-        final key = _transactionKey(tm);
-        if (key.isNotEmpty) mergedTransactions[key] = tm;
-      }
-    }
-
-    for (final t in localTransactions) {
-      final key = _transactionKey(t);
-      if (key.isEmpty) continue;
-
-      if (mergedTransactions.containsKey(key)) {
-        final existing = mergedTransactions[key]!;
-        final existingUpdated = existing['updated_at'] as String? ?? '';
-        final localUpdated = t['updated_at'] as String? ?? '';
-
-        // ✅ الأحدث يفوز
-        if (localUpdated.compareTo(existingUpdated) > 0) {
-          mergedTransactions[key] = t;
-        }
-      } else {
-        mergedTransactions[key] = t;
-      }
-    }
-
-    // 4) الرموز
-    final Set<String> codesSet = {};
-    if (existingCloud != null) {
-      for (final u in (existingCloud['used_codes'] as List?) ?? []) {
-        final code = u['code'] as String?;
-        if (code != null) codesSet.add(code);
-      }
-    }
-    for (final u in localUsedCodes) {
-      final code = u['code'] as String?;
-      if (code != null) codesSet.add(code);
-    }
-
-    final mergedCodes = codesSet.map((code) {
-      final localMatch = localUsedCodes.firstWhere(
-        (u) => u['code'] == code,
-        orElse: () =>
-            {'code': code, 'type': 'debt', 'created_at': DateTime.now().toIso8601String()},
-      );
-      return {
-        'code': localMatch['code'],
-        'type': localMatch['type'] ?? 'debt',
-        'created_at':
-            localMatch['created_at'] ?? DateTime.now().toIso8601String(),
-      };
-    }).toList();
-
-    // 5) الأحداث
-    final Set<String> logsSet = {};
-    final List<Map<String, dynamic>> mergedLogs = [];
-
-    if (existingCloud != null) {
-      for (final l in (existingCloud['log_events'] as List?) ?? []) {
-        final lm = Map<String, dynamic>.from(l);
-        final key = _logKey(lm);
-        if (key.isNotEmpty && !logsSet.contains(key)) {
-          logsSet.add(key);
-          mergedLogs.add(lm);
-        }
-      }
-    }
-
-    for (final l in localLogs) {
-      final key = _logKey(l);
-      if (key.isNotEmpty && !logsSet.contains(key)) {
-        logsSet.add(key);
-        mergedLogs.add(l);
       }
     }
 
     debugPrint(
-        '🔀 [MergeForUpload] Merged: ${mergedCustomers.length} c, ${mergedTransactions.length} t, ${mergedCodes.length} codes, ${mergedLogs.length} logs');
+        '✅ [Merge] Done: +$addedCustomers c, ~$updatedCustomers u, ~$restoredCustomers r, +$addedTransactions t, ~$updatedTransactions ut, ~$restoredTransactions rt, +$addedLogs l, $conflicts conflicts, ✗$failedCustomers cf, ✗$failedTransactions tf');
+  } catch (e) {
+    debugPrint('❌ [Merge] Fatal error: $e');
+  }
 
+  return {
+    'customers_added': addedCustomers,
+    'customers_updated': updatedCustomers,
+    'customers_restored': restoredCustomers,
+    'transactions_added': addedTransactions,
+    'transactions_updated': updatedTransactions,
+    'transactions_restored': restoredTransactions,
+    'logs_added': addedLogs,
+    'conflicts': conflicts,
+    'failed_customers': failedCustomers,
+    'failed_transactions': failedTransactions,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🆕 دالة دمج للسحابة عند الرفع
+// ═══════════════════════════════════════════════════════════
+static Future<Map<String, dynamic>> _mergeForUpload(
+    Map<String, dynamic>? existingCloud) async {
+  final db = DatabaseHelper.instance;
+
+  final localCustomers = await db.allCustomersRaw();
+  final localTransactions = await db.allTransactionsRaw();
+  final localUsedCodes = await db.allUsedCodesRaw();
+  final localLogs = await db.allLogEventsRaw();
+
+  final Map<String, Map<String, dynamic>> mergedCustomers = {};
+
+  if (existingCloud != null) {
+    for (final c in (existingCloud['customers'] as List?) ?? []) {
+      final cm = Map<String, dynamic>.from(c);
+      final key = _customerKey(cm);
+      if (key.isNotEmpty) mergedCustomers[key] = cm;
+    }
+  }
+
+  for (final c in localCustomers) {
+    final key = _customerKey(c);
+    if (key.isEmpty) continue;
+
+    if (mergedCustomers.containsKey(key)) {
+      final existing = mergedCustomers[key]!;
+      final existingUpdated = existing['updated_at'] as String? ?? '';
+      final localUpdated = c['updated_at'] as String? ?? '';
+
+      if (localUpdated.compareTo(existingUpdated) > 0) {
+        mergedCustomers[key] = c;
+      }
+    } else {
+      mergedCustomers[key] = c;
+    }
+  }
+
+  final Map<String, Map<String, dynamic>> mergedTransactions = {};
+
+  if (existingCloud != null) {
+    for (final t in (existingCloud['transactions'] as List?) ?? []) {
+      final tm = Map<String, dynamic>.from(t);
+      final key = _transactionKey(tm);
+      if (key.isNotEmpty) mergedTransactions[key] = tm;
+    }
+  }
+
+  for (final t in localTransactions) {
+    final key = _transactionKey(t);
+    if (key.isEmpty) continue;
+
+    if (mergedTransactions.containsKey(key)) {
+      final existing = mergedTransactions[key]!;
+      final existingUpdated = existing['updated_at'] as String? ?? '';
+      final localUpdated = t['updated_at'] as String? ?? '';
+
+      if (localUpdated.compareTo(existingUpdated) > 0) {
+        mergedTransactions[key] = t;
+      }
+    } else {
+      mergedTransactions[key] = t;
+    }
+  }
+
+  final Set<String> codesSet = {};
+  if (existingCloud != null) {
+    for (final u in (existingCloud['used_codes'] as List?) ?? []) {
+      final code = u['code'] as String?;
+      if (code != null) codesSet.add(code);
+    }
+  }
+  for (final u in localUsedCodes) {
+    final code = u['code'] as String?;
+    if (code != null) codesSet.add(code);
+  }
+
+  final mergedCodes = codesSet.map((code) {
+    final localMatch = localUsedCodes.firstWhere(
+      (u) => u['code'] == code,
+      orElse: () => {
+        'code': code,
+        'type': 'debt',
+        'created_at': DateTime.now().toIso8601String()
+      },
+    );
     return {
-      'app': 'debt_voice_app',
-      'version': 4,
-      'created_at': DateTime.now().toIso8601String(),
-      'customers': mergedCustomers.values.toList(),
-      'transactions': mergedTransactions.values.toList(),
-      'used_codes': mergedCodes,
-      'log_events': mergedLogs,
+      'code': localMatch['code'],
+      'type': localMatch['type'] ?? 'debt',
+      'created_at':
+          localMatch['created_at'] ?? DateTime.now().toIso8601String(),
     };
+  }).toList();
+
+  final Set<String> logsSet = {};
+  final List<Map<String, dynamic>> mergedLogs = [];
+
+  if (existingCloud != null) {
+    for (final l in (existingCloud['log_events'] as List?) ?? []) {
+      final lm = Map<String, dynamic>.from(l);
+      final key = _logKey(lm);
+      if (key.isNotEmpty && !logsSet.contains(key)) {
+        logsSet.add(key);
+        mergedLogs.add(lm);
+      }
+    }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 مفاتيح موحدة
-  // ═══════════════════════════════════════════════════════════
-  static String _customerKey(Map<String, dynamic> c) {
-    final cloudId = c['cloud_id'] as String?;
-    if (cloudId != null && cloudId.isNotEmpty) return 'cloud_$cloudId';
-    final name = c['name'] as String? ?? '';
-    final created = c['created_at'] as String? ?? '';
-    return 'name_${name}_$created';
+  for (final l in localLogs) {
+    final key = _logKey(l);
+    if (key.isNotEmpty && !logsSet.contains(key)) {
+      logsSet.add(key);
+      mergedLogs.add(l);
+    }
   }
 
-  static String _transactionKey(Map<String, dynamic> t) {
-    final cloudId = t['cloud_id'] as String?;
-    if (cloudId != null && cloudId.isNotEmpty) return 'cloud_$cloudId';
-    final code = t['code'] as String? ?? '';
-    final customerId = t['customer_id']?.toString() ?? '';
-    final amount = t['amount']?.toString() ?? '';
-    final created = t['created_at'] as String? ?? '';
-    return 'code_${code}_${customerId}_${amount}_$created';
-  }
+  debugPrint(
+      '🔀 [MergeForUpload] ${mergedCustomers.length} c, ${mergedTransactions.length} t, ${mergedCodes.length} codes, ${mergedLogs.length} logs');
 
-  static String _logKey(Map<String, dynamic> l) {
-    final action = l['action'] as String? ?? '';
-    final createdAt = l['created_at'] as String? ?? '';
-    final accountant = l['accountant'] as String? ?? '';
-    return '${action}_${createdAt}_$accountant';
-  }
+  return {
+    'app': 'debt_voice_app',
+    'version': 4,
+    'created_at': DateTime.now().toIso8601String(),
+    'customers': mergedCustomers.values.toList(),
+    'transactions': mergedTransactions.values.toList(),
+    'used_codes': mergedCodes,
+    'log_events': mergedLogs,
+  };
+}
 
+// ═══════════════════════════════════════════════════════════
+// 🆕 مفاتيح موحدة
+// ═══════════════════════════════════════════════════════════
+static String _customerKey(Map<String, dynamic> c) {
+  final cloudId = c['cloud_id'] as String?;
+  if (cloudId != null && cloudId.isNotEmpty) return 'cloud_$cloudId';
+  final name = c['name'] as String? ?? '';
+  final created = c['created_at'] as String? ?? '';
+  return 'name_${name}_$created';
+}
+
+static String _transactionKey(Map<String, dynamic> t) {
+  final cloudId = t['cloud_id'] as String?;
+  if (cloudId != null && cloudId.isNotEmpty) return 'cloud_$cloudId';
+  final code = t['code'] as String? ?? '';
+  final customerId = t['customer_id']?.toString() ?? '';
+  final amount = t['amount']?.toString() ?? '';
+  final created = t['created_at'] as String? ?? '';
+  return 'code_${code}_${customerId}_${amount}_$created';
+}
+
+static String _logKey(Map<String, dynamic> l) {
+  final action = l['action'] as String? ?? '';
+  final createdAt = l['created_at'] as String? ?? '';
+  final accountant = l['accountant'] as String? ?? '';
+  return '${action}_${createdAt}_$accountant';
+}
   // ═══════════════════════════════════════════════════════════
   // حل تعارض العميل — الأحدث يفوز
   // ═══════════════════════════════════════════════════════════
@@ -913,11 +991,8 @@ class SyncService {
 
     // تعارض حذف
     if (localDeleted != cloudDeleted) {
-      // ✅ الأحدث يفوز
       if (localTime.isAfter(cloudTime)) {
-        // المحلي أحدث
         if (localDeleted) {
-          // محلي محذوف أحدث → احتفظ بالحذف + تنبيه
           await _logDeletionConflict(
             item: 'حساب "$name"',
             deletedBy: localRow['deleted_by'] as String?,
@@ -927,7 +1002,6 @@ class SyncService {
           );
           return 'no_change';
         } else {
-          // محلي نشط أحدث → استعد من الحذف السحابي
           await _logDeletionConflict(
             item: 'حساب "$name"',
             deletedBy: cloudRow['deleted_by'] as String?,
@@ -938,9 +1012,7 @@ class SyncService {
           return 'restored';
         }
       } else {
-        // السحابي أحدث
         if (cloudDeleted) {
-          // سحابي محذوف أحدث → احذف محلياً + تنبيه
           await db.softDeleteCustomer(localId,
               by: cloudRow['deleted_by'] as String? ?? 'المزامنة');
           await _logDeletionConflict(
@@ -952,7 +1024,6 @@ class SyncService {
           );
           return 'updated';
         } else {
-          // سحابي نشط أحدث → استعد محلياً
           await db.restoreCustomer(localId, by: 'المزامنة');
           await _logDeletionConflict(
             item: 'حساب "$name"',
@@ -1051,7 +1122,6 @@ class SyncService {
     // تعارض حذف
     if (localDeleted != cloudDeleted) {
       if (localTime.isAfter(cloudTime)) {
-        // المحلي أحدث
         if (localDeleted) {
           await _logDeletionConflict(
             item:
@@ -1074,7 +1144,6 @@ class SyncService {
           return 'restored';
         }
       } else {
-        // السحابي أحدث
         if (cloudDeleted) {
           await db.softDeleteTransaction(localId,
               by: cloudRow['deleted_by'] as String? ?? 'المزامنة');
@@ -1276,7 +1345,6 @@ class SyncService {
   // ═══════════════════════════════════════════════════════════
   static Future<bool> _uploadCurrentState() async {
     try {
-      // 1) اقرأ السحابة
       Map<String, dynamic>? existingCloud;
       try {
         existingCloud = await GDriveService.downloadSyncFile();
@@ -1284,10 +1352,7 @@ class SyncService {
         debugPrint('⚠️ [Upload] No existing cloud: $e');
       }
 
-      // 2) ادمج
       final merged = await _mergeForUpload(existingCloud);
-
-      // 3) ارفع
       final ok = await GDriveService.uploadSyncFile(merged);
       debugPrint('⬆️ [Upload] Result: $ok');
 
