@@ -1,6 +1,6 @@
 class Transaction {
   final int? id;
-  final String? cloudId; // 🆕 UUID عالمي فريد (لا يتغير)
+  final String? cloudId;
   final int customerId;
   final String? code;
   final String? accountant;
@@ -10,16 +10,19 @@ class Transaction {
   final String type;
   final String items;
 
-  // 🆕 Tracking
+  // Tracking
   final String? updatedBy;
   final String? updatedAt;
   final String? lastModifiedBy;
-  final String? lastModifiedFrom; // device_id
+  final String? lastModifiedFrom;
 
-  // 🆕 Soft Delete
+  // Soft Delete
   final bool isDeleted;
   final String? deletedAt;
   final String? deletedBy;
+
+  // 🆕 Hard Delete (permanent)
+  final bool isPermanentlyDeleted;
 
   final String createdAt;
 
@@ -41,6 +44,7 @@ class Transaction {
     this.isDeleted = false,
     this.deletedAt,
     this.deletedBy,
+    this.isPermanentlyDeleted = false, // 🆕
     required this.createdAt,
   });
 
@@ -62,6 +66,7 @@ class Transaction {
         'is_deleted': isDeleted ? 1 : 0,
         'deleted_at': deletedAt,
         'deleted_by': deletedBy,
+        'is_permanently_deleted': isPermanentlyDeleted ? 1 : 0, // 🆕
         'created_at': createdAt,
       };
 
@@ -83,6 +88,7 @@ class Transaction {
         isDeleted: m['is_deleted'] == 1,
         deletedAt: m['deleted_at'],
         deletedBy: m['deleted_by'],
+        isPermanentlyDeleted: m['is_permanently_deleted'] == 1, // 🆕
         createdAt: m['created_at'],
       );
 
@@ -104,6 +110,7 @@ class Transaction {
     bool? isDeleted,
     String? deletedAt,
     String? deletedBy,
+    bool? isPermanentlyDeleted, // 🆕
     String? createdAt,
   }) {
     return Transaction(
@@ -124,13 +131,12 @@ class Transaction {
       isDeleted: isDeleted ?? this.isDeleted,
       deletedAt: deletedAt ?? this.deletedAt,
       deletedBy: deletedBy ?? this.deletedBy,
+      isPermanentlyDeleted:
+          isPermanentlyDeleted ?? this.isPermanentlyDeleted, // 🆕
       createdAt: createdAt ?? this.createdAt,
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // معلومات المصدر
-  // ═══════════════════════════════════════════════════════════
   static ({String label, String emoji, int color}) sourceInfo(String? source) {
     switch (source) {
       case 'overlay':
@@ -151,48 +157,30 @@ class Transaction {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // دوال مساعدة
-  // ═══════════════════════════════════════════════════════════
-
   bool get isDebt => type == 'debt' && !isReturn;
   bool get isPayment => type == 'payment' && !isReturn;
   bool get isReturn => items.startsWith('مرتجع');
-  bool get isCurrentlyActive => !isDeleted;
-  bool get isTrashed => isDeleted;
+  bool get isCurrentlyActive => !isDeleted && !isPermanentlyDeleted;
+  bool get isTrashed => isDeleted && !isPermanentlyDeleted;
 
-  /// 🆕 هل تم تعديلها بعد الإنشاء؟
-  /// يعتبر "معدّل" فقط إذا مر أكثر من 5 ثوانٍ بين createdAt و updatedAt
   bool get wasModified {
-    if (updatedAt == null || updatedAt!.isEmpty) return false;
-    if (createdAt.isEmpty) return false;
-
-    try {
-      final u = DateTime.parse(updatedAt!);
-      final c = DateTime.parse(createdAt);
-      return u.difference(c).inSeconds.abs() > 5;
-    } catch (_) {
-      return false;
-    }
+    if (updatedAt == null || createdAt.isEmpty) return false;
+    return updatedAt != createdAt;
   }
 
-  /// 🆕 هل تم تعديلها بواسطة شخص مختلف عن المنشئ؟
   bool get wasModifiedByOther {
     if (!wasModified) return false;
     if (accountant == null || updatedBy == null) return false;
     return accountant != updatedBy;
   }
 
-  /// 🆕 هل لها معرّف سحابي؟
   bool get hasCloudId => cloudId != null && cloudId!.isNotEmpty;
 
-  /// 🆕 نص وصفي لمن حذف العملية
   String get deletedByLabel {
     if (deletedBy == null || deletedBy!.isEmpty) return 'غير معروف';
     return deletedBy!;
   }
 
-  /// 🆕 نص وصفي لآخر تعديل — يظهر فقط إذا عُدّلت فعلاً
   String get lastModifiedLabel {
     if (!wasModified) return 'لا تعديلات';
     if (lastModifiedBy == null || lastModifiedBy!.isEmpty) {
@@ -201,7 +189,6 @@ class Transaction {
     return 'آخر تعديل: $lastModifiedBy';
   }
 
-  /// 🆕 ملخص العملية للعرض
   String get displayLabel {
     if (isReturn) return 'مرتجع';
     if (isDebt) return 'دين';
