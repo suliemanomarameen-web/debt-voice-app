@@ -25,15 +25,12 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إنشاء الجداول (v11)
-  // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
       CREATE TABLE customers(
@@ -53,6 +50,7 @@ class DatabaseHelper {
         is_deleted INTEGER DEFAULT 0,
         deleted_at TEXT,
         deleted_by TEXT,
+        is_permanently_deleted INTEGER DEFAULT 0,
         created_at TEXT NOT NULL
       )
     ''');
@@ -76,6 +74,7 @@ class DatabaseHelper {
         is_deleted INTEGER DEFAULT 0,
         deleted_at TEXT,
         deleted_by TEXT,
+        is_permanently_deleted INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         FOREIGN KEY(customer_id) REFERENCES customers(id)
       )
@@ -115,9 +114,6 @@ class DatabaseHelper {
     ''');
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ترقية قاعدة البيانات
-  // ═══════════════════════════════════════════════════════════
   Future _upgrade(Database db, int oldV, int newV) async {
     // v2 → v9 (ترقيات قديمة)
     if (oldV < 2) {
@@ -193,10 +189,8 @@ class DatabaseHelper {
       } catch (_) {}
     }
 
-    // 🆕 v10: tracking + soft delete + cloud_id
     if (oldV < 10) {
       try {
-        // customers
         await _addColumnIfMissing(db, 'customers', 'cloud_id', 'TEXT');
         await _addColumnIfMissing(db, 'customers', 'created_by', 'TEXT');
         await _addColumnIfMissing(db, 'customers', 'updated_by', 'TEXT');
@@ -206,7 +200,6 @@ class DatabaseHelper {
         await _addColumnIfMissing(db, 'customers', 'deleted_at', 'TEXT');
         await _addColumnIfMissing(db, 'customers', 'deleted_by', 'TEXT');
 
-        // transactions
         await _addColumnIfMissing(db, 'transactions', 'cloud_id', 'TEXT');
         await _addColumnIfMissing(db, 'transactions', 'updated_by', 'TEXT');
         await _addColumnIfMissing(db, 'transactions', 'updated_at', 'TEXT');
@@ -219,7 +212,6 @@ class DatabaseHelper {
         await _addColumnIfMissing(db, 'transactions', 'deleted_at', 'TEXT');
         await _addColumnIfMissing(db, 'transactions', 'deleted_by', 'TEXT');
 
-        // فهارس
         try {
           await db.execute(
               "CREATE INDEX IF NOT EXISTS idx_customers_is_deleted ON customers(is_deleted)");
@@ -231,7 +223,6 @@ class DatabaseHelper {
               "CREATE INDEX IF NOT EXISTS idx_transactions_cloud_id ON transactions(cloud_id)");
         } catch (_) {}
 
-        // backfill
         try {
           await db.execute(
               "UPDATE customers SET updated_at = created_at WHERE updated_at IS NULL");
@@ -239,31 +230,48 @@ class DatabaseHelper {
               "UPDATE transactions SET updated_at = created_at WHERE updated_at IS NULL");
         } catch (_) {}
 
-        debugPrint('✅ [DB] Upgraded to v10 (tracking + soft delete + cloudId)');
+        debugPrint('✅ [DB] Upgraded to v10');
       } catch (e) {
         debugPrint('⚠️ [DB v10] $e');
       }
     }
 
-    // 🆕 v11: needs_acknowledgement
     if (oldV < 11) {
       try {
         await _addColumnIfMissing(
             db, 'log_events', 'needs_acknowledgement', 'INTEGER DEFAULT 0');
-
         try {
           await db.execute(
               "CREATE INDEX IF NOT EXISTS idx_log_events_needs_ack ON log_events(needs_acknowledgement)");
         } catch (_) {}
-
-        debugPrint('✅ [DB] Upgraded to v11 (needs_acknowledgement)');
+        debugPrint('✅ [DB] Upgraded to v11');
       } catch (e) {
         debugPrint('⚠️ [DB v11] $e');
       }
     }
+
+    // 🆕 v12: is_permanently_deleted
+    if (oldV < 12) {
+      try {
+        await _addColumnIfMissing(
+            db, 'customers', 'is_permanently_deleted', 'INTEGER DEFAULT 0');
+        await _addColumnIfMissing(
+            db, 'transactions', 'is_permanently_deleted', 'INTEGER DEFAULT 0');
+
+        try {
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_customers_perm_deleted ON customers(is_permanently_deleted)");
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_transactions_perm_deleted ON transactions(is_permanently_deleted)");
+        } catch (_) {}
+
+        debugPrint('✅ [DB] Upgraded to v12 (is_permanently_deleted)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v12] $e');
+      }
+    }
   }
 
-  /// إضافة عمود إذا لم يكن موجوداً
   Future<void> _addColumnIfMissing(
     Database db,
     String table,
@@ -321,24 +329,22 @@ class DatabaseHelper {
   }
 
   String _now() => DateTime.now().toIso8601String();
-
   String _generateCloudId() => _uuid.v4();
 
   // ═══════════════════════════════════════════════════════════
-  // الزبائن
+  // 🆕 العملاء — مع is_permanently_deleted
   // ═══════════════════════════════════════════════════════════
 
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
     final map = c.toMap();
 
-    // 🆕 توليد cloud_id تلقائيًا إن لم يكن موجودًا
     if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
       map['cloud_id'] = _generateCloudId();
     }
 
-    // 🆕 ضبط updated_at
     map['updated_at'] = map['updated_at'] ?? _now();
+    map['is_permanently_deleted'] = 0;
 
     final id = await db.insert('customers', map);
     _notifyChanged();
@@ -347,7 +353,6 @@ class DatabaseHelper {
 
   Future<int> insertCustomerRaw(Map<String, dynamic> data) async {
     final db = await database;
-    // 🆕 توليد cloud_id إن لم يكن موجودًا
     if (data['cloud_id'] == null || (data['cloud_id'] as String).isEmpty) {
       data['cloud_id'] = _generateCloudId();
     }
@@ -387,13 +392,11 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 حذف ناعم
   Future<int> softDeleteCustomer(int id, {String? by}) async {
     try {
       final db = await database;
       final now = _now();
 
-      // soft delete للعميل
       final r = await db.update(
         'customers',
         {
@@ -407,7 +410,6 @@ class DatabaseHelper {
         whereArgs: [id],
       );
 
-      // soft delete لكل معاملاته
       await db.update(
         'transactions',
         {
@@ -429,11 +431,20 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 استعادة عميل
   Future<int> restoreCustomer(int id, {String? by}) async {
     try {
       final db = await database;
       final now = _now();
+
+      // 🆕 لا تستعد المحذوف نهائياً
+      final check = await db.query('customers',
+          where: 'id = ? AND is_permanently_deleted = 1',
+          whereArgs: [id],
+          limit: 1);
+      if (check.isNotEmpty) {
+        debugPrint('⚠️ Cannot restore permanently deleted customer $id');
+        return 0;
+      }
 
       final r = await db.update(
         'customers',
@@ -457,7 +468,7 @@ class DatabaseHelper {
           'updated_at': now,
           if (by != null && by.isNotEmpty) 'updated_by': by,
         },
-        where: 'customer_id = ?',
+        where: 'customer_id = ? AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
         whereArgs: [id],
       );
 
@@ -469,15 +480,44 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 حذف نهائي (فعلي)
-  Future<int> hardDeleteCustomer(int id) async {
+  // 🆕 الحذف النهائي — يضع العلامة بدل الحذف
+  Future<int> hardDeleteCustomer(int id, {String? by}) async {
     try {
       final db = await database;
-      await db.delete('transactions',
-          where: 'customer_id = ?', whereArgs: [id]);
-      final r =
-          await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+      final now = _now();
+
+      // ضع العلامة على العميل
+      final r = await db.update(
+        'customers',
+        {
+          'is_deleted': 1,
+          'is_permanently_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+      // ضع العلامة على كل معاملاته
+      await db.update(
+        'transactions',
+        {
+          'is_deleted': 1,
+          'is_permanently_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'customer_id = ?',
+        whereArgs: [id],
+      );
+
       _notifyChanged();
+      debugPrint('🗑️ [DB] Customer $id permanently deleted');
       return r;
     } catch (e) {
       debugPrint('❌ hardDeleteCustomer: $e');
@@ -485,15 +525,16 @@ class DatabaseHelper {
     }
   }
 
-  /// حذف قديم — يُحوَّل إلى soft delete
   Future<int> deleteCustomer(int id, {String? by}) async {
     return softDeleteCustomer(id, by: by);
   }
 
+  // العملاء النشطون (غير محذوفين بأي شكل)
   Future<List<Customer>> allCustomers() async {
     final db = await database;
     final r = await db.query('customers',
-        where: 'is_deleted = 0 OR is_deleted IS NULL',
+        where:
+            '(is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
         orderBy: 'name ASC');
     return r.map((e) => Customer.fromMap(e)).toList();
   }
@@ -503,7 +544,7 @@ class DatabaseHelper {
     try {
       final r = await db.query('customers',
           where:
-              '(is_active = 1 OR is_active IS NULL) AND (is_deleted = 0 OR is_deleted IS NULL)',
+              '(is_active = 1 OR is_active IS NULL) AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
           orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
@@ -515,7 +556,8 @@ class DatabaseHelper {
     final db = await database;
     try {
       final r = await db.query('customers',
-          where: 'is_active = 0 AND (is_deleted = 0 OR is_deleted IS NULL)',
+          where:
+              'is_active = 0 AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
           orderBy: 'name ASC');
       return r.map((e) => Customer.fromMap(e)).toList();
     } catch (e) {
@@ -523,19 +565,19 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 كل العملاء (بما فيهم المحذوفون)
   Future<List<Customer>> allCustomersWithDeleted() async {
     final db = await database;
     final r = await db.query('customers', orderBy: 'name ASC');
     return r.map((e) => Customer.fromMap(e)).toList();
   }
 
-  // 🆕 العملاء المحذوفون فقط
+  // سلة المحذوفات: soft-deleted فقط (وليس permanent)
   Future<List<Customer>> getDeletedCustomers() async {
     final db = await database;
     final r = await db.query(
       'customers',
-      where: 'is_deleted = 1',
+      where:
+          'is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
       orderBy: 'deleted_at DESC',
     );
     return r.map((e) => Customer.fromMap(e)).toList();
@@ -552,7 +594,8 @@ class DatabaseHelper {
   Future<Customer?> findExactCustomer(String name) async {
     final db = await database;
     final r = await db.query('customers',
-        where: 'name = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        where:
+            'name = ? AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
         whereArgs: [name],
         limit: 1);
     if (r.isEmpty) return null;
@@ -562,7 +605,8 @@ class DatabaseHelper {
   Future<List<Customer>> findCustomersContaining(String name) async {
     final db = await database;
     final r = await db.query('customers',
-        where: 'name LIKE ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        where:
+            'name LIKE ? AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
         whereArgs: ['%$name%'],
         orderBy: 'name ASC');
     return r.map((e) => Customer.fromMap(e)).toList();
@@ -621,13 +665,12 @@ class DatabaseHelper {
     final db = await database;
     final map = t.toMap();
 
-    // 🆕 توليد cloud_id تلقائيًا
     if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
       map['cloud_id'] = _generateCloudId();
     }
 
-    // 🆕 ضبط updated_at
     map['updated_at'] = map['updated_at'] ?? _now();
+    map['is_permanently_deleted'] = 0;
 
     final id = await db.insert('transactions', map);
 
@@ -647,7 +690,6 @@ class DatabaseHelper {
   Future<int> insertTransactionRaw(Map<String, dynamic> data) async {
     final db = await database;
 
-    // 🆕 توليد cloud_id إن لم يكن موجودًا
     if (data['cloud_id'] == null ||
         (data['cloud_id'] as String?)?.isEmpty == true) {
       data['cloud_id'] = _generateCloudId();
@@ -668,20 +710,38 @@ class DatabaseHelper {
   }
 
   Future<int> updateTransaction(Transaction t, {String? by}) async {
-    final db = await database;
-    final now = _now();
+    try {
+      final db = await database;
+      final now = _now();
 
-    final data = t.toMap();
-    data['updated_at'] = now;
-    if (by != null && by.isNotEmpty) {
-      data['updated_by'] = by;
-      data['last_modified_by'] = by;
+      final data = <String, dynamic>{
+        'amount': t.amount,
+        'items': t.items,
+        'type': t.type,
+        'currency': t.currency,
+        'code': t.code,
+        'accountant': t.accountant,
+        'source': t.source,
+        'updated_at': now,
+        if (by != null && by.isNotEmpty) 'updated_by': by,
+        if (by != null && by.isNotEmpty) 'last_modified_by': by,
+        if (t.lastModifiedFrom != null)
+          'last_modified_from': t.lastModifiedFrom,
+      };
+
+      final r = await db.update(
+        'transactions',
+        data,
+        where: 'id = ?',
+        whereArgs: [t.id],
+      );
+
+      _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ updateTransaction error: $e');
+      return 0;
     }
-
-    final r = await db.update('transactions', data,
-        where: 'id = ?', whereArgs: [t.id]);
-    _notifyChanged();
-    return r;
   }
 
   Future<int> updateTransactionFields(
@@ -707,7 +767,6 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 حذف ناعم لمعاملة
   Future<int> softDeleteTransaction(int id, {String? by}) async {
     try {
       final db = await database;
@@ -738,6 +797,16 @@ class DatabaseHelper {
       final db = await database;
       final now = _now();
 
+      // 🆕 لا تستعد المحذوف نهائياً
+      final check = await db.query('transactions',
+          where: 'id = ? AND is_permanently_deleted = 1',
+          whereArgs: [id],
+          limit: 1);
+      if (check.isNotEmpty) {
+        debugPrint('⚠️ Cannot restore permanently deleted transaction $id');
+        return 0;
+      }
+
       final r = await db.update(
         'transactions',
         {
@@ -758,19 +827,34 @@ class DatabaseHelper {
     }
   }
 
-  Future<int> hardDeleteTransaction(int id) async {
+  // 🆕 الحذف النهائي للمعاملة
+  Future<int> hardDeleteTransaction(int id, {String? by}) async {
     try {
       final db = await database;
-      final r =
-          await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+      final now = _now();
+
+      final r = await db.update(
+        'transactions',
+        {
+          'is_deleted': 1,
+          'is_permanently_deleted': 1,
+          'deleted_at': now,
+          'deleted_by': by,
+          'updated_at': now,
+          if (by != null && by.isNotEmpty) 'updated_by': by,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
       _notifyChanged();
+      debugPrint('🗑️ [DB] Transaction $id permanently deleted');
       return r;
     } catch (e) {
+      debugPrint('❌ hardDeleteTransaction: $e');
       return 0;
     }
   }
 
-  /// حذف قديم — يُحوَّل إلى soft
   Future<int> deleteTransaction(int id, {String? by}) async {
     return softDeleteTransaction(id, by: by);
   }
@@ -786,25 +870,26 @@ class DatabaseHelper {
   Future<List<Transaction>> customerTransactions(int customerId) async {
     final db = await database;
     final r = await db.query('transactions',
-        where: 'customer_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+        where:
+            'customer_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
         whereArgs: [customerId],
         orderBy: 'created_at DESC');
     return r.map((e) => Transaction.fromMap(e)).toList();
   }
 
-  // 🆕 كل المعاملات (بما فيها المحذوفة)
   Future<List<Transaction>> allTransactionsWithDeleted() async {
     final db = await database;
     final r = await db.query('transactions', orderBy: 'created_at DESC');
     return r.map((e) => Transaction.fromMap(e)).toList();
   }
 
-  // 🆕 المعاملات المحذوفة
+  // سلة المحذوفات: soft-deleted فقط (وليس permanent)
   Future<List<Transaction>> getDeletedTransactions() async {
     final db = await database;
     final r = await db.query(
       'transactions',
-      where: 'is_deleted = 1',
+      where:
+          'is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
       orderBy: 'deleted_at DESC',
     );
     return r.map((e) => Transaction.fromMap(e)).toList();
@@ -819,6 +904,7 @@ class DatabaseHelper {
       FROM transactions
       WHERE customer_id = ?
         AND (is_deleted = 0 OR is_deleted IS NULL)
+        AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
     ''', [customerId]);
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
@@ -831,7 +917,8 @@ class DatabaseHelper {
         COALESCE(SUM(CASE WHEN type='debt' THEN amount ELSE 0 END),0) AS d,
         COALESCE(SUM(CASE WHEN type='payment' THEN amount ELSE 0 END),0) AS p
       FROM transactions
-      WHERE is_deleted = 0 OR is_deleted IS NULL
+      WHERE (is_deleted = 0 OR is_deleted IS NULL)
+        AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
     ''');
     final row = r.first;
     return (row['d'] as num).toDouble() - (row['p'] as num).toDouble();
@@ -849,7 +936,7 @@ class DatabaseHelper {
     final r = await db.query(
       'transactions',
       where:
-          'customer_id = ? AND amount = ? AND type = ? AND created_at > ? AND (is_deleted = 0 OR is_deleted IS NULL)',
+          'customer_id = ? AND amount = ? AND type = ? AND created_at > ? AND (is_deleted = 0 OR is_deleted IS NULL) AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
       whereArgs: [customerId, amount, type, since],
       limit: 1,
     );
@@ -870,16 +957,13 @@ class DatabaseHelper {
     return r.isNotEmpty;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 فحص الحذف (يُستخدم من الواجهة قبل الحذف)
-  // ═══════════════════════════════════════════════════════════
-
-  /// عدد معاملات العميل
   Future<int> countCustomerTransactions(int customerId) async {
     final db = await database;
     final r = await db.rawQuery('''
       SELECT COUNT(*) AS c FROM transactions
-      WHERE customer_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+      WHERE customer_id = ?
+        AND (is_deleted = 0 OR is_deleted IS NULL)
+        AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
     ''', [customerId]);
     return (r.first['c'] as int?) ?? 0;
   }
@@ -899,13 +983,15 @@ class DatabaseHelper {
 
       transactionsDeleted = await db.delete(
         'transactions',
-        where: 'is_deleted = 1 AND deleted_at < ?',
+        where:
+            'is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL) AND deleted_at < ?',
         whereArgs: [cutoff],
       );
 
       customersDeleted = await db.delete(
         'customers',
-        where: 'is_deleted = 1 AND deleted_at < ?',
+        where:
+            'is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL) AND deleted_at < ?',
         whereArgs: [cutoff],
       );
 
@@ -928,9 +1014,9 @@ class DatabaseHelper {
     try {
       final db = await database;
       final c = await db.rawQuery(
-          'SELECT COUNT(*) AS c FROM customers WHERE is_deleted = 1');
+          'SELECT COUNT(*) AS c FROM customers WHERE is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)');
       final t = await db.rawQuery(
-          'SELECT COUNT(*) AS c FROM transactions WHERE is_deleted = 1');
+          'SELECT COUNT(*) AS c FROM transactions WHERE is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)');
       return {
         'customers': (c.first['c'] as int?) ?? 0,
         'transactions': (t.first['c'] as int?) ?? 0,
@@ -1270,10 +1356,6 @@ class DatabaseHelper {
     return db.query('log_events', orderBy: 'created_at ASC', limit: count);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 الإشعارات التي تحتاج تأكيد
-  // ═══════════════════════════════════════════════════════════
-
   Future<int> getPendingAckCount() async {
     try {
       final db = await database;
@@ -1405,7 +1487,8 @@ class DatabaseHelper {
       SELECT t.*, c.name AS customer_name, c.phone AS customer_phone
       FROM transactions t
       LEFT JOIN customers c ON t.customer_id = c.id
-      WHERE t.is_deleted = 0 OR t.is_deleted IS NULL
+      WHERE (t.is_deleted = 0 OR t.is_deleted IS NULL)
+        AND (t.is_permanently_deleted = 0 OR t.is_permanently_deleted IS NULL)
       ORDER BY t.created_at DESC
     ''');
   }
