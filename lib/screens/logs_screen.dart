@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
@@ -116,6 +117,9 @@ class _AllLogsTabState extends State<_AllLogsTab> {
 
   Map<String, dynamic> _stats = {};
 
+  // 🆕 مستمع الأحداث الجديدة
+  StreamSubscription<LogEvent>? _eventSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -127,10 +131,20 @@ class _AllLogsTabState extends State<_AllLogsTab> {
         setState(() => _playingPath = null);
       }
     });
+
+    // 🆕 الاستماع لأي حدث جديد → تحديث تلقائي
+    _eventSubscription = LoggerService.eventStream.listen((newEvent) {
+      if (mounted) {
+        _loadLogs();
+        _loadStats();
+      }
+    });
   }
 
   @override
   void dispose() {
+    // 🆕 إلغاء المستمع
+    _eventSubscription?.cancel();
     _searchCtrl.dispose();
     _audioService.stopPlayback();
     super.dispose();
@@ -971,6 +985,9 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   bool _filterEmptyVoice = true;
   bool _filterUnclearText = true;
 
+  // 🆕 مستمع الأحداث الجديدة
+  StreamSubscription<LogEvent>? _eventSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -981,10 +998,19 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
         setState(() => _playingPath = null);
       }
     });
+
+    // 🆕 الاستماع لأي حدث جديد → تحديث تلقائي
+    _eventSubscription = LoggerService.eventStream.listen((newEvent) {
+      if (mounted) {
+        _load();
+      }
+    });
   }
 
   @override
   void dispose() {
+    // 🆕 إلغاء المستمع
+    _eventSubscription?.cancel();
     _audioService.stopPlayback();
     super.dispose();
   }
