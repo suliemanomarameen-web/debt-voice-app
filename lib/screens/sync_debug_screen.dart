@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:uuid/uuid.dart';
 import '../db/database_helper.dart';
 import '../services/gdrive_service.dart';
 import '../services/sync_service.dart';
@@ -236,6 +237,262 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
       if (!mounted) return;
       setState(() => _busy = false);
       _showResult(false, 'خطأ: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 تشخيص المعاملات الناقصة (موجودة محلياً وليس في السحابة)
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _diagnoseMissingTransactions() async {
+    setState(() => _busy = true);
+
+    try {
+      final db = DatabaseHelper.instance;
+      final localTransactions = await db.allTransactionsRaw();
+
+      // قراءة السحابة
+      final cloudData = await GDriveService.downloadSyncFile();
+      if (cloudData == null) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        _showResult(false, '❌ لا توجد بيانات في السحابة');
+        return;
+      }
+
+      final cloudTransactions =
+          (cloudData['transactions'] as List?)?.cast<Map>() ?? [];
+
+      // إنشاء مجموعة من cloud_ids الموجودة في السحابة
+      final Set<String> cloudIds = {};
+      final Set<String> cloudKeys = {};
+      for (final t in cloudTransactions) {
+        final cloudId = t['cloud_id'] as String?;
+        if (cloudId != null && cloudId.isNotEmpty) {
+          cloudIds.add(cloudId);
+        }
+        final code = t['code'] as String? ?? '';
+        final customerId = t['customer_id']?.toString() ?? '';
+        final amount = t['amount']?.toString() ?? '';
+        final created = t['created_at'] as String? ?? '';
+        cloudKeys.add('code_${code}_${customerId}_${amount}_$created');
+      }
+
+      // إيجاد المعاملات المحلية الناقصة في السحابة
+      final List<Map<String, dynamic>> missing = [];
+      for (final t in localTransactions) {
+        final cloudId = t['cloud_id'] as String?;
+        final isDeleted = t['is_deleted'] == 1;
+        final isPermanent = t['is_permanently_deleted'] == 1;
+
+        if (isDeleted == true || isPermanent == true) {
+          continue; // تجاهل المحذوفة
+        }
+
+        bool foundInCloud = false;
+        if (cloudId != null && cloudId.isNotEmpty) {
+          foundInCloud = cloudIds.contains(cloudId);
+        } else {
+          final code = t['code'] as String? ?? '';
+          final customerId = t['customer_id']?.toString() ?? '';
+          final amount = t['amount']?.toString() ?? '';
+          final created = t['created_at'] as String? ?? '';
+          foundInCloud = cloudKeys
+              .contains('code_${code}_${customerId}_${amount}_$created');
+        }
+
+        if (!foundInCloud) {
+          missing.add(t);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _busy = false);
+
+      // عرض النتيجة
+      await _showMissingDialog(missing);
+    } catch (e) {
+      debugPrint('❌ diagnoseMissingTransactions: $e');
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _showResult(false, '❌ خطأ: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 عرض تفاصيل المعاملات الناقصة
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _showMissingDialog(List<Map<String, dynamic>> missing) async {
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                missing.isEmpty ? Icons.check_circle : Icons.warning_amber,
+                color: missing.isEmpty ? Colors.green : Colors.orange,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  missing.isEmpty
+                      ? '✅ لا توجد معاملات ناقصة'
+                      : '⚠️ ${missing.length} معاملة ناقصة',
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: missing.isEmpty
+                ? const Text(
+                    'كل المعاملات المحلية موجودة في السحابة.',
+                    style: TextStyle(fontSize: 13),
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: missing.map((t) {
+                        final id = t['id'];
+                        final code = t['code'] ?? 'بدون رمز';
+                        final amount = t['amount'];
+                        final type = t['type'];
+                        final cloudId = t['cloud_id'];
+                        final customerId = t['customer_id'];
+                        final createdAt = t['created_at'];
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                                color: Colors.orange.withOpacity(0.5)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '🔹 معاملة #$id',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text('• الرمز: $code',
+                                  style: const TextStyle(fontSize: 11)),
+                              Text('• المبلغ: $amount',
+                                  style: const TextStyle(fontSize: 11)),
+                              Text('• النوع: $type',
+                                  style: const TextStyle(fontSize: 11)),
+                              Text(
+                                  '• cloud_id: ${cloudId ?? "❌ فارغ"}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cloudId == null
+                                        ? Colors.red
+                                        : Colors.green,
+                                  )),
+                              Text('• العميل: #$customerId',
+                                  style: const TextStyle(fontSize: 11)),
+                              Text('• التاريخ: $createdAt',
+                                  style: const TextStyle(fontSize: 10)),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إغلاق'),
+            ),
+            if (missing.isNotEmpty)
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _fixMissingTransactions(missing);
+                },
+                icon: const Icon(Icons.build_circle, size: 16),
+                label: const Text('🔧 إصلاح تلقائي'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 إصلاح المعاملات الناقصة (توليد cloud_id جديد)
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _fixMissingTransactions(
+      List<Map<String, dynamic>> missing) async {
+    final confirm = await _confirmDialog(
+      title: '🔧 إصلاح المعاملات الناقصة',
+      message:
+          'سيتم توليد cloud_id جديد لكل معاملة ناقصة (${missing.length} معاملة).\n\n'
+          'هذا سيسمح برفعها للسحابة في المزامنة التالية.\n\n'
+          '⚠️ لا يمكن التراجع — تأكد أنك عملت نسخة احتياطية.',
+    );
+    if (!confirm) return;
+
+    setState(() => _busy = true);
+
+    try {
+      final db = DatabaseHelper.instance;
+      final dbi = await db.database;
+      const uuid = Uuid();
+
+      int fixed = 0;
+      for (final t in missing) {
+        final id = t['id'] as int?;
+        if (id == null) continue;
+
+        try {
+          await dbi.update(
+            'transactions',
+            {
+              'cloud_id': uuid.v4(),
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+          fixed++;
+        } catch (e) {
+          debugPrint('❌ Failed to fix tx $id: $e');
+        }
+      }
+
+      await LoggerService.log(
+        action: '🔧 إصلاح المعاملات الناقصة',
+        description:
+            'تم توليد cloud_id جديد لـ $fixed معاملة (من ${missing.length})',
+        level: LogLevel.info,
+        category: LogCategory.system,
+      );
+
+      if (!mounted) return;
+      setState(() => _busy = false);
+
+      _showResult(
+        true,
+        '✅ تم إصلاح $fixed معاملة — اضغط "⬆️ رفع" الآن',
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _showResult(false, '❌ خطأ: $e');
     }
   }
 
@@ -650,6 +907,21 @@ class _SyncDebugScreenState extends State<SyncDebugScreen> {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red,
                   side: const BorderSide(color: Colors.red),
+                  minimumSize: const Size(0, 45),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 🆕 زر تشخيص المعاملات الناقصة
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _diagnoseMissingTransactions,
+                icon: const Icon(Icons.search, color: Colors.purple),
+                label: const Text('🔍 تشخيص المعاملات الناقصة'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.purple,
+                  side: const BorderSide(color: Colors.purple),
                   minimumSize: const Size(0, 45),
                 ),
               ),
