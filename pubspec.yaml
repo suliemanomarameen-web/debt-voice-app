@@ -69,6 +69,10 @@ dependencies:
   crypto: ^3.0.3
   local_auth: ^2.1.7
 
+  # ============ 🆕 التشفير وتخزين المفاتيح الآمن ============
+  flutter_secure_storage: ^9.2.2  # 🆕 تخزين كلمة المرور في Android Keystore
+  cryptography: ^2.7.0            # 🆕 تشفير AES-256-GCM (أسرع وأكثر أماناً من crypto)
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
