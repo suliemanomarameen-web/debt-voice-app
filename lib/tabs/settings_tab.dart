@@ -29,6 +29,8 @@ import '../screens/logs_screen.dart';
 import '../screens/stats_screen.dart';
 import '../screens/deleted_bin_screen.dart';
 import '../screens/advanced_settings_screen.dart';
+import '../services/crypto_service.dart';
+import '../screens/master_password_screen.dart';
 
 class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key});
@@ -1815,7 +1817,48 @@ Future<void> _editAccountantName() async {
               );
             },
           ),
-
+          
+// ========== 🆕 تشفير المزامنة ==========
+const _SectionHeader('🔐 تشفير المزامنة'),
+FutureBuilder<bool>(
+  future: CryptoService.hasMasterPassword(),
+  builder: (_, snap) {
+    final hasPassword = snap.data ?? false;
+    return ListTile(
+      leading: Icon(
+        hasPassword ? Icons.lock : Icons.lock_open,
+        color: hasPassword ? Colors.green : Colors.orange,
+      ),
+      title: Text(
+        hasPassword ? 'التشفير مفعّل' : 'التشفير معطّل',
+      ),
+      subtitle: Text(
+        hasPassword
+            ? 'ملف المزامنة مشفّر على Drive — اضغط للتغيير'
+            : 'اضغط لتفعيل حماية ملف المزامنة بكلمة مرور',
+        style: TextStyle(
+          color: hasPassword ? Colors.green : Colors.orange,
+          fontSize: 11,
+        ),
+      ),
+      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+      onTap: () async {
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                MasterPasswordScreen(isChange: hasPassword),
+          ),
+        );
+        if (result == true && mounted) {
+          setState(() {});
+        }
+      },
+    );
+  },
+),
+const SizedBox(height: 8),
+          
           // ========== الاستعادة ==========
           const _SectionHeader('الاستعادة'),
           ListTile(
