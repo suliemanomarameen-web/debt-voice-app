@@ -103,6 +103,24 @@ class AppSettings {
   static const String compactMode = 'compact_mode';
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 مجموعة رمز المحاسب في العمليات
+  // ═══════════════════════════════════════════════════════════
+
+  /// تفعيل إضافة رمز المحاسب إلى رمز العملية
+  static const String codeIncludeAccountant = 'code_include_accountant';
+
+  /// موضع رمز المحاسب:
+  /// 'prefix' = قبل (مثل S-D-0001)
+  /// 'suffix' = بعد (مثل D-0001-S)
+  static const String codeAccountantPosition = 'code_accountant_position';
+
+  /// الفاصل بين رمز المحاسب والرمز الأصلي:
+  /// '' = بدون (مثل SD-0001)
+  /// '-' = شرطة (مثل S-D-0001)
+  /// '_' = شرطة سفلية (مثل S_D-0001)
+  static const String codeAccountantSeparator = 'code_accountant_separator';
+
+  // ═══════════════════════════════════════════════════════════
   // 📋 القيم الافتراضية
   // ═══════════════════════════════════════════════════════════
 
@@ -169,6 +187,11 @@ class AppSettings {
     showTrackingInfo: true,
     showCloudId: false,
     compactMode: false,
+
+    // 🆕 رمز المحاسب
+    codeIncludeAccountant: false,
+    codeAccountantPosition: 'suffix',
+    codeAccountantSeparator: '',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -237,6 +260,10 @@ class AppSettings {
     showTrackingInfo,
     showCloudId,
     compactMode,
+    // 🆕 رمز المحاسب — محلي لكل جهاز
+    codeIncludeAccountant,
+    codeAccountantPosition,
+    codeAccountantSeparator,
   };
 
   // ═══════════════════════════════════════════════════════════
