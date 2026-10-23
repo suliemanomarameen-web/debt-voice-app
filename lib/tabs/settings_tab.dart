@@ -5,10 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_settings.dart';
 import '../db/database_helper.dart';
 import '../models/log_event.dart';
 import '../services/accountant_service.dart';
-import '../services/accountants_service.dart'; // 🆕 للمزامنة
+import '../services/accountants_service.dart';
 import '../services/auth_service.dart';
 import '../services/auto_backup_service.dart';
 import '../services/backup_service.dart';
@@ -23,6 +24,7 @@ import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
 import '../services/recovery_service.dart';
 import '../services/reminder_service.dart';
+import '../services/settings_service.dart';
 import '../services/speech_service.dart';
 import '../services/theme_service.dart';
 import '../screens/accountants_screen.dart';
@@ -59,6 +61,11 @@ class _SettingsTabState extends State<SettingsTab> {
   String _returnPrefix = 'R';
   int _codeDigits = 4;
   String _codeMode = 'sequential';
+
+  // 🆕 رمز المحاسب
+  bool _includeAccountant = false;
+  String _accountantPosition = 'suffix';
+  String _accountantSeparator = '';
 
   bool _pdfShowCodes = true;
   bool _pdfHideCategory = false;
@@ -165,6 +172,21 @@ class _SettingsTabState extends State<SettingsTab> {
     final r = await CodeService.getReturnPrefix();
     final digits = await CodeService.getDigits();
     final mode = await CodeService.getMode();
+
+    // 🆕 رمز المحاسب
+    final includeAcc = SettingsService.getBool(
+      AppSettings.codeIncludeAccountant,
+      defaultValue: false,
+    );
+    final pos = SettingsService.getString(
+      AppSettings.codeAccountantPosition,
+      defaultValue: 'suffix',
+    );
+    final sep = SettingsService.getString(
+      AppSettings.codeAccountantSeparator,
+      defaultValue: '',
+    );
+
     if (!mounted) return;
     setState(() {
       _codeEnabled = enabled;
@@ -173,6 +195,9 @@ class _SettingsTabState extends State<SettingsTab> {
       _returnPrefix = r;
       _codeDigits = digits;
       _codeMode = mode;
+      _includeAccountant = includeAcc;
+      _accountantPosition = pos;
+      _accountantSeparator = sep;
     });
   }
 
@@ -1782,6 +1807,63 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCodeMode,
             ),
+
+            // 🆕 رمز المحاسب
+            const Divider(height: 1),
+            SwitchListTile(
+              secondary: const Icon(Icons.person_pin, color: Colors.teal),
+              title: const Text('إضافة رمز المحاسب للعملية'),
+              subtitle: const Text('مثال: D-0001-S أو S-D-0001'),
+              value: _includeAccountant,
+              onChanged: (v) async {
+                await SettingsService.setBool(
+                    AppSettings.codeIncludeAccountant, v);
+                if (mounted) setState(() => _includeAccountant = v);
+              },
+            ),
+            if (_includeAccountant) ...[
+              ListTile(
+                leading: const Icon(Icons.vertical_align_bottom,
+                    color: Colors.teal),
+                title: const Text('موضع الرمز'),
+                trailing: DropdownButton<String>(
+                  value: _accountantPosition,
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    await SettingsService.setString(
+                        AppSettings.codeAccountantPosition, v);
+                    if (mounted) setState(() => _accountantPosition = v);
+                  },
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'suffix',
+                        child: Text('في النهاية (D-0001-S)')),
+                    DropdownMenuItem(
+                        value: 'prefix',
+                        child: Text('في البداية (S-D-0001)')),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.horizontal_rule, color: Colors.teal),
+                title: const Text('الفاصل'),
+                trailing: DropdownButton<String>(
+                  value: _accountantSeparator,
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    await SettingsService.setString(
+                        AppSettings.codeAccountantSeparator, v);
+                    if (mounted) setState(() => _accountantSeparator = v);
+                  },
+                  items: const [
+                    DropdownMenuItem(value: '-', child: Text('شرطة (-)')),
+                    DropdownMenuItem(value: '_', child: Text('شرطة سفلية (_)')),
+                    DropdownMenuItem(value: '', child: Text('بدون فاصل')),
+                  ],
+                ),
+              ),
+            ],
           ],
 
           // ========== إعدادات PDF ==========
