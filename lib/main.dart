@@ -18,6 +18,9 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/tts_service.dart';
 import 'services/settings_service.dart';
+// 🆕 استيرادات جديدة
+import 'services/device_service.dart';
+import 'services/accountants_service.dart';
 import 'db/database_helper.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -26,12 +29,18 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // ═══════════════════════════════════════════════════════
-  // 0. 🆕 تحميل الإعدادات أولاً (قبل أي شيء آخر)
+  // 0. 🆕 تهيئة الهوية والمحاسبين (قبل أي شيء)
+  // ═══════════════════════════════════════════════════════
+  await DeviceService.getDeviceId(); // يضمن وجود device_id
+  await AccountantsService.init();   // يحمّل المحاسبين المحليين
+
+  // ═══════════════════════════════════════════════════════
+  // 1. تحميل الإعدادات أولاً (قبل أي شيء آخر)
   // ═══════════════════════════════════════════════════════
   await SettingsService.init();
 
   // ═══════════════════════════════════════════════════════
-  // 1. تهيئة الخدمات الأساسية
+  // 2. تهيئة الخدمات الأساسية
   // ═══════════════════════════════════════════════════════
   await NotificationService.init();
   await ReminderService.init();
@@ -47,12 +56,11 @@ void main() async {
   await theme.load();
 
   // ═══════════════════════════════════════════════════════
-  // 2. تهيئة قاعدة البيانات + تنظيف المحذوفات القديمة
+  // 3. تهيئة قاعدة البيانات + تنظيف المحذوفات القديمة
   // ═══════════════════════════════════════════════════════
   try {
     await DatabaseHelper.instance.database;
 
-    // 🆕 تنظيف المحذوفات التي تجاوزت المدة (30 يومًا افتراضيًا)
     if (SettingsService.getBool('auto_cleanup_deleted',
         defaultValue: true)) {
       final days = SettingsService.getInt('retention_days',
@@ -65,7 +73,6 @@ void main() async {
       }
     }
 
-    // 🆕 تنظيف الأحداث القديمة
     if (SettingsService.getBool('log_auto_cleanup',
         defaultValue: true)) {
       final logDays =
@@ -81,7 +88,7 @@ void main() async {
   }
 
   // ═══════════════════════════════════════════════════════
-  // 3. تهيئة خدمات المزامنة والنسخ
+  // 4. تهيئة خدمات المزامنة والنسخ
   // ═══════════════════════════════════════════════════════
   await AutoBackupService.init();
   await SyncService.init();
@@ -89,24 +96,24 @@ void main() async {
   await AudioRecorderService.init();
 
   // ═══════════════════════════════════════════════════════
-  // 4. إشعار الزر العائم بأن الصوت جاهز
+  // 5. إشعار الزر العائم بأن الصوت جاهز
   // ═══════════════════════════════════════════════════════
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
   // ═══════════════════════════════════════════════════════
-  // 5. إعداد رد نداء الإشعارات
+  // 6. إعداد رد نداء الإشعارات
   // ═══════════════════════════════════════════════════════
   NotificationService.onTap = _onNotificationTap;
 
   // ═══════════════════════════════════════════════════════
-  // 6. بدء مستمع الزر العائم
+  // 7. بدء مستمع الزر العائم
   // ═══════════════════════════════════════════════════════
   OverlayHandler.listen();
 
   // ═══════════════════════════════════════════════════════
-  // 7. تشغيل التطبيق
+  // 8. تشغيل التطبيق
   // ═══════════════════════════════════════════════════════
   runApp(MultiProvider(
     providers: [ChangeNotifierProvider.value(value: theme)],
