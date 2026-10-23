@@ -102,8 +102,7 @@ class SyncService {
   // التهيئة
   // ═══════════════════════════════════════════════════════════
   static Future<void> init() async {
-    // 🆕 تهيئة خدمات المحاسبين والجهاز (قبل أي شيء)
-    await DeviceService.getDeviceId(); // يضمن وجود device_id
+    await DeviceService.getDeviceId();
     await AccountantsService.init();
 
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
@@ -142,9 +141,6 @@ class SyncService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // عند تغيير البيانات محليًا
-  // ═══════════════════════════════════════════════════════════
   static void _onLocalDataChanged() {
     if (!SettingsService.getBool(AppSettings.syncOnDataChange)) return;
 
@@ -157,9 +153,6 @@ class SyncService {
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // عند العودة من الخلفية
-  // ═══════════════════════════════════════════════════════════
   static Future<void> checkAndSyncIfNeeded() async {
     if (!SettingsService.getBool(AppSettings.syncEnabled)) return;
 
@@ -184,9 +177,6 @@ class SyncService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // مزامنة صامتة
-  // ═══════════════════════════════════════════════════════════
   static Future<void> silentSync() async {
     if (!SettingsService.getBool(AppSettings.syncEnabled)) return;
     if (_isSyncing) return;
@@ -204,9 +194,6 @@ class SyncService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // مزامنة أولية / يدوية
-  // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> initialSync() async {
     if (!GDriveService.isSignedIn) {
       await GDriveService.trySilentSignIn();
@@ -257,14 +244,11 @@ class SyncService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // المزامنة الفعلية
-  // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> _performSync({required bool silent}) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
-      // 🆕 إذا كان أول جهاز (لا يوجد محاسبون بعد) → سجّله كأساسي تلقائياً
+      // أول جهاز → أساسي تلقائياً
       if (!await AccountantsService.hasAnyAccountants()) {
         final deviceId = await DeviceService.getDeviceId();
         final primaryId = await DeviceService.getPrimaryDeviceId();
@@ -292,7 +276,6 @@ class SyncService {
       final hasCloudChanges = cloudModified != null &&
           (lastSync == null || cloudModified.isAfter(lastSync));
 
-      // لا تغييرات
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
         await prefs.setString(_keyLastSyncTime, now.toIso8601String());
@@ -315,9 +298,6 @@ class SyncService {
       int addedLogs = 0;
       int conflictsCount = 0;
 
-      // ═══════════════════════════════════════════════════════
-      // دمج السحابة مع المحلي
-      // ═══════════════════════════════════════════════════════
       if (hasCloudChanges && cloudData != null) {
         if (!silent) _setStatus(SyncStatus.downloading);
         final result = await _mergeCloudData(cloudData);
@@ -330,9 +310,6 @@ class SyncService {
         conflictsCount = result['conflicts'] ?? 0;
       }
 
-      // ═══════════════════════════════════════════════════════
-      // رفع الحالة
-      // ═══════════════════════════════════════════════════════
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
         final uploadOk = await _uploadCurrentState();
@@ -348,9 +325,6 @@ class SyncService {
         }
       }
 
-      // ═══════════════════════════════════════════════════════
-      // تحديث الأوقات
-      // ═══════════════════════════════════════════════════════
       final now = DateTime.now();
       await prefs.setString(_keyLastSyncTime, now.toIso8601String());
       await prefs.setString(_keyLastUpload, now.toIso8601String());
@@ -419,6 +393,16 @@ class SyncService {
       Map<String, dynamic> cloudData) async {
     final db = DatabaseHelper.instance;
 
+    // 🆕 استلام primary_device_id من السحابة
+    final cloudPrimaryId = cloudData['primary_device_id'] as String?;
+    if (cloudPrimaryId != null && cloudPrimaryId.isNotEmpty) {
+      final localPrimaryId = await DeviceService.getPrimaryDeviceId();
+      if (localPrimaryId == null || localPrimaryId.isEmpty) {
+        await DeviceService.setPrimaryDeviceId(cloudPrimaryId);
+        debugPrint('👑 [Sync] Primary device set from cloud: $cloudPrimaryId');
+      }
+    }
+
     int addedCustomers = 0;
     int addedTransactions = 0;
     int updatedCustomers = 0;
@@ -428,9 +412,7 @@ class SyncService {
     int conflicts = 0;
 
     try {
-      // ═══════════════════════════════════════════════════════
-      // 🆕 0. المحاسبون والأجهزة (قبل أي شيء)
-      // ═══════════════════════════════════════════════════════
+      // المحاسبون والأجهزة
       if (cloudData['accountants'] != null ||
           cloudData['devices'] != null) {
         await AccountantsService.loadFromSync(cloudData);
@@ -442,9 +424,7 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
-      // ═══════════════════════════════════════════════════════
       // 1. الرموز
-      // ═══════════════════════════════════════════════════════
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -455,9 +435,7 @@ class SyncService {
         }
       }
 
-      // ═══════════════════════════════════════════════════════
-      // 2. العملاء — مطابقة بـ cloud_id
-      // ═══════════════════════════════════════════════════════
+      // 2. العملاء
       final Map<int, int> cloudIdToLocalId = {};
 
       for (final cc in cloudCustomers) {
@@ -513,9 +491,7 @@ class SyncService {
         }
       }
 
-      // ═══════════════════════════════════════════════════════
-      // 3. المعاملات — مطابقة بـ cloud_id
-      // ═══════════════════════════════════════════════════════
+      // 3. المعاملات
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
         final cloudCustomerId = ct['customer_id'] as int?;
@@ -577,9 +553,7 @@ class SyncService {
         }
       }
 
-      // ═══════════════════════════════════════════════════════
-      // 4. الأحداث (log_events)
-      // ═══════════════════════════════════════════════════════
+      // 4. الأحداث
       if (SettingsService.getBool(AppSettings.syncLogs)) {
         for (final cl in cloudLogs) {
           final action = cl['action'] as String? ?? '';
@@ -949,13 +923,12 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 ضمان وجود cloud_id لكل سجل (حماية من النسخ القديمة)
+  // ضمان وجود cloud_id لكل سجل
   // ═══════════════════════════════════════════════════════════
   static Future<void> _ensureCloudIds() async {
     try {
       final db = await DatabaseHelper.instance.database;
 
-      // العملاء بدون cloud_id
       final customers = await db.query(
         'customers',
         where: 'cloud_id IS NULL OR cloud_id = ?',
@@ -974,7 +947,6 @@ class SyncService {
             '✅ [Sync] Generated cloud_id for ${customers.length} customers');
       }
 
-      // العمليات بدون cloud_id
       final transactions = await db.query(
         'transactions',
         where: 'cloud_id IS NULL OR cloud_id = ?',
@@ -1002,7 +974,6 @@ class SyncService {
   // ═══════════════════════════════════════════════════════════
   static Future<bool> _uploadCurrentState() async {
     try {
-      // 🆕 ضمان cloud_id قبل الرفع (حماية من النسخ القديمة)
       await _ensureCloudIds();
 
       final db = DatabaseHelper.instance;
@@ -1011,18 +982,21 @@ class SyncService {
       final usedCodes = await db.allUsedCodesRaw();
       final logEvents = await db.allLogEventsRaw();
 
-      // 🆕 بيانات المحاسبين والأجهزة
       final accountantsData = AccountantsService.getForSync();
+
+      // 🆕 primary_device_id
+      final primaryDeviceId = await DeviceService.getPrimaryDeviceId();
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 5, // ⬆️ 4 → 5 (بسبب accountants + devices)
+        'version': 5,
         'created_at': DateTime.now().toIso8601String(),
+        'primary_device_id': primaryDeviceId, // 🆕
         'customers': customers,
         'transactions': transactions,
         'used_codes': usedCodes,
         'log_events': logEvents,
-        ...accountantsData, // accountants + devices
+        ...accountantsData,
       };
 
       return await GDriveService.uploadSyncFile(data);
