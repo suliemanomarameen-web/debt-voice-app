@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/accountants_service.dart';
+import '../services/accountant_service.dart'; // 🆕
 import '../services/device_service.dart';
 import '../services/gdrive_service.dart';
 
@@ -117,6 +118,9 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       permissions: perms,
     );
 
+    // 🆕 مزامنة الاسم مع الخدمة القديمة (للسجلات والعمليات)
+    await AccountantService.setAccountantName(nameCtrl.text.trim());
+
     _load();
   }
 
@@ -182,7 +186,8 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         error!,
-                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                        style:
+                            const TextStyle(color: Colors.red, fontSize: 12),
                       ),
                     ),
                 ],
@@ -311,6 +316,12 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       ? null
                       : emailCtrl.text.trim(),
                 );
+                // 🆕 إن كان هذا محاسب الجهاز الحالي → مزامنة الاسم
+                if (acc.deviceId == _myDeviceId &&
+                    nameCtrl.text.trim().isNotEmpty) {
+                  await AccountantService.setAccountantName(
+                      nameCtrl.text.trim());
+                }
                 if (ctx.mounted) Navigator.pop(ctx, true);
               },
               child: const Text('حفظ'),
@@ -694,8 +705,9 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                             : 'محاسب على هذا الجهاز',
                         style: TextStyle(
                           fontSize: 11,
-                          color:
-                              isPrimary ? Colors.amber.shade800 : Colors.grey,
+                          color: isPrimary
+                              ? Colors.amber.shade800
+                              : Colors.grey,
                         ),
                       ),
                     ],
