@@ -1,6 +1,9 @@
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
+import '../config/app_settings.dart';
+import 'accountants_service.dart';
+import 'settings_service.dart';
 
 class CodeService {
   static const String _keyDebtPrefix = 'code_debt_prefix';
@@ -16,7 +19,6 @@ class CodeService {
   static const int _defaultDigits = 4;
   static const String _defaultMode = 'sequential';
 
-  // ========== جلب الإعدادات ==========
   static Future<String> getDebtPrefix() async {
     final sp = await SharedPreferences.getInstance();
     return sp.getString(_keyDebtPrefix) ?? _defaultDebtPrefix;
@@ -47,7 +49,6 @@ class CodeService {
     return sp.getBool(_keyEnabled) ?? true;
   }
 
-  // ========== حفظ الإعدادات ==========
   static Future<void> setDebtPrefix(String v) async {
     final sp = await SharedPreferences.getInstance();
     await sp.setString(_keyDebtPrefix, v.trim().toUpperCase());
@@ -78,7 +79,6 @@ class CodeService {
     await sp.setBool(_keyEnabled, v);
   }
 
-  // ========== تطبيع النوع ==========
   static String normalizeType(String type) {
     final t = type.toLowerCase().trim();
     if (t == 'return' || t.contains('مرتجع')) return 'return';
@@ -88,7 +88,6 @@ class CodeService {
     return 'debt';
   }
 
-  // ========== بادئة النوع ==========
   static Future<String> _getPrefixForType(String type) async {
     final n = normalizeType(type);
     if (n == 'payment') return getPaymentPrefix();
@@ -100,7 +99,59 @@ class CodeService {
     return _getPrefixForType(type);
   }
 
-  // ========== توليد رمز ==========
+  // 🆕 رمز المحاسب
+  static Future<String> _getAccountantCode() async {
+    try {
+      final include = SettingsService.getBool(
+        AppSettings.codeIncludeAccountant,
+        defaultValue: false,
+      );
+      if (!include) return '';
+
+      final acc = await AccountantsService.getCurrentAccountant();
+      return acc?.code.trim() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String _getSeparator() {
+    return SettingsService.getString(
+      AppSettings.codeAccountantSeparator,
+      defaultValue: '',
+    );
+  }
+
+  static String _getPosition() {
+    return SettingsService.getString(
+      AppSettings.codeAccountantPosition,
+      defaultValue: 'suffix',
+    );
+  }
+
+  static Future<String> _getEffectivePrefix(String typePrefix) async {
+    final acc = await _getAccountantCode();
+    if (acc.isEmpty) return typePrefix;
+    if (_getPosition() == 'prefix') {
+      return '$acc${_getSeparator()}$typePrefix';
+    }
+    return typePrefix;
+  }
+
+  static Future<String> _applyAccountantCode(String baseCode) async {
+    final acc = await _getAccountantCode();
+    if (acc.isEmpty) return baseCode;
+
+    final sep = _getSeparator();
+    final pos = _getPosition();
+
+    if (pos == 'prefix') {
+      return '$acc$sep$baseCode';
+    } else {
+      return '$baseCode$sep$acc';
+    }
+  }
+
   static Future<String?> generateCode(String type) async {
     final enabled = await isEnabled();
     if (!enabled) return null;
@@ -118,38 +169,34 @@ class CodeService {
       }
       return await _generateSequential(db, prefix, digits);
     } catch (e) {
-      // fallback: توليد عشوائي محلي
       final r = Random().nextInt(pow(10, digits).toInt());
-      return '$prefix-${r.toString().padLeft(digits, '0')}';
+      final baseCode = '$prefix-${r.toString().padLeft(digits, '0')}';
+      return await _applyAccountantCode(baseCode);
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 _generateSequential — الآن بـ SQL سريع
-  // ═══════════════════════════════════════════════════════════
   static Future<String?> _generateSequential(
     DatabaseHelper db,
     String prefix,
     int digits,
   ) async {
-    // 🆕 استعلام SQL واحد بدلاً من جلب كل الرموز
-    final maxSeq = await db.getMaxCodeSequence(prefix);
+    final effectivePrefix = await _getEffectivePrefix(prefix);
+    final maxSeq = await db.getMaxCodeSequence(effectivePrefix);
     final maxAttempts = pow(10, digits).toInt();
     int nextSeq = maxSeq + 1;
     if (nextSeq < 1) nextSeq = 1;
 
-    // محاولات محدودة فقط (عادة 1-2 محاولات تكفي)
     final maxTries = (maxAttempts < 10) ? maxAttempts : 10;
 
     for (int i = 0; i < maxTries; i++) {
       final candidate = nextSeq + i;
       if (candidate > maxAttempts) break;
-      final code = _format(prefix, candidate, digits);
-      final exists = await db.codeExists(code);
-      if (!exists) return code;
+      final baseCode = _format(prefix, candidate, digits);
+      final fullCode = await _applyAccountantCode(baseCode);
+      final exists = await db.codeExists(fullCode);
+      if (!exists) return fullCode;
     }
 
-    // إذا فشل التسلسل، جرّب عشوائي
     return await _generateRandom(db, prefix, digits);
   }
 
@@ -163,9 +210,10 @@ class CodeService {
       final minValue = pow(10, digits - 1).toInt();
       final maxValue = pow(10, digits).toInt() - 1;
       final number = minValue + random.nextInt(maxValue - minValue + 1);
-      final code = _format(prefix, number, digits);
-      final exists = await db.codeExists(code);
-      if (!exists) return code;
+      final baseCode = _format(prefix, number, digits);
+      final fullCode = await _applyAccountantCode(baseCode);
+      final exists = await db.codeExists(fullCode);
+      if (!exists) return fullCode;
     }
     return null;
   }
@@ -174,7 +222,6 @@ class CodeService {
     return '$prefix-${number.toString().padLeft(digits, '0')}';
   }
 
-  // ========== تحديث رموز العمليات القديمة ==========
   static Future<int> updateOldCodes({
     required String oldPrefix,
     required String newPrefix,
@@ -188,7 +235,6 @@ class CodeService {
     );
   }
 
-  // ========== إحصائيات ==========
   static int getMaxPossible(int digits) {
     return pow(10, digits).toInt() - pow(10, digits - 1).toInt();
   }
