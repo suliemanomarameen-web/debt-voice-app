@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/accountants_service.dart';
-import '../services/accountant_service.dart'; // 🆕
+import '../services/accountant_service.dart';
 import '../services/device_service.dart';
 import '../services/gdrive_service.dart';
 
@@ -36,7 +36,10 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       _myDeviceId = await DeviceService.getDeviceId();
       _myDeviceName = await DeviceService.getDeviceName();
       _myAccountant = await AccountantsService.getCurrentAccountant();
-      _isPrimary = await AccountantsService.isCurrentDevicePrimary();
+      
+      // 🆕 قراءة حالة الجهاز الأساسي مباشرة من خدمة الجهاز
+      _isPrimary = await DeviceService.isPrimaryDevice();
+      
       _canManage = _isPrimary ||
           (_myAccountant?.can('manage_accountants') ?? false);
 
@@ -102,15 +105,15 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
 
     if (result != true || nameCtrl.text.trim().isEmpty) return;
 
-    final isPrimaryDevice = await AccountantsService.isCurrentDevicePrimary();
+    // 🆕 التحقق من الجهاز الأساسي عبر DeviceService
+    final isPrimaryDevice = await DeviceService.isPrimaryDevice();
 
-    // الصلاحيات الكاملة للأساسي، الافتراضية لغيره
     final perms = <String, bool>{};
     for (final e in Accountant.defaultPermissions.entries) {
       perms[e.key] = isPrimaryDevice ? true : e.value;
     }
 
-    await AccountantsService.addAccountant(
+    final res = await AccountantsService.addAccountant(
       name: nameCtrl.text.trim(),
       code: codeCtrl.text.trim(),
       deviceId: _myDeviceId,
@@ -118,7 +121,19 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       permissions: perms,
     );
 
-    // 🆕 مزامنة الاسم مع الخدمة القديمة (للسجلات والعمليات)
+    // 🆕 عرض رسالة خطأ إن فشل الحفظ
+    if (res['success'] != true) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res['message'] as String? ?? 'فشل التسجيل'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // مزامنة الاسم مع الخدمة القديمة (للسجلات)
     await AccountantService.setAccountantName(nameCtrl.text.trim());
 
     _load();
@@ -316,7 +331,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       ? null
                       : emailCtrl.text.trim(),
                 );
-                // 🆕 إن كان هذا محاسب الجهاز الحالي → مزامنة الاسم
+                // مزامنة الاسم إن كان للجهاز الحالي
                 if (acc.deviceId == _myDeviceId &&
                     nameCtrl.text.trim().isNotEmpty) {
                   await AccountantService.setAccountantName(
