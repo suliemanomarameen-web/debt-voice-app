@@ -324,12 +324,21 @@ jobs:
             echo "❌ APK not found at $APK_PATH"
           fi
 
+      # ═══════════════════════════════════════════════════════════
+      # 🆕 رفع الـ APK كـ Artifact مع الاحتفاظ به لمدة 30 يوماً فقط
+      # بعد 30 يوماً سيُحذف تلقائياً لتحرير المساحة
+      # ═══════════════════════════════════════════════════════════
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: debt-voice-app-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30  # 🆕 الحذف التلقائي بعد 30 يوماً
 
+      # ═══════════════════════════════════════════════════════════
+      # ملاحظة: خطوة Release التالية تُنشئ إصداراً دائماً (لا يُحذف)
+      # وهي الطريقة الصحيحة للاحتفاظ بالنسخ المهمة بلا حدود زمنية
+      # ═══════════════════════════════════════════════════════════
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
