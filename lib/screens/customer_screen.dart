@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
@@ -46,10 +45,10 @@ class _CustomerScreenState extends State<CustomerScreen> {
     final bal = await db.customerBalance(_customer.id!);
     final allTx = await db.customerTransactions(_customer.id!);
 
-    final all = await db.allCustomers();
-    final updated = all.where((c) => c.id == _customer.id).toList();
-    if (updated.isNotEmpty) {
-      _customer = updated.first;
+    // 🆕 إصلاح الأداء: جلب العميل المطلوب فقط بدلاً من كل العملاء
+    final updated = await db.getCustomer(_customer.id!);
+    if (updated != null) {
+      _customer = updated;
     }
 
     if (!mounted) return;
@@ -64,7 +63,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         _customer.maxBalance != null) {
       _alertShown = true;
 
-      // 🆕 تسجيل تجاوز الحد الأقصى
       await LoggerService.logCustomerLimitExceeded(
         name: _customer.name,
         balance: bal,
@@ -96,7 +94,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ نسخ الرمز ============
   Future<void> _copyCode(String code) async {
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
@@ -115,7 +112,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
   }
 
-  // ============ تنبيه تجاوز الحد ============
   void _showLimitWarning() {
     showDialog(
       context: context,
@@ -183,7 +179,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
   }
 
-  // ============ إرسال تذكير واتساب ============
   Future<void> _sendWhatsAppReminder() async {
     if (_customer.phone == null || _customer.phone!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -213,7 +208,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ فلتر التاريخ ============
   Future<void> _showDateFilter() async {
     final result = await showModalBottomSheet<DateFilter>(
       context: context,
@@ -277,7 +271,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ إضافة معاملة ============
   Future<void> _addTransaction(String type) async {
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
@@ -302,8 +295,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 child: const Text('إلغاء'),
               ),
               FilledButton(
-                style:
-                    FilledButton.styleFrom(backgroundColor: Colors.orange),
+                style: FilledButton.styleFrom(backgroundColor: Colors.orange),
                 onPressed: () => Navigator.pop(ctx, true),
                 child: const Text('متابعة'),
               ),
@@ -339,19 +331,17 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
                 if (accountant != null && accountant.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.teal.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
-                      border:
-                          Border.all(color: Colors.teal.withOpacity(0.4)),
+                      border: Border.all(color: Colors.teal.withOpacity(0.4)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.person,
-                            size: 12, color: Colors.teal),
+                        const Icon(Icons.person, size: 12, color: Colors.teal),
                         const SizedBox(width: 4),
                         Text(
                           accountant,
@@ -375,18 +365,25 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   enabled: !isSaving,
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                 ),
-                if (type != 'payment')
-                  TextField(
-                    controller: itemsCtrl,
-                    enabled: !isSaving,
-                    decoration: const InputDecoration(labelText: 'الأصناف'),
+                const SizedBox(height: 12),
+                // 🆕 إصلاح: إظهار الحقل لجميع العمليات
+                TextField(
+                  controller: itemsCtrl,
+                  enabled: !isSaving,
+                  decoration: InputDecoration(
+                    labelText: type == 'payment'
+                        ? 'البيان / ملاحظة'
+                        : 'الأصناف / البيان',
+                    prefixIcon: Icon(type == 'payment'
+                        ? Icons.description_outlined
+                        : Icons.inventory_2_outlined),
                   ),
+                ),
               ],
             ),
             actions: [
               TextButton(
-                onPressed:
-                    isSaving ? null : () => Navigator.pop(dialogContext),
+                onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
                 child: const Text('إلغاء'),
               ),
               FilledButton(
@@ -402,8 +399,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           final storedType =
                               (type == 'return') ? 'payment' : type;
 
-                          final isDuplicate =
-                              await db.transactionExistsRecent(
+                          final isDuplicate = await db.transactionExistsRecent(
                             customerId: _customer.id!,
                             amount: amt,
                             type: storedType,
@@ -450,7 +446,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             createdAt: DateTime.now().toIso8601String(),
                           ));
 
-                          // 🆕 تسجيل الحدث
                           final typeLabel = {
                             'debt': 'دين',
                             'payment': 'سداد',
@@ -466,7 +461,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             source: 'customer_screen',
                           );
 
-                          // 🆕 تحديث updated_at للعميل
                           if (accountant != null && accountant.isNotEmpty) {
                             await db.updateCustomerFields(
                               _customer.id!,
@@ -482,10 +476,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           Navigator.pop(dialogContext);
                           await _load();
 
-                          final sp =
-                              await SharedPreferences.getInstance();
-                          final autoWhatsApp =
-                              sp.getBool('auto_whatsapp') ?? false;
+                          // 🆕 إصلاح: استخدام SettingsService بدلاً من SharedPreferences
+                          final autoWhatsApp = SettingsService.getBool('auto_whatsapp', defaultValue: false);
 
                           if (autoWhatsApp &&
                               _customer.phone != null &&
@@ -506,7 +498,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             }
                           }
                         } finally {
-                          if (mounted) {
+                          // 🆕 إصلاح: إزالة setStateDialog من finally لتجنب خطأ التحديث بعد الإغلاق
+                          if (mounted && dialogContext.mounted) {
                             setStateDialog(() => isSaving = false);
                           }
                         }
@@ -530,9 +523,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ============ تعديل معاملة ============
   Future<void> _editTransaction(Transaction t) async {
-    // 🆕 فحص السماح بالتعديل
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -572,8 +563,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 InkWell(
                   onTap: () => _copyCode(t.code!),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.blue.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -581,8 +572,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.qr_code,
-                            size: 16, color: Colors.blue),
+                        const Icon(Icons.qr_code, size: 16, color: Colors.blue),
                         const SizedBox(width: 6),
                         Text(
                           'الرمز: ${t.code}',
@@ -604,11 +594,19 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'المبلغ'),
               ),
-              if (isDebt || isReturn)
-                TextField(
-                  controller: itemsCtrl,
-                  decoration: const InputDecoration(labelText: 'الأصناف'),
+              const SizedBox(height: 12),
+              // 🆕 إصلاح: إظهار الحقل دائماً عند التعديل
+              TextField(
+                controller: itemsCtrl,
+                decoration: InputDecoration(
+                  labelText: (isDebt || isReturn)
+                      ? 'الأصناف / البيان'
+                      : 'البيان / ملاحظة',
+                  prefixIcon: Icon((isDebt || isReturn)
+                      ? Icons.inventory_2_outlined
+                      : Icons.description_outlined),
                 ),
+              ),
             ],
           ),
           actions: [
@@ -618,7 +616,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                // 🆕 فحص السماح بتعديل المبلغ
                 if (!SettingsService.getBool(
                   AppSettings.allowEditTransactionAmount,
                   defaultValue: true,
@@ -635,7 +632,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
-                // 🆕 فحص السماح بتعديل الأصناف
                 final newItems = isReturn
                     ? 'مرتجع: ${itemsCtrl.text.trim()}'
                     : itemsCtrl.text.trim();
@@ -647,19 +643,15 @@ class _CustomerScreenState extends State<CustomerScreen> {
                     )) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content:
-                          Text('تعديل الأصناف معطّل من الإعدادات'),
+                      content: Text('تعديل الأصناف معطّل من الإعدادات'),
                       backgroundColor: Colors.orange,
                     ),
                   );
                   return;
                 }
 
-                // 🆕 من عدّل
-                final accountant =
-                    await AccountantService.getAccountantName();
+                final accountant = await AccountantService.getAccountantName();
 
-                // 🆕 تتبع التغييرات
                 final changedFields = <String>[];
                 if (amt != t.amount) changedFields.add('amount');
                 if (newItems != t.items) changedFields.add('items');
@@ -675,7 +667,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
                 await db.updateTransaction(updatedTx, by: accountant);
 
-                // 🆕 تسجيل التعديل في السجل
                 if (changedFields.isNotEmpty &&
                     SettingsService.getBool(
                       AppSettings.logTransactionEdits,
@@ -726,7 +717,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     _load();
   }
 
-  // ============ حذف معاملة ============
   Future<void> _deleteTransaction(Transaction t) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -765,7 +755,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
 
     if (confirmed == true) {
-      // 🆕 من حذف
       final accountant = await AccountantService.getAccountantName();
 
       final useSoft = SettingsService.getBool(
@@ -779,7 +768,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         await db.hardDeleteTransaction(t.id!);
       }
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logTransactionDeleted(
         customerName: _customer.name,
         amount: t.amount,
@@ -792,7 +780,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
           SnackBar(
             content: Text(useSoft
                 ? 'تم نقل العملية إلى سلة المحذوفات'
-                : 'تم حذف العملية نهائيًا'),
+                : 'تم حذف العملية نهائياً'),
             backgroundColor: Colors.red,
           ),
         );
@@ -801,209 +789,210 @@ class _CustomerScreenState extends State<CustomerScreen> {
     }
   }
 
-  // ============ قائمة العمليات ============
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
+      // 🆕 إصلاح: جعل النافذة قابلة للتمرير لكي لا تختفي الأزرار
+      isScrollControlled: true, 
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    if (t.code != null && t.code!.isNotEmpty) ...[
-                      InkWell(
-                        onTap: () => _copyCode(t.code!),
-                        borderRadius: BorderRadius.circular(20),
-                        child: Container(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      if (t.code != null && t.code!.isNotEmpty) ...[
+                        InkWell(
+                          onTap: () => _copyCode(t.code!),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.qr_code,
+                                    size: 14, color: Colors.blue),
+                                const SizedBox(width: 6),
+                                Text(
+                                  t.code!,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.copy,
+                                    size: 12, color: Colors.blue),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (t.accountant != null && t.accountant!.isNotEmpty) ...[
+                        Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.15),
+                            color: Colors.teal.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.qr_code,
-                                  size: 14, color: Colors.blue),
+                              const Icon(Icons.person,
+                                  size: 14, color: Colors.teal),
                               const SizedBox(width: 6),
                               Text(
-                                t.code!,
+                                t.accountant!,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+                                  color: Colors.teal,
                                   fontSize: 13,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              const Icon(Icons.copy,
-                                  size: 12, color: Colors.blue),
                             ],
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (t.accountant != null && t.accountant!.isNotEmpty) ...[
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.teal.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.person,
-                                size: 14, color: Colors.teal),
-                            const SizedBox(width: 6),
-                            Text(
-                              t.accountant!,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.teal,
-                                fontSize: 13,
-                              ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (t.source != null && t.source!.isNotEmpty) ...[
+                        Builder(builder: (_) {
+                          final info = Transaction.sourceInfo(t.source);
+                          final c = Color(info.color);
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: c.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (t.source != null && t.source!.isNotEmpty) ...[
-                      Builder(builder: (_) {
-                        final info = Transaction.sourceInfo(t.source);
-                        final c = Color(info.color);
-                        return Container(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  info.emoji,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  info.label,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: c,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                      ],
+                      if (t.wasModified &&
+                          SettingsService.getBool(
+                            AppSettings.showTrackingInfo,
+                            defaultValue: true,
+                          ))
+                        Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: c.withOpacity(0.15),
+                            color: Colors.orange.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                info.emoji,
-                                style: const TextStyle(fontSize: 14),
-                              ),
+                              const Icon(Icons.edit,
+                                  size: 14, color: Colors.orange),
                               const SizedBox(width: 6),
                               Text(
-                                info.label,
-                                style: TextStyle(
+                                'عُدّلت بواسطة: ${t.lastModifiedBy ?? t.updatedBy ?? "غير معروف"}',
+                                style: const TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: c,
-                                  fontSize: 13,
+                                  color: Colors.orange,
+                                  fontSize: 12,
                                 ),
                               ),
                             ],
                           ),
-                        );
-                      }),
+                        ),
                       const SizedBox(height: 8),
+                      Text(
+                        '${t.amount.toStringAsFixed(0)} ${t.currency}',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatDateTime(t.createdAt),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
                     ],
-                    // 🆕 معلومات التعديل
-                    if (t.wasModified &&
-                        SettingsService.getBool(
-                          AppSettings.showTrackingInfo,
-                          defaultValue: true,
-                        ))
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.edit,
-                                size: 14, color: Colors.orange),
-                            const SizedBox(width: 6),
-                            Text(
-                              'عُدّلت بواسطة: ${t.lastModifiedBy ?? t.updatedBy ?? "غير معروف"}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${t.amount.toStringAsFixed(0)} ${t.currency}',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDateTime(t.createdAt),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              ListTile(
-                leading: const Icon(Icons.message, color: Colors.green),
-                title: const Text('إرسال عبر واتساب'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  if (_customer.phone == null ||
-                      _customer.phone!.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('لا يوجد رقم هاتف لهذا العميل'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
-                  try {
-                    await WhatsAppService.sendTransactionNotification(
-                      phone: _customer.phone,
-                      customerName: _customer.name,
-                      type: t.type,
-                      amount: t.amount,
-                      newBalance: _balance,
-                    );
-                  } catch (e) {
-                    if (mounted) {
+                ListTile(
+                  leading: const Icon(Icons.message, color: Colors.green),
+                  title: const Text('إرسال عبر واتساب'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    if (_customer.phone == null ||
+                        _customer.phone!.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('خطأ: $e')),
+                        const SnackBar(
+                          content: Text('لا يوجد رقم هاتف لهذا العميل'),
+                          backgroundColor: Colors.orange,
+                        ),
                       );
+                      return;
                     }
-                  }
-                },
-              ),
+                    try {
+                      await WhatsAppService.sendTransactionNotification(
+                        phone: _customer.phone,
+                        customerName: _customer.name,
+                        type: t.type,
+                        amount: t.amount,
+                        newBalance: _balance,
+                      );
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('خطأ: $e')),
+                        );
+                      }
+                    }
+                  },
+                ),
 
-              ListTile(
-                leading: const Icon(Icons.share, color: Colors.blue),
-                title: const Text('مشاركة'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final typeLabel = t.type == 'debt'
-                      ? 'دين'
-                      : t.items.startsWith('مرتجع')
-                          ? 'مرتجع'
-                          : 'سداد';
-                  final text = '''
+                ListTile(
+                  leading: const Icon(Icons.share, color: Colors.blue),
+                  title: const Text('مشاركة'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final typeLabel = t.type == 'debt'
+                        ? 'دين'
+                        : t.items.startsWith('مرتجع')
+                            ? 'مرتجع'
+                            : 'سداد';
+                    final text = '''
 السلام عليكم ${_customer.name}،
 تم تسجيل العملية التالية:
 
@@ -1015,52 +1004,54 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
 شكراً لتعاملكم معنا
 ''';
-                  await Share.share(text);
-                },
-              ),
+                    await Share.share(text);
+                  },
+                ),
 
-              ListTile(
-                leading: const Icon(Icons.print, color: Colors.orange),
-                title: const Text('طباعة / حفظ PDF للعملية'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    final file = await PdfService.generateStatement(
-                      _customer,
-                      fromDate: DateTime.parse(t.createdAt),
-                      toDate: DateTime.parse(t.createdAt),
-                    );
-                    await PdfService.share(file, _customer.name);
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('فشل: $e')),
+                ListTile(
+                  leading: const Icon(Icons.print, color: Colors.orange),
+                  title: const Text('طباعة / حفظ PDF للعملية'),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    try {
+                      final file = await PdfService.generateStatement(
+                        _customer,
+                        fromDate: DateTime.parse(t.createdAt),
+                        toDate: DateTime.parse(t.createdAt),
                       );
+                      await PdfService.share(file, _customer.name);
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('فشل: $e')),
+                        );
+                      }
                     }
-                  }
-                },
-              ),
+                  },
+                ),
 
-              const Divider(height: 1),
+                const Divider(height: 1),
 
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('تعديل'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _editTransaction(t);
-                },
-              ),
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('تعديل'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _editTransaction(t);
+                  },
+                ),
 
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('حذف', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _deleteTransaction(t);
-                },
-              ),
-            ],
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('حذف',
+                      style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _deleteTransaction(t);
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1072,7 +1063,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     await ExportService.shareFile(f, text: 'كشف حساب ${_customer.name}');
   }
 
-  // ============ PDF ============
   Future<void> _exportPdf() async {
     DateTime? fromDate;
     DateTime? toDate;
@@ -1300,8 +1290,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       image: _customer.photoPath != null &&
                               File(_customer.photoPath!).existsSync()
                           ? DecorationImage(
-                              image:
-                                  FileImage(File(_customer.photoPath!)),
+                              image: FileImage(File(_customer.photoPath!)),
                               fit: BoxFit.cover,
                             )
                           : null,
@@ -1354,9 +1343,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
-                              color: !_customer.isActive
-                                  ? Colors.grey
-                                  : null,
+                              color: !_customer.isActive ? Colors.grey : null,
                             ),
                           ),
                         ),
@@ -1385,8 +1372,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.block,
-                                    size: 12, color: Colors.white),
+                                Icon(Icons.block, size: 12, color: Colors.white),
                                 SizedBox(width: 3),
                                 Text(
                                   'موقوف',
@@ -1433,8 +1419,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color:
-                                theme.colorScheme.primary.withOpacity(0.15),
+                            color: theme.colorScheme.primary.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
@@ -1486,8 +1471,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
           if (_customer.maxBalance != null) ...[
             const SizedBox(height: 6),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: balanceColor.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(10),
@@ -1623,13 +1607,11 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed != true) return;
 
-    // 🆕 من عدّل
     final accountant = await AccountantService.getAccountantName();
 
     await db.setCustomerActive(_customer.id!, !_customer.isActive,
         by: accountant);
 
-    // 🆕 تسجيل الحدث
     await LoggerService.logCustomerStatusChanged(
       name: _customer.name,
       isActive: !_customer.isActive,
@@ -1739,7 +1721,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                         ],
                       ),
                     ),
-                  // 🆕 شارة "عُدّلت"
                   if (t.wasModified &&
                       SettingsService.getBool(
                         AppSettings.showTrackingInfo,
@@ -1760,8 +1741,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.edit,
-                              size: 9, color: Colors.orange),
+                          Icon(Icons.edit, size: 9, color: Colors.orange),
                           SizedBox(width: 2),
                           Text(
                             'مُعدّلة',
@@ -1909,8 +1889,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) =>
-                      ShareReceiptScreen(customer: _customer),
+                  builder: (_) => ShareReceiptScreen(customer: _customer),
                 ),
               ),
             ),
@@ -1934,8 +1913,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) =>
-                            AddAccountScreen(existing: _customer),
+                        builder: (_) => AddAccountScreen(existing: _customer),
                       ),
                     ).then((changed) {
                       if (changed == true && mounted) {
@@ -1973,15 +1951,13 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                   child: ListTile(
                     leading: Icon(
                       _customer.isActive ? Icons.block : Icons.check_circle,
-                      color:
-                          _customer.isActive ? Colors.orange : Colors.green,
+                      color: _customer.isActive ? Colors.orange : Colors.green,
                     ),
                     title: Text(
                       _customer.isActive ? 'إيقاف الحساب' : 'تفعيل الحساب',
                       style: TextStyle(
-                        color: _customer.isActive
-                            ? Colors.orange
-                            : Colors.green,
+                        color:
+                            _customer.isActive ? Colors.orange : Colors.green,
                       ),
                     ),
                   ),
@@ -2093,11 +2069,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حذف الحساب — مع الفحوصات الكاملة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _showDeleteCustomer() async {
-    // 1) فحص الرصيد
     final balance = await db.customerBalance(_customer.id!);
 
     if (SettingsService.getBool(
@@ -2151,7 +2123,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
-    // 2) فحص وجود معاملات
     if (SettingsService.getBool(
           AppSettings.blockDeleteWithTransactions,
           defaultValue: true,
@@ -2197,7 +2168,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
-    // 3) تأكيد الحذف
     final useSoft = SettingsService.getBool(
       AppSettings.softDeleteEnabled,
       defaultValue: true,
@@ -2240,7 +2210,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
     if (confirmed != true) return;
 
-    // 4) تنفيذ الحذف
     final accountant = await AccountantService.getAccountantName();
 
     if (useSoft) {
