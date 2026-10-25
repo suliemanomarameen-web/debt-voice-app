@@ -14,17 +14,15 @@ class AppSettings {
   static const String retentionDays = 'retention_days';
   static const String autoCleanupDeleted = 'auto_cleanup_deleted';
 
+  static const String blockCustomerDeletion = 'block_customer_deletion';
+  static const String blockTransactionDeletion =
+      'block_transaction_deletion';
+
   // ═══════════════════════════════════════════════════════════
-  // ✏️ مجموعة التعديل
+  // ✏️ مجموعة التعديل (مبسّطة إلى إعداد واحد)
   // ═══════════════════════════════════════════════════════════
 
   static const String allowEditTransactions = 'allow_edit_transactions';
-  static const String allowEditTransactionAmount =
-      'allow_edit_transaction_amount';
-  static const String allowEditTransactionItems =
-      'allow_edit_transaction_items';
-  static const String allowEditTransactionType =
-      'allow_edit_transaction_type';
   static const String allowEditCustomerBalance =
       'allow_edit_customer_balance';
   static const String trackEdits = 'track_edits';
@@ -43,6 +41,7 @@ class AppSettings {
   static const String deletionConflictRestore =
       'deletion_conflict_restore';
   static const String syncLogs = 'sync_logs';
+  static const String syncDeletedBin = 'sync_deleted_bin';
 
   // ═══════════════════════════════════════════════════════════
   // 📜 مجموعة السجل
@@ -106,18 +105,8 @@ class AppSettings {
   // 🆕 مجموعة رمز المحاسب في العمليات
   // ═══════════════════════════════════════════════════════════
 
-  /// تفعيل إضافة رمز المحاسب إلى رمز العملية
   static const String codeIncludeAccountant = 'code_include_accountant';
-
-  /// موضع رمز المحاسب:
-  /// 'prefix' = قبل (مثل S-D-0001)
-  /// 'suffix' = بعد (مثل D-0001-S)
   static const String codeAccountantPosition = 'code_accountant_position';
-
-  /// الفاصل بين رمز المحاسب والرمز الأصلي:
-  /// '' = بدون (مثل SD-0001)
-  /// '-' = شرطة (مثل S-D-0001)
-  /// '_' = شرطة سفلية (مثل S_D-0001)
   static const String codeAccountantSeparator = 'code_accountant_separator';
 
   // ═══════════════════════════════════════════════════════════
@@ -131,12 +120,11 @@ class AppSettings {
     softDeleteEnabled: true,
     retentionDays: 30,
     autoCleanupDeleted: true,
+    blockCustomerDeletion: false,
+    blockTransactionDeletion: false,
 
     // ✏️ التعديل
     allowEditTransactions: true,
-    allowEditTransactionAmount: true,
-    allowEditTransactionItems: true,
-    allowEditTransactionType: false,
     allowEditCustomerBalance: false,
     trackEdits: true,
     requireEditReason: false,
@@ -150,6 +138,7 @@ class AppSettings {
     conflictNotification: true,
     deletionConflictRestore: true,
     syncLogs: true,
+    syncDeletedBin: true,
 
     // 📜 السجل
     logEnabled: true,
@@ -188,7 +177,7 @@ class AppSettings {
     showCloudId: false,
     compactMode: false,
 
-    // 🆕 رمز المحاسب
+    // رمز المحاسب
     codeIncludeAccountant: false,
     codeAccountantPosition: 'suffix',
     codeAccountantSeparator: '',
@@ -198,7 +187,6 @@ class AppSettings {
   // 📊 مجموعات للعرض والتحكم
   // ═══════════════════════════════════════════════════════════
 
-  /// إعدادات خطيرة تحتاج كلمة مرور
   static const Set<String> dangerousSettings = {
     blockDeleteNonzeroBalance,
     blockDeleteWithTransactions,
@@ -206,22 +194,23 @@ class AppSettings {
     syncEnabled,
     autoResolveConflicts,
     deletionConflictRestore,
+    blockCustomerDeletion,
+    blockTransactionDeletion,
   };
 
-  /// إعدادات مشتركة (تُزامن بين الأجهزة)
   static const Set<String> sharedSettings = {
     blockDeleteNonzeroBalance,
     blockDeleteWithTransactions,
     softDeleteEnabled,
     retentionDays,
     autoCleanupDeleted,
+    blockCustomerDeletion,
+    blockTransactionDeletion,
     allowEditTransactions,
-    allowEditTransactionAmount,
-    allowEditTransactionItems,
-    allowEditTransactionType,
     allowEditCustomerBalance,
     trackEdits,
     requireEditReason,
+    syncDeletedBin,
     logEnabled,
     logRetentionDays,
     logMaxCount,
@@ -235,7 +224,6 @@ class AppSettings {
     notifyDebtOnInactive,
   };
 
-  /// إعدادات محلية فقط (لا تُزامن)
   static const Set<String> localSettings = {
     syncEnabled,
     syncIntervalMinutes,
@@ -260,15 +248,10 @@ class AppSettings {
     showTrackingInfo,
     showCloudId,
     compactMode,
-    // 🆕 رمز المحاسب — محلي لكل جهاز
     codeIncludeAccountant,
     codeAccountantPosition,
     codeAccountantSeparator,
   };
-
-  // ═══════════════════════════════════════════════════════════
-  // دوال مساعدة
-  // ═══════════════════════════════════════════════════════════
 
   static bool isShared(String key) => sharedSettings.contains(key);
   static bool isLocal(String key) => localSettings.contains(key);
