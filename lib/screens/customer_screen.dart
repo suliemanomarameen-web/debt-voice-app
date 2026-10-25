@@ -45,7 +45,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     final bal = await db.customerBalance(_customer.id!);
     final allTx = await db.customerTransactions(_customer.id!);
 
-    // 🆕 إصلاح الأداء: جلب العميل المطلوب فقط بدلاً من كل العملاء
+    // 🆕 إصلاح الأداء: جلب عميل واحد فقط
     final updated = await db.getCustomer(_customer.id!);
     if (updated != null) {
       _customer = updated;
@@ -220,8 +220,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text('فلترة بالتاريخ',
-                    style: TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.bold)),
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
               ListTile(
                 leading: const Icon(Icons.all_inclusive),
@@ -366,7 +366,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                 ),
                 const SizedBox(height: 12),
-                // 🆕 إصلاح: إظهار الحقل لجميع العمليات
+                // 🆕 إظهار الحقل لجميع العمليات
                 TextField(
                   controller: itemsCtrl,
                   enabled: !isSaving,
@@ -476,8 +476,9 @@ class _CustomerScreenState extends State<CustomerScreen> {
                           Navigator.pop(dialogContext);
                           await _load();
 
-                          // 🆕 إصلاح: استخدام SettingsService بدلاً من SharedPreferences
-                          final autoWhatsApp = SettingsService.getBool('auto_whatsapp', defaultValue: false);
+                          final autoWhatsApp = SettingsService.getBool(
+                              'auto_whatsapp',
+                              defaultValue: false);
 
                           if (autoWhatsApp &&
                               _customer.phone != null &&
@@ -498,7 +499,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                             }
                           }
                         } finally {
-                          // 🆕 إصلاح: إزالة setStateDialog من finally لتجنب خطأ التحديث بعد الإغلاق
                           if (mounted && dialogContext.mounted) {
                             setStateDialog(() => isSaving = false);
                           }
@@ -524,6 +524,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _editTransaction(Transaction t) async {
+    // 🆕 إعداد واحد فقط للتحكم بكل التعديلات
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -595,7 +596,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 decoration: const InputDecoration(labelText: 'المبلغ'),
               ),
               const SizedBox(height: 12),
-              // 🆕 إصلاح: إظهار الحقل دائماً عند التعديل
+              // 🆕 إظهار الحقل دائماً عند التعديل
               TextField(
                 controller: itemsCtrl,
                 decoration: InputDecoration(
@@ -616,39 +617,13 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                if (!SettingsService.getBool(
-                  AppSettings.allowEditTransactionAmount,
-                  defaultValue: true,
-                )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تعديل المبلغ معطّل من الإعدادات'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-
+                // 🆕 إعداد واحد يتحكم بالمبلغ والأصناف والنوع
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
                 final newItems = isReturn
                     ? 'مرتجع: ${itemsCtrl.text.trim()}'
                     : itemsCtrl.text.trim();
-
-                if (newItems != t.items &&
-                    !SettingsService.getBool(
-                      AppSettings.allowEditTransactionItems,
-                      defaultValue: true,
-                    )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تعديل الأصناف معطّل من الإعدادات'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
 
                 final accountant = await AccountantService.getAccountantName();
 
@@ -718,6 +693,22 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _deleteTransaction(Transaction t) async {
+    // 🆕 فحص منع حذف العمليات
+    if (SettingsService.getBool(
+      AppSettings.blockTransactionDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('حذف العمليات معطّل من الإعدادات المتقدمة'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => Directionality(
@@ -792,8 +783,8 @@ class _CustomerScreenState extends State<CustomerScreen> {
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
-      // 🆕 إصلاح: جعل النافذة قابلة للتمرير لكي لا تختفي الأزرار
-      isScrollControlled: true, 
+      // 🆕 إصلاح: جعل النافذة قابلة للتمرير
+      isScrollControlled: true,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
         child: SafeArea(
@@ -1372,7 +1363,8 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.block, size: 12, color: Colors.white),
+                                Icon(Icons.block,
+                                    size: 12, color: Colors.white),
                                 SizedBox(width: 3),
                                 Text(
                                   'موقوف',
@@ -2070,6 +2062,40 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   }
 
   Future<void> _showDeleteCustomer() async {
+    // 🆕 فحص منع حذف الحسابات
+    if (SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.block, color: Colors.red),
+                SizedBox(width: 8),
+                Text('محظور'),
+              ],
+            ),
+            content: const Text(
+              'حذف الحسابات معطّل من الإعدادات المتقدمة.\n\n'
+              'يمكنك تفعيله من: الإعدادات ← الإعدادات المتقدمة ← 🗑️ الحذف',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('فهمت'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
     final balance = await db.customerBalance(_customer.id!);
 
     if (SettingsService.getBool(
@@ -2106,7 +2132,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  '💡 يجب تصفية الرصيد أولاً (سداد كامل أو تعديل) قبل الحذف.',
+                  '💡 يجب تصفية الرصيد أولاً قبل الحذف.',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
