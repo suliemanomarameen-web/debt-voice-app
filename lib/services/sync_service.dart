@@ -141,6 +141,9 @@ class SyncService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // عند تغيير البيانات محليًا
+  // ═══════════════════════════════════════════════════════════
   static void _onLocalDataChanged() {
     if (!SettingsService.getBool(AppSettings.syncOnDataChange)) return;
 
@@ -153,6 +156,9 @@ class SyncService {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // عند العودة من الخلفية
+  // ═══════════════════════════════════════════════════════════
   static Future<void> checkAndSyncIfNeeded() async {
     if (!SettingsService.getBool(AppSettings.syncEnabled)) return;
 
@@ -177,6 +183,9 @@ class SyncService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // مزامنة صامتة
+  // ═══════════════════════════════════════════════════════════
   static Future<void> silentSync() async {
     if (!SettingsService.getBool(AppSettings.syncEnabled)) return;
     if (_isSyncing) return;
@@ -194,6 +203,9 @@ class SyncService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // مزامنة أولية / يدوية
+  // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> initialSync() async {
     if (!GDriveService.isSignedIn) {
       await GDriveService.trySilentSignIn();
@@ -244,6 +256,9 @@ class SyncService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // المزامنة الفعلية
+  // ═══════════════════════════════════════════════════════════
   static Future<SyncResult> _performSync({required bool silent}) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
@@ -387,6 +402,73 @@ class SyncService {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 تطبيق شواهد القبور القادمة من السحابة
+  // ═══════════════════════════════════════════════════════════
+  static Future<void> _applyCloudTombstones(
+      Map<String, dynamic> cloudData) async {
+    // فحص الإعداد
+    if (!SettingsService.getBool(
+      AppSettings.syncDeletedBin,
+      defaultValue: true,
+    )) {
+      return;
+    }
+
+    final tombstones = cloudData['tombstones'] as List?;
+    if (tombstones == null || tombstones.isEmpty) return;
+
+    final db = DatabaseHelper.instance;
+    int applied = 0;
+    int deletedLocal = 0;
+
+    for (final tomb in tombstones) {
+      if (tomb is! Map) continue;
+      final cloudId = tomb['cloud_id'] as String?;
+      final type = tomb['type'] as String?;
+      if (cloudId == null || cloudId.isEmpty || type == null) continue;
+
+      // 1. احفظ الشاهد محلياً (idempotent)
+      await db.addTombstone(cloudId: cloudId, type: type);
+      applied++;
+
+      // 2. احذف السجل المحلي إن وُجد
+      try {
+        if (type == 'customer') {
+          final dbi = await db.database;
+          final rows = await dbi.query('customers',
+              where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
+          if (rows.isNotEmpty) {
+            final localId = rows.first['id'] as int;
+            // حذف معاملات العميل أولاً
+            await dbi.delete('transactions',
+                where: 'customer_id = ?', whereArgs: [localId]);
+            await dbi.delete('customers',
+                where: 'id = ?', whereArgs: [localId]);
+            deletedLocal++;
+          }
+        } else if (type == 'transaction') {
+          final dbi = await db.database;
+          final rows = await dbi.query('transactions',
+              where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
+          if (rows.isNotEmpty) {
+            final localId = rows.first['id'] as int;
+            await dbi.delete('transactions',
+                where: 'id = ?', whereArgs: [localId]);
+            deletedLocal++;
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ [Sync] Apply tombstone error ($cloudId): $e');
+      }
+    }
+
+    if (applied > 0) {
+      debugPrint(
+          '🪦 [Sync] Applied $applied tombstones, deleted $deletedLocal local records');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // دمج البيانات السحابية
   // ═══════════════════════════════════════════════════════════
   static Future<Map<String, int>> _mergeCloudData(
@@ -402,6 +484,9 @@ class SyncService {
         debugPrint('👑 [Sync] Primary device set from cloud: $cloudPrimaryId');
       }
     }
+
+    // 🆕 تطبيق شواهد القبور قبل أي دمج
+    await _applyCloudTombstones(cloudData);
 
     int addedCustomers = 0;
     int addedTransactions = 0;
@@ -441,6 +526,13 @@ class SyncService {
       for (final cc in cloudCustomers) {
         final cloudId = cc['cloud_id'] as String?;
         final cloudName = cc['name'] as String? ?? '';
+
+        // 🆕 تجاهل السجلات التي لها شاهد قبر محلي
+        if (cloudId != null && cloudId.isNotEmpty) {
+          if (await db.hasTombstone(cloudId)) {
+            continue;
+          }
+        }
 
         if (cloudId == null || cloudId.isEmpty) {
           final cloudCreated = cc['created_at'] as String? ?? '';
@@ -497,6 +589,13 @@ class SyncService {
         final cloudCustomerId = ct['customer_id'] as int?;
 
         if (cloudCustomerId == null) continue;
+
+        // 🆕 تجاهل السجلات التي لها شاهد قبر محلي
+        if (cloudId != null && cloudId.isNotEmpty) {
+          if (await db.hasTombstone(cloudId)) {
+            continue;
+          }
+        }
 
         final localCustomerId = cloudIdToLocalId[cloudCustomerId];
         if (localCustomerId == null) continue;
@@ -987,15 +1086,24 @@ class SyncService {
       // 🆕 primary_device_id
       final primaryDeviceId = await DeviceService.getPrimaryDeviceId();
 
+      // 🆕 شواهد القبور (إذا كانت المزامنة مفعلة)
+      final tombstones = SettingsService.getBool(
+        AppSettings.syncDeletedBin,
+        defaultValue: true,
+      )
+          ? await db.allTombstonesRaw()
+          : <Map<String, dynamic>>[];
+
       final data = {
         'app': 'debt_voice_app',
-        'version': 5,
+        'version': 6, // ⬆️ 5 → 6 (بسبب tombstones)
         'created_at': DateTime.now().toIso8601String(),
-        'primary_device_id': primaryDeviceId, // 🆕
+        'primary_device_id': primaryDeviceId,
         'customers': customers,
         'transactions': transactions,
         'used_codes': usedCodes,
         'log_events': logEvents,
+        'tombstones': tombstones, // 🆕
         ...accountantsData,
       };
 
