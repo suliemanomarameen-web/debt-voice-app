@@ -158,9 +158,6 @@ jobs:
               project.buildDir = "${rootProject.buildDir}/${project.name}"
           }
 
-          // ═══════════════════════════════════════════════════════════
-          // 🆕 إصلاح namespace — يجب أن يكون BEFORE evaluationDependsOn
-          // ═══════════════════════════════════════════════════════════
           subprojects { subproject ->
               subproject.afterEvaluate {
                   if (subproject.hasProperty('android')) {
@@ -202,7 +199,6 @@ jobs:
               }
           }
 
-          // بعد كتلة namespace نضيف evaluationDependsOn
           subprojects {
               project.evaluationDependsOn(":app")
           }
@@ -325,19 +321,8 @@ jobs:
           fi
 
       # ═══════════════════════════════════════════════════════════
-      # 🆕 رفع الـ APK كـ Artifact مع الاحتفاظ به لمدة 30 يوماً فقط
-      # بعد 30 يوماً سيُحذف تلقائياً لتحرير المساحة
-      # ═══════════════════════════════════════════════════════════
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: debt-voice-app-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30  # 🆕 الحذف التلقائي بعد 30 يوماً
-
-      # ═══════════════════════════════════════════════════════════
-      # ملاحظة: خطوة Release التالية تُنشئ إصداراً دائماً (لا يُحذف)
-      # وهي الطريقة الصحيحة للاحتفاظ بالنسخ المهمة بلا حدود زمنية
+      # 🆕 تم حذف خطوة Upload Artifact لأنها تسبب خطأ المساحة
+      # سنستخدم Create Release فقط (لا يُحسب ضد مساحة 500 MB)
       # ═══════════════════════════════════════════════════════════
       - name: Create Release
         uses: softprops/action-gh-release@v2
