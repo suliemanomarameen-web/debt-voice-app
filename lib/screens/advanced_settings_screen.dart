@@ -17,17 +17,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    // تأكد من تحميل الإعدادات
     SettingsService.init().then((_) {
       if (mounted) setState(() {});
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تغيير إعداد
-  // ═══════════════════════════════════════════════════════════
   Future<void> _changeBool(String key, bool value) async {
-    // هل الإعداد خطير؟
     if (AppSettings.isDangerous(key) &&
         SettingsService.getBool(
             AppSettings.requirePasswordForDangerousSettings,
@@ -71,9 +66,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     setState(() {});
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة إعداد واحد
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetSetting(String key) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -103,9 +95,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت الاستعادة', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة مجموعة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetGroup(String groupName, List<String> keys) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -136,9 +125,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت استعادة "$groupName"', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة الكل
-  // ═══════════════════════════════════════════════════════════
   Future<void> _resetAll() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -178,9 +164,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     _snack('✅ تمت استعادة كل الإعدادات', Colors.green);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // طلب كلمة المرور
-  // ═══════════════════════════════════════════════════════════
   Future<bool> _askForPassword() async {
     final enabled = await AuthService.isEnabled();
     if (!enabled) return true;
@@ -275,27 +258,29 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // الحصول على اسم عربي للإعداد
+  // الأسماء العربية للإعدادات
   // ═══════════════════════════════════════════════════════════
   String _labelFor(String key) {
     const map = {
-      AppSettings.blockDeleteNonzeroBalance:
-          'منع حذف حساب رصيده ≠ 0',
+      // 🗑️ الحذف
+      AppSettings.blockDeleteNonzeroBalance: 'منع حذف حساب رصيده ≠ 0',
       AppSettings.blockDeleteWithTransactions:
           'منع حذف حساب عليه عمليات',
       AppSettings.softDeleteEnabled: 'الحذف الناعم (سلة المحذوفات)',
       AppSettings.retentionDays: 'مدة الاحتفاظ في السلة',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
-      AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
-      AppSettings.allowEditTransactionAmount: 'السماح بتعديل المبلغ',
-      AppSettings.allowEditTransactionItems:
-          'السماح بتعديل الأصناف',
-      AppSettings.allowEditTransactionType:
-          'السماح بتغيير نوع العملية',
+      AppSettings.blockCustomerDeletion: 'منع حذف الحسابات نهائياً',
+      AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
+
+      // ✏️ التعديل
+      AppSettings.allowEditTransactions:
+          'السماح بتعديل العمليات',
       AppSettings.allowEditCustomerBalance:
           'السماح بتعديل الرصيد مباشرة',
       AppSettings.trackEdits: 'تسجيل كل تعديل في السجل',
       AppSettings.requireEditReason: 'طلب سبب عند التعديل',
+
+      // 🔄 المزامنة
       AppSettings.syncEnabled: 'تفعيل المزامنة',
       AppSettings.syncIntervalMinutes: 'تكرار المزامنة',
       AppSettings.syncOnDataChange: 'مزامنة عند التعديل',
@@ -305,38 +290,43 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.deletionConflictRestore:
           'استعادة الحساب دائمًا عند تعارض الحذف',
       AppSettings.syncLogs: 'مزامنة سجل الأحداث',
+      AppSettings.syncDeletedBin: 'مزامنة سلة المحذوفات',
+
+      // 📜 السجل
       AppSettings.logEnabled: 'تفعيل السجل',
       AppSettings.logRetentionDays: 'مدة الاحتفاظ بالأحداث',
       AppSettings.logMaxCount: 'الحد الأقصى للأحداث',
       AppSettings.logAutoCleanup: 'تنظيف تلقائي للسجل',
       AppSettings.logRemoteActivity: 'تسجيل نشاط الأجهزة الأخرى',
       AppSettings.logTransactionEdits: 'تسجيل تعديلات العمليات',
-      AppSettings.logRequiresAckForWarnings:
-          'التحذيرات تحتاج تأكيدًا',
+      AppSettings.logRequiresAckForWarnings: 'التحذيرات تحتاج تأكيدًا',
+
+      // 🎤 الصوت
       AppSettings.voiceEnabled: 'تفعيل الصوت',
       AppSettings.voiceAutoSaveHighConfidence:
           'حفظ تلقائي عند ثقة عالية',
       AppSettings.voiceConfirmBeforeSave: 'طلب تأكيد قبل الحفظ',
       AppSettings.voicePendingAutoExpireDays:
           'انتهاء صلاحية المعلقات الصوتية',
-      AppSettings.voiceFilterEmpty:
-          'فلترة التسجيلات الفارغة من المعلقات',
-      AppSettings.voiceFilterUnclear:
-          'فلترة غير المفهومة من المعلقات',
+      AppSettings.voiceFilterEmpty: 'فلترة التسجيلات الفارغة',
+      AppSettings.voiceFilterUnclear: 'فلترة غير المفهومة',
+
+      // 💰 الرصيد
       AppSettings.enforceMaxBalance: 'تطبيق الحد الأقصى',
       AppSettings.warnOnExceed: 'تنبيه عند التجاوز',
       AppSettings.blockOnExceed: 'منع تسجيل عملية تتجاوز الحد',
-      AppSettings.allowDebtOnInactive:
-          'السماح بدين على حساب موقوف',
-      AppSettings.notifyDebtOnInactive:
-          'إشعار عند دين على حساب موقوف',
+      AppSettings.allowDebtOnInactive: 'السماح بدين على حساب موقوف',
+      AppSettings.notifyDebtOnInactive: 'إشعار عند دين على حساب موقوف',
+
+      // 🔒 الأمان
       AppSettings.lockEnabled: 'تفعيل القفل',
       AppSettings.lockTimeoutMinutes: 'مدة القفل التلقائي',
       AppSettings.requirePasswordForDelete: 'طلب كلمة مرور للحذف',
-      AppSettings.requirePasswordForRestore:
-          'طلب كلمة مرور للاستعادة',
+      AppSettings.requirePasswordForRestore: 'طلب كلمة مرور للاستعادة',
       AppSettings.requirePasswordForDangerousSettings:
           'طلب كلمة مرور للإعدادات الخطيرة',
+
+      // 📱 الواجهة
       AppSettings.showDeletedBin: 'إظهار سلة المحذوفات',
       AppSettings.showTrackingInfo: 'إظهار "من عدّل"',
       AppSettings.showCloudId: 'إظهار Cloud ID',
@@ -347,6 +337,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   String _descriptionFor(String key) {
     const map = {
+      // 🗑️ الحذف
       AppSettings.blockDeleteNonzeroBalance:
           'لا يمكن حذف حساب رصيده ≠ 0',
       AppSettings.blockDeleteWithTransactions:
@@ -357,65 +348,70 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'مدة بقاء العنصر في السلة (بالأيام)',
       AppSettings.autoCleanupDeleted:
           'حذف نهائي تلقائي بعد انتهاء المدة',
+      AppSettings.blockCustomerDeletion:
+          'منع حذف أي حساب نهائياً حتى من السلة',
+      AppSettings.blockTransactionDeletion:
+          'منع حذف أي عملية نهائياً حتى من السلة',
+
+      // ✏️ التعديل
       AppSettings.allowEditTransactions:
-          'إذا مُعطّل، لا يمكن تعديل أي عملية',
-      AppSettings.allowEditTransactionAmount:
-          'إذا مُعطّل، المبلغ غير قابل للتعديل',
-      AppSettings.allowEditTransactionItems:
-          'إذا مُعطّل، الأصناف غير قابلة للتعديل',
-      AppSettings.allowEditTransactionType:
-          'إذا مُعطّل، لا يمكن تغيير دين إلى سداد',
+          'التحكم الكامل: إذا مُعطّل، لا يمكن تعديل أي عملية (المبلغ، الأصناف، النوع)',
       AppSettings.allowEditCustomerBalance:
           'تعديل الرصيد بدون معاملة',
       AppSettings.trackEdits:
           'كل تعديل يُسجَّل في سجل الأحداث',
       AppSettings.requireEditReason:
           'يُطلب من المستخدم كتابة السبب',
+
+      // 🔄 المزامنة
       AppSettings.syncEnabled: 'تفعيل/تعطيل المزامنة كليًا',
       AppSettings.syncIntervalMinutes:
           'كم دقيقة بين كل مزامنة دورية؟',
-      AppSettings.syncOnDataChange:
-          'مزامنة تلقائية بعد أي تعديل',
+      AppSettings.syncOnDataChange: 'مزامنة تلقائية بعد أي تعديل',
       AppSettings.syncOnAppOpen: 'مزامنة تلقائية عند فتح التطبيق',
-      AppSettings.autoResolveConflicts:
-          'دمج تلقائي + الأحدث يفوز',
+      AppSettings.autoResolveConflicts: 'دمج تلقائي + الأحدث يفوز',
       AppSettings.conflictNotification:
           'تنبيه في السجل عند حدوث تعارض',
       AppSettings.deletionConflictRestore:
           'القاعدة الافتراضية: الحذف يُلغى دائمًا',
       AppSettings.syncLogs: 'مزامنة log_events',
+      AppSettings.syncDeletedBin:
+          'مزامنة الحذف النهائي بين الأجهزة (يمنع إعادة السجلات المحذوفة)',
+
+      // 📜 السجل
       AppSettings.logEnabled: 'تفعيل/تعطيل تسجيل الأحداث',
       AppSettings.logRetentionDays:
           'مدة بقاء الحدث قبل حذفه تلقائيًا',
       AppSettings.logMaxCount: 'أقصى عدد أحداث محفوظة',
-      AppSettings.logAutoCleanup:
-          'تنظيف تلقائي للأحداث القديمة',
+      AppSettings.logAutoCleanup: 'تنظيف تلقائي للأحداث القديمة',
       AppSettings.logRemoteActivity:
           'تسجيل ما يفعله محاسب آخر في سجلك',
-      AppSettings.logTransactionEdits:
-          'كل تعديل على عملية يُسجَّل',
+      AppSettings.logTransactionEdits: 'كل تعديل على عملية يُسجَّل',
       AppSettings.logRequiresAckForWarnings:
           'التحذيرات تظهر في "المعلقات"',
+
+      // 🎤 الصوت
       AppSettings.voiceEnabled: 'تفعيل الإدخال الصوتي',
       AppSettings.voiceAutoSaveHighConfidence:
           'حفظ بدون سؤال عند الثقة',
-      AppSettings.voiceConfirmBeforeSave:
-          'سؤال المستخدم قبل الحفظ',
+      AppSettings.voiceConfirmBeforeSave: 'سؤال المستخدم قبل الحفظ',
       AppSettings.voicePendingAutoExpireDays:
           'انتهاء صلاحية التسجيلات المعلقة',
       AppSettings.voiceFilterEmpty:
           'إخفاء التسجيلات الصامتة من القائمة',
       AppSettings.voiceFilterUnclear:
           'إخفاء التسجيلات غير المفهومة',
-      AppSettings.enforceMaxBalance:
-          'تطبيق حد الرصيد الأقصى',
+
+      // 💰 الرصيد
+      AppSettings.enforceMaxBalance: 'تطبيق حد الرصيد الأقصى',
       AppSettings.warnOnExceed: 'إظهار تحذير عند التجاوز',
-      AppSettings.blockOnExceed:
-          'منع الحفظ إذا تجاوز الحد',
+      AppSettings.blockOnExceed: 'منع الحفظ إذا تجاوز الحد',
       AppSettings.allowDebtOnInactive:
           'إذا مُعطّل، يُمنع الدين على موقوف',
       AppSettings.notifyDebtOnInactive:
-          'إشعار يحذير عند الدين على موقوف',
+          'إشعار تحذير عند الدين على موقوف',
+
+      // 🔒 الأمان
       AppSettings.lockEnabled: 'تفعيل قفل التطبيق',
       AppSettings.lockTimeoutMinutes:
           'القفل التلقائي بعد هذه المدة',
@@ -425,20 +421,18 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'طلب كلمة المرور قبل الاستعادة',
       AppSettings.requirePasswordForDangerousSettings:
           'حماية الإعدادات الخطيرة',
+
+      // 📱 الواجهة
       AppSettings.showDeletedBin:
           'إظهار سلة المحذوفات في القوائم',
       AppSettings.showTrackingInfo:
           'عرض "من عدّل" في بطاقات السجل',
-      AppSettings.showCloudId:
-          'للمطورين فقط — يظهر UUID',
+      AppSettings.showCloudId: 'للمطورين فقط — يظهر UUID',
       AppSettings.compactMode: 'واجهة أصغر وأكثف',
     };
     return map[key] ?? '';
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // بناء الواجهة
-  // ═══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -457,7 +451,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         body: ListView(
           padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-            // شريط معلومات
             Container(
               margin: const EdgeInsets.all(12),
               padding: const EdgeInsets.all(14),
@@ -494,6 +487,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                 AppSettings.softDeleteEnabled,
                 AppSettings.retentionDays,
                 AppSettings.autoCleanupDeleted,
+                AppSettings.blockCustomerDeletion,
+                AppSettings.blockTransactionDeletion,
               ],
               children: [
                 _buildBoolTile(AppSettings.blockDeleteNonzeroBalance),
@@ -506,6 +501,9 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   suffix: 'يوم',
                 ),
                 _buildBoolTile(AppSettings.autoCleanupDeleted),
+                const Divider(height: 1),
+                _buildBoolTile(AppSettings.blockCustomerDeletion),
+                _buildBoolTile(AppSettings.blockTransactionDeletion),
               ],
             ),
 
@@ -517,18 +515,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               groupName: 'التعديل',
               keys: const [
                 AppSettings.allowEditTransactions,
-                AppSettings.allowEditTransactionAmount,
-                AppSettings.allowEditTransactionItems,
-                AppSettings.allowEditTransactionType,
                 AppSettings.allowEditCustomerBalance,
                 AppSettings.trackEdits,
                 AppSettings.requireEditReason,
               ],
               children: [
                 _buildBoolTile(AppSettings.allowEditTransactions),
-                _buildBoolTile(AppSettings.allowEditTransactionAmount),
-                _buildBoolTile(AppSettings.allowEditTransactionItems),
-                _buildBoolTile(AppSettings.allowEditTransactionType),
                 _buildBoolTile(AppSettings.allowEditCustomerBalance),
                 _buildBoolTile(AppSettings.trackEdits),
                 _buildBoolTile(AppSettings.requireEditReason),
@@ -550,6 +542,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                 AppSettings.conflictNotification,
                 AppSettings.deletionConflictRestore,
                 AppSettings.syncLogs,
+                AppSettings.syncDeletedBin,
               ],
               children: [
                 _buildBoolTile(AppSettings.syncEnabled),
@@ -565,6 +558,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                 _buildBoolTile(AppSettings.conflictNotification),
                 _buildBoolTile(AppSettings.deletionConflictRestore),
                 _buildBoolTile(AppSettings.syncLogs),
+                const Divider(height: 1),
+                _buildBoolTile(AppSettings.syncDeletedBin),
               ],
             ),
 
@@ -710,9 +705,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Group (Accordion)
-  // ═══════════════════════════════════════════════════════════
   Widget _buildGroup({
     required String title,
     required String groupName,
@@ -739,9 +731,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Bool Tile
-  // ═══════════════════════════════════════════════════════════
   Widget _buildBoolTile(String key) {
     final value = SettingsService.getBool(key);
     final isDangerous = AppSettings.isDangerous(key);
@@ -802,9 +791,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Int Tile
-  // ═══════════════════════════════════════════════════════════
   Widget _buildIntTile(
     String key, {
     required int min,
