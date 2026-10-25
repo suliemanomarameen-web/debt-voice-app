@@ -25,14 +25,14 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 11,
+      version: 12, // 🆕 v11 → v12
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
   }
 
   // ═══════════════════════════════════════════════════════════
-  // إنشاء الجداول (v11)
+  // إنشاء الجداول (v12)
   // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
@@ -111,6 +111,15 @@ class DatabaseHelper {
       CREATE TABLE settings(
         key TEXT PRIMARY KEY,
         value TEXT
+      )
+    ''');
+
+    // 🆕 v12: شواهد القبور للسجلات المحذوفة نهائياً
+    await db.execute('''
+      CREATE TABLE deleted_tombstones(
+        cloud_id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        deleted_at TEXT NOT NULL
       )
     ''');
   }
@@ -261,6 +270,22 @@ class DatabaseHelper {
         debugPrint('⚠️ [DB v11] $e');
       }
     }
+
+    // 🆕 v12: شواهد القبور (tombstones) للسجلات المحذوفة نهائياً
+    if (oldV < 12) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS deleted_tombstones(
+            cloud_id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            deleted_at TEXT NOT NULL
+          )
+        ''');
+        debugPrint('✅ [DB] Upgraded to v12 (tombstones)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v12] $e');
+      }
+    }
   }
 
   /// إضافة عمود إذا لم يكن موجوداً
@@ -325,6 +350,58 @@ class DatabaseHelper {
   String _generateCloudId() => _uuid.v4();
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 شواهد القبور (Tombstones)
+  // ═══════════════════════════════════════════════════════════
+
+  Future<void> addTombstone({
+    required String cloudId,
+    required String type,
+  }) async {
+    try {
+      final db = await database;
+      await db.insert(
+        'deleted_tombstones',
+        {
+          'cloud_id': cloudId,
+          'type': type,
+          'deleted_at': _now(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e) {
+      debugPrint('❌ addTombstone: $e');
+    }
+  }
+
+  Future<bool> hasTombstone(String cloudId) async {
+    try {
+      final db = await database;
+      final r = await db.query('deleted_tombstones',
+          where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
+      return r.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> allTombstonesRaw() async {
+    final db = await database;
+    return db.query('deleted_tombstones');
+  }
+
+  Future<int> clearOldTombstones({int days = 90}) async {
+    try {
+      final db = await database;
+      final cutoff =
+          DateTime.now().subtract(Duration(days: days)).toIso8601String();
+      return db.delete('deleted_tombstones',
+          where: 'deleted_at < ?', whereArgs: [cutoff]);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // الزبائن
   // ═══════════════════════════════════════════════════════════
 
@@ -337,8 +414,8 @@ class DatabaseHelper {
       map['cloud_id'] = _generateCloudId();
     }
 
-    // 🆕 ضبط updated_at
-    map['updated_at'] = map['updated_at'] ?? _now();
+    // 🆕 ضبط updated_at (FIX: يساوي created_at لمنع شارة "معدّلة" الوهمية)
+    map['updated_at'] = map['updated_at'] ?? map['created_at'] ?? _now();
 
     final id = await db.insert('customers', map);
     _notifyChanged();
@@ -351,6 +428,8 @@ class DatabaseHelper {
     if (data['cloud_id'] == null || (data['cloud_id'] as String).isEmpty) {
       data['cloud_id'] = _generateCloudId();
     }
+    // 🆕 FIX: ضبط updated_at
+    data['updated_at'] = data['updated_at'] ?? data['created_at'] ?? _now();
     return db.insert('customers', data);
   }
 
@@ -469,14 +548,26 @@ class DatabaseHelper {
     }
   }
 
-  // 🆕 حذف نهائي (فعلي)
+  // 🆕 حذف نهائي (فعلي) - مع شاهد قبر
   Future<int> hardDeleteCustomer(int id) async {
     try {
       final db = await database;
+      // جلب cloud_id قبل الحذف
+      final rows = await db.query('customers',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      String? cloudId;
+      if (rows.isNotEmpty) {
+        cloudId = rows.first['cloud_id'] as String?;
+      }
+      // حذف المعاملات ثم العميل
       await db.delete('transactions',
           where: 'customer_id = ?', whereArgs: [id]);
       final r =
           await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+      // 🆕 إضافة شاهد قبر
+      if (cloudId != null && cloudId.isNotEmpty) {
+        await addTombstone(cloudId: cloudId, type: 'customer');
+      }
       _notifyChanged();
       return r;
     } catch (e) {
@@ -626,8 +717,8 @@ class DatabaseHelper {
       map['cloud_id'] = _generateCloudId();
     }
 
-    // 🆕 ضبط updated_at
-    map['updated_at'] = map['updated_at'] ?? _now();
+    // 🆕 FIX: ضبط updated_at (يساوي created_at)
+    map['updated_at'] = map['updated_at'] ?? map['created_at'] ?? _now();
 
     final id = await db.insert('transactions', map);
 
@@ -652,6 +743,9 @@ class DatabaseHelper {
         (data['cloud_id'] as String?)?.isEmpty == true) {
       data['cloud_id'] = _generateCloudId();
     }
+
+    // 🆕 FIX: ضبط updated_at
+    data['updated_at'] = data['updated_at'] ?? data['created_at'] ?? _now();
 
     final id = await db.insert('transactions', data);
     final code = data['code'] as String?;
@@ -758,11 +852,23 @@ class DatabaseHelper {
     }
   }
 
+  // 🆕 حذف نهائي - مع شاهد قبر
   Future<int> hardDeleteTransaction(int id) async {
     try {
       final db = await database;
+      // جلب cloud_id قبل الحذف
+      final rows = await db.query('transactions',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      String? cloudId;
+      if (rows.isNotEmpty) {
+        cloudId = rows.first['cloud_id'] as String?;
+      }
       final r =
           await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+      // 🆕 إضافة شاهد قبر
+      if (cloudId != null && cloudId.isNotEmpty) {
+        await addTombstone(cloudId: cloudId, type: 'transaction');
+      }
       _notifyChanged();
       return r;
     } catch (e) {
