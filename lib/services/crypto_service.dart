@@ -32,8 +32,33 @@ class CryptoService {
     await _storage.write(key: _keyEnabled, value: 'true');
   }
 
+  /// 🆕 تعيين كلمة مرور مع salt محدد (عند الربط بالأساسي)
+  /// يستخدم salt الأساسي بدلاً من توليد واحد جديد
+  static Future<void> setMasterPasswordWithSalt(
+    String password,
+    String saltBase64,
+  ) async {
+    if (password.trim().isEmpty) {
+      throw Exception('كلمة المرور لا يمكن أن تكون فارغة');
+    }
+    // التحقق من صحة base64
+    try {
+      base64Decode(saltBase64);
+    } catch (e) {
+      throw Exception('ملح التشفير غير صالح');
+    }
+    await _storage.write(key: _keySalt, value: saltBase64);
+    await _storage.write(key: _keyPassword, value: password);
+    await _storage.write(key: _keyEnabled, value: 'true');
+  }
+
   static Future<String?> getMasterPassword() async {
     return _storage.read(key: _keyPassword);
+  }
+
+  /// 🆕 جلب الـ salt الحالي (base64) — للاستخدام في رمز الربط
+  static Future<String?> getSaltBase64() async {
+    return _storage.read(key: _keySalt);
   }
 
   static Future<void> deleteMasterPassword() async {
@@ -47,8 +72,8 @@ class CryptoService {
     return v == 'true';
   }
 
-  // ========== التشفير وفك التشفير ==========
-  /// تشفير خريطة بيانات وإرجاعها كنص Base64
+  // ========== التشفير وفك التشفير (باستخدام salt المحفوظ) ==========
+
   static Future<String> encryptData(Map<String, dynamic> data) async {
     final password = await getMasterPassword();
     if (password == null) {
@@ -71,7 +96,6 @@ class CryptoService {
       nonce: nonce,
     );
 
-    // تركيب: nonce + ciphertext + mac
     final combined = Uint8List.fromList([
       ...nonce,
       ...secretBox.cipherText,
@@ -81,8 +105,8 @@ class CryptoService {
     return base64Encode(combined);
   }
 
-  /// فك تشفير نص Base64 وإرجاع الخريطة الأصلية
-  static Future<Map<String, dynamic>> decryptData(String encryptedBase64) async {
+  static Future<Map<String, dynamic>> decryptData(
+      String encryptedBase64) async {
     final password = await getMasterPassword();
     if (password == null) {
       throw Exception('لا توجد كلمة مرور رئيسية');
@@ -92,12 +116,25 @@ class CryptoService {
     if (saltBase64 == null) {
       throw Exception('الملح (salt) غير موجود');
     }
+
+    return await decryptDataWithSalt(
+      encryptedBase64,
+      password,
+      saltBase64,
+    );
+  }
+
+  /// 🆕 فك تشفير باستخدام salt خارجي (للربط بالأساسي)
+  static Future<Map<String, dynamic>> decryptDataWithSalt(
+    String encryptedBase64,
+    String password,
+    String saltBase64,
+  ) async {
     final salt = base64Decode(saltBase64);
     final key = await _deriveKey(password, salt);
 
     final combined = base64Decode(encryptedBase64);
 
-    // AesGcm: nonce = 12 بايت، mac = 16 بايت
     const nonceLength = 12;
     const macLength = 16;
 
@@ -123,6 +160,21 @@ class CryptoService {
     final jsonStr = utf8.decode(plainBytes);
 
     return jsonDecode(jsonStr) as Map<String, dynamic>;
+  }
+
+  /// 🆕 اختبار: هل كلمة المرور صحيحة لهذا الـ salt؟
+  /// (دون حفظها)
+  static Future<bool> testPasswordForSalt({
+    required String password,
+    required String saltBase64,
+    required String encryptedSample,
+  }) async {
+    try {
+      await decryptDataWithSalt(encryptedSample, password, saltBase64);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ========== أدوات داخلية ==========
