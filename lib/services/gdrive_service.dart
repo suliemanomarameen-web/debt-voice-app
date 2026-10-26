@@ -12,14 +12,12 @@ class GDriveService {
   static const String _serverClientId =
       '889184576541-406c2kom3ka5491m9utf74rfjt7plovf.apps.googleusercontent.com';
 
-  // 🆕 صلاحية كاملة — ضرورية للعمل مع حسابات Google متعددة
-  // ⚠️ عند تسجيل الدخول القادم، سيطلب Google موافقة جديدة
+  // صلاحية كاملة — ضرورية للعمل مع حسابات Google متعددة
   static const List<String> _scopes = [
     'https://www.googleapis.com/auth/drive',
   ];
 
   static const String _syncFileName = 'debt_sync_data.json';
-  // 🆕 بادئة تُشير إلى أن محتوى الملف مشفر
   static const String _encryptedPrefix = 'ENC:1:';
 
   static GoogleSignIn? _googleSignIn;
@@ -249,14 +247,13 @@ class GDriveService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 دوال المشاركة (لنظام المحاسبين المتعددين)
+  // دوال المشاركة
   // ═══════════════════════════════════════════════════════════
 
-  /// مشاركة ملف مع إيميل محاسب آخر
   static Future<Map<String, dynamic>> shareFileWithEmail({
     required String fileId,
     required String email,
-    String role = 'writer', // 'reader' | 'writer' | 'commenter'
+    String role = 'writer',
     bool sendNotification = true,
   }) async {
     try {
@@ -293,7 +290,6 @@ class GDriveService {
     }
   }
 
-  /// قائمة من لديهم صلاحية على الملف
   static Future<List<Map<String, dynamic>>> listPermissions(
       String fileId) async {
     try {
@@ -320,7 +316,6 @@ class GDriveService {
     }
   }
 
-  /// إلغاء وصول إيميل من الملف
   static Future<bool> revokeAccess({
     required String fileId,
     required String email,
@@ -356,7 +351,6 @@ class GDriveService {
     }
   }
 
-  /// مشاركة ملف المزامنة الرئيسي مع إيميل
   static Future<Map<String, dynamic>> shareSyncFileWithEmail({
     required String email,
     String role = 'writer',
@@ -368,14 +362,12 @@ class GDriveService {
     return shareFileWithEmail(fileId: fileId, email: email, role: role);
   }
 
-  /// عرض صلاحيات ملف المزامنة
   static Future<List<Map<String, dynamic>>> listSyncFilePermissions() async {
     final fileId = await getSyncFileId();
     if (fileId == null) return [];
     return listPermissions(fileId);
   }
 
-  /// إلغاء وصول إيميل من ملف المزامنة
   static Future<bool> revokeSyncFileAccess(String email) async {
     final fileId = await getSyncFileId();
     if (fileId == null) return false;
@@ -383,15 +375,16 @@ class GDriveService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ملف المزامنة — مع دعم التشفير التلقائي
+  // ملف المزامنة — مع دعم التشفير
   // ═══════════════════════════════════════════════════════════
 
+  /// البحث عن ملف المزامنة الذي **أنشأه هذا الحساب** (المالك)
   static Future<String?> getSyncFileId() async {
     try {
       if (!await ensureSignedIn()) return null;
 
       final result = await _driveApi!.files.list(
-        q: "name = '$_syncFileName' and trashed = false",
+        q: "name = '$_syncFileName' and trashed = false and 'me' in owners",
         $fields: 'files(id,name,modifiedTime)',
       );
 
@@ -405,32 +398,56 @@ class GDriveService {
     }
   }
 
-  static Future<DateTime?> getSyncFileModifiedTime() async {
+  /// 🆕 البحث عن ملف المزامنة المشترك معي (لا أملكه لكن لدي صلاحية عليه)
+  static Future<String?> findSharedSyncFileId() async {
     try {
       if (!await ensureSignedIn()) return null;
 
+      // البحث الشامل: أي ملف بهذا الاسم لست مالكه لكن يمكنني الوصول له
       final result = await _driveApi!.files.list(
-        q: "name = '$_syncFileName' and trashed = false",
-        $fields: 'files(id,modifiedTime)',
+        q: "name = '$_syncFileName' and trashed = false and sharedWithMe = true",
+        $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
+        orderBy: 'modifiedTime desc',
       );
 
       if (result.files != null && result.files!.isNotEmpty) {
-        return result.files!.first.modifiedTime;
+        final file = result.files!.first;
+        debugPrint('🔗 [GDrive] Found shared sync file: ${file.id}');
+        return file.id;
       }
+
+      // محاولة بديلة: البحث بدون sharedWithMe (بعض الحسابات لا تدعمها)
+      debugPrint('⚠️ [GDrive] Trying fallback search...');
+      final fallback = await _driveApi!.files.list(
+        q: "name = '$_syncFileName' and trashed = false",
+        $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
+        orderBy: 'modifiedTime desc',
+      );
+
+      if (fallback.files != null && fallback.files!.isNotEmpty) {
+        // اختر الملف الذي لا أملكه (يعني مشترك معي)
+        final myEmail = userEmail?.toLowerCase();
+        for (final f in fallback.files!) {
+          final ownerEmail = f.owners?.first.emailAddress?.toLowerCase();
+          if (ownerEmail != myEmail) {
+            debugPrint('🔗 [GDrive] Fallback found: ${f.id} (owner: $ownerEmail)');
+            return f.id;
+          }
+        }
+      }
+
       return null;
     } catch (e) {
-      debugPrint('❌ getSyncFileModifiedTime error: $e');
+      debugPrint('❌ findSharedSyncFileId error: $e');
       return null;
     }
   }
 
-  /// تحميل ملف المزامنة (يدعم المشفر وغير المشفر)
-  static Future<Map<String, dynamic>?> downloadSyncFile() async {
+  /// 🆕 تنزيل ملف المزامنة بـ ID محدد (بدل getSyncFileId)
+  static Future<Map<String, dynamic>?> downloadSyncFileById(
+      String fileId) async {
     try {
       if (!await ensureSignedIn()) return null;
-
-      final fileId = await getSyncFileId();
-      if (fileId == null) return null;
 
       final media = await _driveApi!.files.get(
         fileId,
@@ -444,33 +461,86 @@ class GDriveService {
 
       final content = utf8.decode(chunks);
 
-      // 🆕 ملف مشفر؟
+      // ملف مشفر؟
       if (content.startsWith(_encryptedPrefix)) {
         debugPrint('🔐 Detected encrypted sync file — decrypting...');
         final base64Payload = content.substring(_encryptedPrefix.length);
         try {
           return await CryptoService.decryptData(base64Payload);
         } catch (e) {
-          debugPrint('❌ Decrypt failed (wrong password?): $e');
+          debugPrint('❌ Decrypt failed: $e');
           return null;
         }
       }
 
-      // ملف عادي (JSON)
       debugPrint('📄 Detected plain sync file');
       return jsonDecode(content) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('❌ downloadSyncFileById error: $e');
+      return null;
+    }
+  }
+
+  /// 🆕 حذف ملف المزامنة الخاص بي (عندما أصبح جهازاً ثانوياً)
+  static Future<void> deleteOwnSyncFileIfExists() async {
+    try {
+      if (!await ensureSignedIn()) return;
+
+      final myFileId = await getSyncFileId();
+      if (myFileId != null) {
+        await _driveApi!.files.delete(myFileId);
+        debugPrint('🗑️ [GDrive] Deleted own sync file (now secondary)');
+      }
+    } catch (e) {
+      debugPrint('⚠️ deleteOwnSyncFileIfExists error: $e');
+    }
+  }
+
+  static Future<DateTime?> getSyncFileModifiedTime() async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      final result = await _driveApi!.files.list(
+        q: "name = '$_syncFileName' and trashed = false",
+        $fields: 'files(id,modifiedTime)',
+        orderBy: 'modifiedTime desc',
+      );
+
+      if (result.files != null && result.files!.isNotEmpty) {
+        return result.files!.first.modifiedTime;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ getSyncFileModifiedTime error: $e');
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> downloadSyncFile() async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      // أولاً: حاول العثور على ملفي الخاص
+      var fileId = await getSyncFileId();
+
+      // إن لم أكن مالكاً، ابحث عن الملف المشترك
+      if (fileId == null) {
+        fileId = await findSharedSyncFileId();
+      }
+
+      if (fileId == null) return null;
+
+      return await downloadSyncFileById(fileId);
     } catch (e) {
       debugPrint('❌ downloadSyncFile error: $e');
       return null;
     }
   }
 
-  /// رفع ملف المزامنة (يشفر تلقائياً إذا كانت ميزة التشفير مفعلة)
   static Future<bool> uploadSyncFile(Map<String, dynamic> data) async {
     try {
       if (!await ensureSignedIn()) return false;
 
-      // 🆕 هل التشفير مفعل على هذا الجهاز؟
       final encryptEnabled = await CryptoService.isEncryptionEnabled();
 
       String content;
