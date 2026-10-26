@@ -6,14 +6,14 @@ import 'device_service.dart';
 
 /// نموذج المحاسب
 class Accountant {
-  final String id;              // UUID
-  final String name;            // اسم المحاسب
-  final String code;            // رمز المحاسب (S، AHM، أو فارغ)
-  final String? email;          // إيميل Google
-  final String? deviceId;       // جهاز المحاسب
-  final bool isPrimary;         // هل هو الجهاز الأساسي؟
-  final Map<String, bool> permissions; // 16 صلاحية
-  final String status;          // 'active' | 'revoked'
+  final String id;
+  final String name;
+  final String code;
+  final String? email;
+  final String? deviceId;
+  final bool isPrimary;
+  final Map<String, bool> permissions;
+  final String status; // 'active' | 'revoked'
   final String createdAt;
 
   Accountant({
@@ -28,7 +28,6 @@ class Accountant {
     required this.createdAt,
   }) : permissions = permissions ?? Map<String, bool>.from(defaultPermissions);
 
-  // الصلاحيات الافتراضية
   static const Map<String, bool> defaultPermissions = {
     'add_customers': true,
     'edit_customers': true,
@@ -48,7 +47,6 @@ class Accountant {
     'can_become_primary': false,
   };
 
-  // الأسماء العربية للصلاحيات
   static const Map<String, String> permissionLabelsAr = {
     'add_customers': 'إضافة عملاء',
     'edit_customers': 'تعديل بيانات العملاء',
@@ -88,7 +86,6 @@ class Accountant {
         perms[e.key.toString()] = e.value == true;
       }
     }
-    // أكمل الناقص بالافتراضي
     for (final e in defaultPermissions.entries) {
       perms.putIfAbsent(e.key, () => e.value);
     }
@@ -241,19 +238,21 @@ class AccountantsService {
       final accList = syncData['accountants'] as List?;
       final devList = syncData['devices'] as List?;
 
-      if (accList != null) {
+      if (accList != null && accList.isNotEmpty) {
         _accountants = accList
             .map((e) => Accountant.fromMap(e as Map<String, dynamic>))
             .toList();
+        debugPrint('✅ [Accountants] Loaded ${_accountants.length} from sync');
       }
-      if (devList != null) {
+
+      if (devList != null && devList.isNotEmpty) {
         _pendingDevices = devList
             .map((e) => PendingDevice.fromMap(e as Map<String, dynamic>))
             .toList();
+        debugPrint('✅ [Accountants] Loaded ${_pendingDevices.length} devices from sync');
       }
+
       await _saveToLocal();
-      debugPrint(
-          '✅ [Accountants] Loaded ${_accountants.length} accountants from sync');
     } catch (e) {
       debugPrint('❌ [Accountants] loadFromSync: $e');
     }
@@ -285,7 +284,6 @@ class AccountantsService {
     }
   }
 
-  /// المحاسب المرتبط بالجهاز الحالي
   static Future<Accountant?> getCurrentAccountant() async {
     final deviceId = await DeviceService.getDeviceId();
     try {
@@ -308,26 +306,23 @@ class AccountantsService {
   // فحص الصلاحيات
   // ═══════════════════════════════════════════════════════════
 
-  /// فحص صلاحية للمحاسب الحالي (على هذا الجهاز)
   static Future<bool> hasPermission(String permission) async {
     final current = await getCurrentAccountant();
     if (current == null) return false;
     return current.can(permission);
   }
 
-  /// فحص صلاحية لمحاسب معين
   static bool canAccountant(String accountantId, String permission) {
     final acc = getById(accountantId);
     return acc?.can(permission) ?? false;
   }
 
-  /// هل المحاسب الحالي يمكنه إدارة المحاسبين؟
   static Future<bool> canManageAccountants() async {
     return hasPermission('manage_accountants');
   }
 
   // ═══════════════════════════════════════════════════════════
-  // CRUD المحاسبين (للأساسي فقط)
+  // CRUD المحاسبين
   // ═══════════════════════════════════════════════════════════
 
   static Future<Map<String, dynamic>> addAccountant({
@@ -339,7 +334,6 @@ class AccountantsService {
     bool isPrimary = false,
   }) async {
     try {
-      // فحص الصلاحية
       if (!isPrimary && !await canManageAccountants()) {
         return {'success': false, 'message': 'ليس لديك صلاحية إضافة محاسبين'};
       }
@@ -348,7 +342,6 @@ class AccountantsService {
         return {'success': false, 'message': 'الاسم مطلوب'};
       }
 
-      // فحص عدم التكرار (اسم أو إيميل)
       final cleanName = name.trim();
       if (_accountants.any((a) => a.name == cleanName)) {
         return {'success': false, 'message': 'اسم المحاسب موجود مسبقاً'};
@@ -381,17 +374,23 @@ class AccountantsService {
     }
   }
 
+  /// 🆕 إضافة deviceId كمعامل اختياري
   static Future<Map<String, dynamic>> updateAccountant({
     required String id,
     String? name,
     String? code,
     String? email,
+    String? deviceId,
     Map<String, bool>? permissions,
     String? status,
   }) async {
     try {
       if (!await canManageAccountants()) {
-        return {'success': false, 'message': 'ليس لديك صلاحية'};
+        // نسمح بتحديث self (بدون صلاحية إدارة)
+        final current = await getCurrentAccountant();
+        if (current == null || current.id != id) {
+          return {'success': false, 'message': 'ليس لديك صلاحية'};
+        }
       }
 
       final idx = _accountants.indexWhere((a) => a.id == id);
@@ -404,6 +403,7 @@ class AccountantsService {
         name: name?.trim(),
         code: code?.trim(),
         email: email?.trim(),
+        deviceId: deviceId,
         permissions: permissions,
         status: status,
       );
@@ -447,7 +447,6 @@ class AccountantsService {
   // إدارة الأجهزة
   // ═══════════════════════════════════════════════════════════
 
-  /// جهاز جديد يطلب الانضمام
   static Future<void> requestDeviceJoin({
     required String deviceId,
     required String deviceName,
@@ -472,7 +471,6 @@ class AccountantsService {
   static List<PendingDevice> getAllDevices() =>
       List<PendingDevice>.unmodifiable(_pendingDevices);
 
-  /// قبول جهاز (وينشئ محاسب مرتبط به)
   static Future<Map<String, dynamic>> approveDevice({
     required String deviceId,
     required String accountantName,
@@ -491,7 +489,6 @@ class AccountantsService {
 
       final dev = _pendingDevices[devIdx];
 
-      // إنشاء المحاسب
       final result = await addAccountant(
         name: accountantName,
         code: code,
@@ -504,7 +501,6 @@ class AccountantsService {
 
       final newAcc = result['accountant'] as Accountant;
 
-      // تحديث حالة الجهاز
       _pendingDevices[devIdx] = PendingDevice(
         deviceId: dev.deviceId,
         deviceName: dev.deviceName,
@@ -550,7 +546,7 @@ class AccountantsService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // مسح
+  // مسح / إعادة تحميل
   // ═══════════════════════════════════════════════════════════
 
   static Future<void> clearAll() async {
@@ -559,7 +555,6 @@ class AccountantsService {
     await _saveToLocal();
   }
 
-  /// إعادة تحميل من التخزين المحلي (بعد تغيير مزامنة)
   static Future<void> reload() async {
     await _loadFromLocal();
   }
