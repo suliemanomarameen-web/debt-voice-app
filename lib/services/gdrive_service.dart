@@ -8,11 +8,28 @@ import 'package:path_provider/path_provider.dart';
 import 'backup_service.dart';
 import 'crypto_service.dart';
 
+/// 🆕 نتيجة تنزيل الملف الخام (قبل فك التشفير)
+class RawSyncFile {
+  /// هل الملف مشفر؟
+  final bool isEncrypted;
+
+  /// المحتوى المشفر (base64، بدون بادئة ENC:1:) — فقط إذا isEncrypted == true
+  final String? encryptedPayload;
+
+  /// البيانات العادية — فقط إذا isEncrypted == false
+  final Map<String, dynamic>? plainData;
+
+  RawSyncFile({
+    required this.isEncrypted,
+    this.encryptedPayload,
+    this.plainData,
+  });
+}
+
 class GDriveService {
   static const String _serverClientId =
       '889184576541-406c2kom3ka5491m9utf74rfjt7plovf.apps.googleusercontent.com';
 
-  // صلاحية كاملة — ضرورية للعمل مع حسابات Google متعددة
   static const List<String> _scopes = [
     'https://www.googleapis.com/auth/drive',
   ];
@@ -112,7 +129,7 @@ class GDriveService {
     return err == null;
   }
 
-  // ========== النسخ الاحتياطي القديم ==========
+  // ========== النسخ الاحتياطي ==========
   static Future<Map<String, dynamic>> uploadBackup() async {
     try {
       if (_driveApi == null) {
@@ -375,7 +392,7 @@ class GDriveService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // ملف المزامنة — مع دعم التشفير
+  // ملف المزامنة
   // ═══════════════════════════════════════════════════════════
 
   /// البحث عن ملف المزامنة الذي **أنشأه هذا الحساب** (المالك)
@@ -398,12 +415,12 @@ class GDriveService {
     }
   }
 
-  /// 🆕 البحث عن ملف المزامنة المشترك معي (لا أملكه لكن لدي صلاحية عليه)
+  /// البحث عن ملف المزامنة المشترك معي
   static Future<String?> findSharedSyncFileId() async {
     try {
       if (!await ensureSignedIn()) return null;
 
-      // البحث الشامل: أي ملف بهذا الاسم لست مالكه لكن يمكنني الوصول له
+      // البحث الأول: sharedWithMe
       final result = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false and sharedWithMe = true",
         $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
@@ -416,7 +433,7 @@ class GDriveService {
         return file.id;
       }
 
-      // محاولة بديلة: البحث بدون sharedWithMe (بعض الحسابات لا تدعمها)
+      // Fallback: البحث بدون sharedWithMe
       debugPrint('⚠️ [GDrive] Trying fallback search...');
       final fallback = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false",
@@ -425,7 +442,6 @@ class GDriveService {
       );
 
       if (fallback.files != null && fallback.files!.isNotEmpty) {
-        // اختر الملف الذي لا أملكه (يعني مشترك معي)
         final myEmail = userEmail?.toLowerCase();
         for (final f in fallback.files!) {
           final ownerEmail = f.owners?.first.emailAddress?.toLowerCase();
@@ -443,7 +459,53 @@ class GDriveService {
     }
   }
 
-  /// 🆕 تنزيل ملف المزامنة بـ ID محدد (بدل getSyncFileId)
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 تنزيل خام (بدون فك تشفير تلقائي) — يستخدم في الربط
+  // ═══════════════════════════════════════════════════════════
+
+  /// تنزيل الملف الخام للتحقق من التشفير قبل فكّه
+  /// - إذا كان مشفراً: يُرجع `isEncrypted: true` + `encryptedPayload`
+  /// - إذا كان عادياً: يُرجع `isEncrypted: false` + `plainData`
+  static Future<RawSyncFile?> downloadRawSyncFileById(
+      String fileId) async {
+    try {
+      if (!await ensureSignedIn()) return null;
+
+      final media = await _driveApi!.files.get(
+        fileId,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
+
+      final chunks = <int>[];
+      await for (final chunk in media.stream) {
+        chunks.addAll(chunk);
+      }
+
+      final content = utf8.decode(chunks);
+
+      if (content.startsWith(_encryptedPrefix)) {
+        debugPrint('🔐 [GDrive] Raw: encrypted file detected');
+        return RawSyncFile(
+          isEncrypted: true,
+          encryptedPayload: content.substring(_encryptedPrefix.length),
+        );
+      }
+
+      debugPrint('📄 [GDrive] Raw: plain file detected');
+      return RawSyncFile(
+        isEncrypted: false,
+        plainData: jsonDecode(content) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      debugPrint('❌ downloadRawSyncFileById error: $e');
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // تنزيل ملف المزامنة (مع فك تشفير تلقائي إذا كان مشفراً)
+  // ═══════════════════════════════════════════════════════════
+
   static Future<Map<String, dynamic>?> downloadSyncFileById(
       String fileId) async {
     try {
@@ -461,7 +523,6 @@ class GDriveService {
 
       final content = utf8.decode(chunks);
 
-      // ملف مشفر؟
       if (content.startsWith(_encryptedPrefix)) {
         debugPrint('🔐 Detected encrypted sync file — decrypting...');
         final base64Payload = content.substring(_encryptedPrefix.length);
@@ -481,7 +542,7 @@ class GDriveService {
     }
   }
 
-  /// 🆕 حذف ملف المزامنة الخاص بي (عندما أصبح جهازاً ثانوياً)
+  /// حذف ملف المزامنة الخاص بي
   static Future<void> deleteOwnSyncFileIfExists() async {
     try {
       if (!await ensureSignedIn()) return;
@@ -520,10 +581,8 @@ class GDriveService {
     try {
       if (!await ensureSignedIn()) return null;
 
-      // أولاً: حاول العثور على ملفي الخاص
       var fileId = await getSyncFileId();
 
-      // إن لم أكن مالكاً، ابحث عن الملف المشترك
       if (fileId == null) {
         fileId = await findSharedSyncFileId();
       }
