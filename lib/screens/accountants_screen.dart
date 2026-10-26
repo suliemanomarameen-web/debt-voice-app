@@ -3,6 +3,7 @@ import '../services/accountants_service.dart';
 import '../services/accountant_service.dart';
 import '../services/device_service.dart';
 import '../services/gdrive_service.dart';
+import 'link_to_primary_screen.dart'; // 🆕
 
 class AccountantsScreen extends StatefulWidget {
   const AccountantsScreen({super.key});
@@ -36,10 +37,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       _myDeviceId = await DeviceService.getDeviceId();
       _myDeviceName = await DeviceService.getDeviceName();
       _myAccountant = await AccountantsService.getCurrentAccountant();
-      
-      // 🆕 قراءة حالة الجهاز الأساسي مباشرة من خدمة الجهاز
       _isPrimary = await DeviceService.isPrimaryDevice();
-      
       _canManage = _isPrimary ||
           (_myAccountant?.can('manage_accountants') ?? false);
 
@@ -51,6 +49,30 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
 
     if (!mounted) return;
     setState(() => _loading = false);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 ربط بالأساسي
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _linkToPrimary() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const LinkToPrimaryScreen(),
+      ),
+    );
+
+    if (result == true && mounted) {
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم ربط الجهاز بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
   }
 
   // ========== تعيين نفسي كمحاسب ==========
@@ -105,7 +127,6 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
 
     if (result != true || nameCtrl.text.trim().isEmpty) return;
 
-    // 🆕 التحقق من الجهاز الأساسي عبر DeviceService
     final isPrimaryDevice = await DeviceService.isPrimaryDevice();
 
     final perms = <String, bool>{};
@@ -121,7 +142,6 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       permissions: perms,
     );
 
-    // 🆕 عرض رسالة خطأ إن فشل الحفظ
     if (res['success'] != true) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -133,7 +153,6 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       return;
     }
 
-    // مزامنة الاسم مع الخدمة القديمة (للسجلات)
     await AccountantService.setAccountantName(nameCtrl.text.trim());
 
     _load();
@@ -244,10 +263,15 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
 
                         final email = emailCtrl.text.trim();
                         if (email.isNotEmpty && _isPrimary) {
-                          await GDriveService.shareSyncFileWithEmail(
+                          final shareRes = await GDriveService
+                              .shareSyncFileWithEmail(
                             email: email,
                             role: 'writer',
                           );
+                          if (shareRes['success'] != true) {
+                            debugPrint(
+                                '⚠️ Share failed: ${shareRes['message']}');
+                          }
                         }
 
                         if (ctx.mounted) Navigator.pop(ctx, true);
@@ -331,7 +355,6 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       ? null
                       : emailCtrl.text.trim(),
                 );
-                // مزامنة الاسم إن كان للجهاز الحالي
                 if (acc.deviceId == _myDeviceId &&
                     nameCtrl.text.trim().isNotEmpty) {
                   await AccountantService.setAccountantName(
@@ -621,6 +644,11 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
           title: const Text('المحاسبون والأجهزة'),
           actions: [
             IconButton(
+              icon: const Icon(Icons.link, color: Colors.teal),
+              tooltip: '🔗 ربط بالأساسي',
+              onPressed: _linkToPrimary,
+            ),
+            IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: _load,
             ),
@@ -757,16 +785,51 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                 ),
                 child: const Text(
                   '⚠️ لم يتم تعيينك كمحاسب على هذا الجهاز بعد.\n'
-                  'اضغط الزر أدناه لتعيين نفسك، أو انتظر موافقة الأساسي.',
+                  'اختر إحدى الطريقتين أدناه:',
                   style: TextStyle(fontSize: 11),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+
+              // 🆕 زر "ربط بالأساسي" — الخيار الأول (إذا كان لديك أساسي)
               FilledButton.icon(
+                onPressed: _linkToPrimary,
+                icon: const Icon(Icons.link),
+                label: const Text('🔗 ربط بالأساسي'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  backgroundColor: Colors.teal,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Divider(color: Colors.grey.shade400),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      'أو',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Divider(color: Colors.grey.shade400),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // الخيار الثاني: تعيين نفسي (إذا كنت الأساسي)
+              OutlinedButton.icon(
                 onPressed: _registerSelf,
                 icon: const Icon(Icons.person_add),
-                label: const Text('تعيين نفسي كمحاسب'),
-                style: FilledButton.styleFrom(
+                label: const Text('تعيين نفسي كمحاسب أساسي'),
+                style: OutlinedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 44),
                 ),
               ),
