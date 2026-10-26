@@ -19,6 +19,7 @@ import '../services/crypto_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
 import '../services/keywords_service.dart';
+import '../services/link_code_service.dart';
 import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
 import '../services/permission_service.dart';
@@ -62,7 +63,6 @@ class _SettingsTabState extends State<SettingsTab> {
   int _codeDigits = 4;
   String _codeMode = 'sequential';
 
-  // 🆕 رمز المحاسب
   bool _includeAccountant = false;
   String _accountantPosition = 'suffix';
   String _accountantSeparator = '';
@@ -173,7 +173,6 @@ class _SettingsTabState extends State<SettingsTab> {
     final digits = await CodeService.getDigits();
     final mode = await CodeService.getMode();
 
-    // 🆕 رمز المحاسب
     final includeAcc = SettingsService.getBool(
       AppSettings.codeIncludeAccountant,
       defaultValue: false,
@@ -699,7 +698,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== اسم المحاسب ==============
   Future<void> _editAccountantName() async {
     final oldName = _accountantName;
     final ctrl = TextEditingController(text: _accountantName ?? '');
@@ -777,10 +775,8 @@ class _SettingsTabState extends State<SettingsTab> {
       return;
     }
 
-    // 1. حفظ في الخدمة القديمة
     await AccountantService.setAccountantName(result);
 
-    // 🆕 2. مزامنة الاسم مع خدمة المحاسبين الجديدة
     try {
       final currentAcc = await AccountantsService.getCurrentAccountant();
       if (currentAcc != null && currentAcc.name != result) {
@@ -811,7 +807,110 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== النسخ اليدوي ==============
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 توليد رمز الربط وعرضه
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _showLinkCodeDialog() async {
+    String? code;
+    String? error;
+
+    try {
+      code = await LinkCodeService.generate();
+    } catch (e) {
+      error = e.toString().replaceFirst('Exception: ', '');
+    }
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.link, color: Colors.teal),
+              SizedBox(width: 8),
+              Text('رمز الربط'),
+            ],
+          ),
+          content: error != null
+              ? Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border:
+                        Border.all(color: Colors.orange.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    error,
+                    style: const TextStyle(fontSize: 12, height: 1.5),
+                  ),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border:
+                            Border.all(color: Colors.teal.withOpacity(0.4)),
+                      ),
+                      child: SelectableText(
+                        code ?? '',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                          color: Colors.teal,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '📌 شارك هذا الرمز مع المحاسب الثاني عبر قناة آمنة (واتساب).\n\n'
+                      '⚠️ لا تشاركه مع أي شخص غير موثوق — فهو يسمح بالوصول لبياناتك المشفرة.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.6,
+                        color: Colors.grey,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إغلاق'),
+            ),
+            if (code != null)
+              FilledButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: code!));
+                  if (!ctx.mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ تم نسخ الرمز'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('نسخ'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _createBackup() async {
     setState(() => _backupBusy = true);
     final result = await BackupService.createBackup();
@@ -1061,7 +1160,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ============== النسخ التلقائي المحلي ==============
   Future<void> _toggleAutoBackup(bool v) async {
     await AutoBackupService.setEnabled(v);
     await LoggerService.logSettingChanged(
@@ -1129,7 +1227,6 @@ class _SettingsTabState extends State<SettingsTab> {
         f;
   }
 
-  // ============== النسخ السحابي ==============
   Future<void> _toggleCloudBackup(bool v) async {
     if (v && !GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
@@ -1266,7 +1363,6 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _backupBusy = false);
   }
 
-  // ============== إعدادات الرموز ==============
   Future<void> _toggleCodeEnabled(bool v) async {
     await CodeService.setEnabled(v);
     await LoggerService.logSettingChanged(
@@ -1539,7 +1635,6 @@ class _SettingsTabState extends State<SettingsTab> {
     return '$n';
   }
 
-  // ============== إعدادات PDF ==============
   Future<void> _togglePdfSetting(String key, bool v) async {
     final sp = await SharedPreferences.getInstance();
     await sp.setBool(key, v);
@@ -1561,7 +1656,7 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ========== المحاسب (القديم) ==========
+          // ========== المحاسب ==========
           const _SectionHeader('المحاسب'),
           ListTile(
             leading: Icon(
@@ -1928,36 +2023,53 @@ class _SettingsTabState extends State<SettingsTab> {
             future: CryptoService.hasMasterPassword(),
             builder: (_, snap) {
               final hasPassword = snap.data ?? false;
-              return ListTile(
-                leading: Icon(
-                  hasPassword ? Icons.lock : Icons.lock_open,
-                  color: hasPassword ? Colors.green : Colors.orange,
-                ),
-                title: Text(
-                  hasPassword ? 'التشفير مفعّل' : 'التشفير معطّل',
-                ),
-                subtitle: Text(
-                  hasPassword
-                      ? 'ملف المزامنة مشفّر على Drive — اضغط للتغيير'
-                      : 'اضغط لتفعيل حماية ملف المزامنة بكلمة مرور',
-                  style: TextStyle(
-                    color: hasPassword ? Colors.green : Colors.orange,
-                    fontSize: 11,
-                  ),
-                ),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          MasterPasswordScreen(isChange: hasPassword),
+              return Column(
+                children: [
+                  ListTile(
+                    leading: Icon(
+                      hasPassword ? Icons.lock : Icons.lock_open,
+                      color: hasPassword ? Colors.green : Colors.orange,
                     ),
-                  );
-                  if (result == true && mounted) {
-                    setState(() {});
-                  }
-                },
+                    title: Text(
+                      hasPassword ? 'التشفير مفعّل' : 'التشفير معطّل',
+                    ),
+                    subtitle: Text(
+                      hasPassword
+                          ? 'ملف المزامنة مشفّر على Drive — اضغط للتغيير'
+                          : 'اضغط لتفعيل حماية ملف المزامنة بكلمة مرور',
+                      style: TextStyle(
+                        color: hasPassword ? Colors.green : Colors.orange,
+                        fontSize: 11,
+                      ),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              MasterPasswordScreen(isChange: hasPassword),
+                        ),
+                      );
+                      if (result == true && mounted) {
+                        setState(() {});
+                      }
+                    },
+                  ),
+                  // 🆕 زر توليد رمز الربط
+                  if (hasPassword)
+                    ListTile(
+                      leading: const Icon(Icons.link, color: Colors.teal),
+                      title: const Text('🔗 توليد رمز الربط'),
+                      subtitle: const Text(
+                        'شارك هذا الرمز مع المحاسب الثاني لربط جهازه',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      trailing:
+                          const Icon(Icons.arrow_forward_ios, size: 16),
+                      onTap: _showLinkCodeDialog,
+                    ),
+                ],
               );
             },
           ),
