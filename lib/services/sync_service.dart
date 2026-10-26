@@ -9,6 +9,7 @@ import 'logger_service.dart';
 import 'settings_service.dart';
 import 'accountants_service.dart';
 import 'device_service.dart';
+import 'code_service.dart'; // 🆕
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
@@ -615,9 +616,6 @@ class SyncService {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حل تعارض العميل — الأحدث يفوز في الحذف أيضاً
-  // ═══════════════════════════════════════════════════════════
   static Future<_ResolutionResult> _resolveCustomerConflict({
     required Map<String, dynamic> localRow,
     required Map<String, dynamic> cloudRow,
@@ -643,16 +641,13 @@ class SyncService {
       return _ResolutionResult('no_change');
     }
 
-    // 🆕 تعارض حذف: الأحدث يفوز
     if (localDeleted != cloudDeleted) {
       if (localDeleted && !cloudDeleted) {
-        // المحلي محذوف، السحابي نشط
         final localDelTime =
             DateTime.tryParse(localRow['deleted_at'] as String? ?? '') ??
                 localTime;
 
         if (cloudTime.isAfter(localDelTime)) {
-          // السحابة أحدث → استعادة محلياً (حدث شيء بعد الحذف)
           await db.restoreCustomer(localId, by: 'المزامنة');
           await _logDeletionConflict(
             item: 'حساب "$name"',
@@ -663,19 +658,16 @@ class SyncService {
           );
           return _ResolutionResult('restored');
         } else {
-          // الحذف المحلي أحدث أو متساوٍ → احتفظ بالحذف (سيُرفع للسحابة)
           return _ResolutionResult('no_change');
         }
       }
 
       if (!localDeleted && cloudDeleted) {
-        // المحلي نشط، السحابي محذوف
         final cloudDelTime =
             DateTime.tryParse(cloudRow['deleted_at'] as String? ?? '') ??
                 cloudTime;
 
         if (cloudDelTime.isAfter(localTime)) {
-          // السحابة أحدث → احذف محلياً
           await db.softDeleteCustomer(localId, by: 'المزامنة');
           await _logDeletionConflict(
             item: 'حساب "$name"',
@@ -686,19 +678,15 @@ class SyncService {
           );
           return _ResolutionResult('conflict');
         } else {
-          // المحلي أحدث → احتفظ بالنشاط (سيُرفع للسحابة)
           return _ResolutionResult('no_change');
         }
       }
     }
 
-    // تعارض تعديل
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
 
-      if (localIsNewer) {
-        return _ResolutionResult('no_change');
-      }
+      if (localIsNewer) return _ResolutionResult('no_change');
 
       final changedFields = <String>[];
       final updateData = <String, dynamic>{};
@@ -744,9 +732,6 @@ class SyncService {
     return _ResolutionResult('no_change');
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حل تعارض المعاملة — الأحدث يفوز في الحذف أيضاً
-  // ═══════════════════════════════════════════════════════════
   static Future<_ResolutionResult> _resolveTransactionConflict({
     required Map<String, dynamic> localRow,
     required Map<String, dynamic> cloudRow,
@@ -774,7 +759,6 @@ class SyncService {
       return _ResolutionResult('no_change');
     }
 
-    // 🆕 تعارض حذف: الأحدث يفوز
     if (localDeleted != cloudDeleted) {
       if (localDeleted && !cloudDeleted) {
         final localDelTime =
@@ -819,7 +803,6 @@ class SyncService {
       }
     }
 
-    // تعارض تعديل
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
 
@@ -1045,9 +1028,34 @@ class SyncService {
           ? await db.allTombstonesRaw()
           : <Map<String, dynamic>>[];
 
+      // 🆕 استخراج الإعدادات المشتركة
+      final Map<String, dynamic> sharedSettingsMap = {};
+      for (final key in AppSettings.sharedSettings) {
+        final def = AppSettings.defaults[key];
+        if (def is bool) {
+          sharedSettingsMap[key] = SettingsService.getBool(key);
+        } else if (def is int) {
+          sharedSettingsMap[key] = SettingsService.getInt(key);
+        } else if (def is double) {
+          sharedSettingsMap[key] = SettingsService.getDouble(key);
+        } else if (def is String) {
+          sharedSettingsMap[key] = SettingsService.getString(key);
+        }
+      }
+
+      // 🆕 استخراج إعدادات رموز العمليات
+      final codeSettingsMap = {
+        'debt_prefix': await CodeService.getDebtPrefix(),
+        'payment_prefix': await CodeService.getPaymentPrefix(),
+        'return_prefix': await CodeService.getReturnPrefix(),
+        'digits': await CodeService.getDigits(),
+        'mode': await CodeService.getMode(),
+        'enabled': await CodeService.isEnabled(),
+      };
+
       final data = {
         'app': 'debt_voice_app',
-        'version': 6,
+        'version': 7, // ⬆️ 6 → 7
         'created_at': DateTime.now().toIso8601String(),
         'primary_device_id': primaryDeviceId,
         'customers': customers,
@@ -1055,6 +1063,8 @@ class SyncService {
         'used_codes': usedCodes,
         'log_events': logEvents,
         'tombstones': tombstones,
+        'settings': sharedSettingsMap, // 🆕
+        'code_settings': codeSettingsMap, // 🆕
         ...accountantsData,
       };
 
