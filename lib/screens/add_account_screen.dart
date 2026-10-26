@@ -55,7 +55,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     super.dispose();
   }
 
-  // ============== اختيار صورة ==============
   Future<void> _pickImage(ImageSource source) async {
     try {
       final picker = ImagePicker();
@@ -134,7 +133,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     );
   }
 
-  // ============== حفظ ==============
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
@@ -143,7 +141,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final accountant = await AccountantService.getAccountantName();
     final now = DateTime.now().toIso8601String();
 
-    // 🆕 تحويل الحد الأقصى
     double? maxBalance;
     final maxText = _maxBalance.text.trim();
     if (maxText.isNotEmpty) {
@@ -151,9 +148,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     }
 
     if (isEdit) {
-      // ═══════════════════════════════════════════════════════
-      // تعديل — تتبع التغييرات
-      // ═══════════════════════════════════════════════════════
       final oldCustomer = widget.existing!;
       final newName = _name.text.trim();
       final newPhone =
@@ -161,7 +155,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       final newNote =
           _note.text.trim().isEmpty ? null : _note.text.trim();
 
-      // 🆕 اكتشاف الحقول المتغيرة
       final changedFields = <String>[];
       if (newName != oldCustomer.name) changedFields.add('name');
       if (newPhone != oldCustomer.phone) changedFields.add('phone');
@@ -194,7 +187,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
       await db.updateCustomer(updated, by: accountant);
 
-      // 🆕 تسجيل التعديل في السجل
       if (changedFields.isNotEmpty &&
           SettingsService.getBool(
             AppSettings.trackEdits,
@@ -217,9 +209,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         );
       }
     } else {
-      // ═══════════════════════════════════════════════════════
-      // إنشاء جديد
-      // ═══════════════════════════════════════════════════════
       final newCustomer = Customer(
         name: _name.text.trim(),
         phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
@@ -236,7 +225,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
       final id = await db.insertCustomer(newCustomer);
 
-      // 🆕 تسجيل الحدث
       await LoggerService.logCustomerAdded(
         newCustomer.name,
         accountant: accountant,
@@ -248,13 +236,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     if (mounted) Navigator.pop(context, true);
   }
 
-  // ============== حذف ==============
   Future<void> _delete() async {
     if (!isEdit) return;
 
-    // ═══════════════════════════════════════════════════════════
-    // 1) فحص الرصيد
-    // ═══════════════════════════════════════════════════════════
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(widget.existing!.id!);
 
@@ -318,9 +302,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       return;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // 2) فحص وجود معاملات
-    // ═══════════════════════════════════════════════════════════
     final txCount =
         await db.countCustomerTransactions(widget.existing!.id!);
 
@@ -358,9 +339,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       return;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // 3) تأكيد الحذف
-    // ═══════════════════════════════════════════════════════════
     final useSoft = SettingsService.getBool(
       AppSettings.softDeleteEnabled,
       defaultValue: true,
@@ -393,9 +371,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     );
     if (ok != true) return;
 
-    // ═══════════════════════════════════════════════════════════
-    // 4) تنفيذ الحذف
-    // ═══════════════════════════════════════════════════════════
     final accountant = await AccountantService.getAccountantName();
 
     if (useSoft) {
@@ -404,8 +379,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       await db.hardDeleteCustomer(widget.existing!.id!);
     }
 
+    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       widget.existing!.name,
+      phone: widget.existing!.phone,
+      accountType: widget.existing!.accountType,
+      isHard: !useSoft,
       accountant: accountant,
     );
 
@@ -449,7 +428,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // ============== صورة العميل ==============
               Center(
                 child: Stack(
                   children: [
@@ -517,10 +495,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // ============== الاسم ==============
               TextFormField(
                 controller: _name,
                 decoration: const InputDecoration(
@@ -533,8 +508,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                     : null,
               ),
               const SizedBox(height: 12),
-
-              // ============== النوع ==============
               DropdownButtonFormField<String>(
                 value: _type,
                 decoration: const InputDecoration(
@@ -549,8 +522,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 onChanged: (v) => setState(() => _type = v!),
               ),
               const SizedBox(height: 12),
-
-              // ============== التصنيف ==============
               DropdownButtonFormField<String>(
                 value: _category,
                 decoration: const InputDecoration(
@@ -581,8 +552,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 onChanged: (v) => setState(() => _category = v!),
               ),
               const SizedBox(height: 12),
-
-              // ============== الهاتف ==============
               TextFormField(
                 controller: _phone,
                 keyboardType: TextInputType.phone,
@@ -593,8 +562,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // ============== الحد الأقصى للرصيد ==============
               TextFormField(
                 controller: _maxBalance,
                 keyboardType: TextInputType.number,
@@ -640,8 +607,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // ============== ملاحظة ==============
               TextFormField(
                 controller: _note,
                 maxLines: 3,
@@ -652,8 +617,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // ============== حفظ ==============
               FilledButton.icon(
                 onPressed: _busy ? null : _save,
                 icon: _busy
