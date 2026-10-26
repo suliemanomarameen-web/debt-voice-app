@@ -68,9 +68,6 @@ class LoggerService {
     return s.isEmpty ? null : s;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حفظ حدث (مع needsAck)
-  // ═══════════════════════════════════════════════════════════
   static Future<int> log({
     required String action,
     required String description,
@@ -129,9 +126,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // دوال مختصرة
-  // ═══════════════════════════════════════════════════════════
   static Future<void> info(
     String action,
     String description, {
@@ -220,9 +214,6 @@ class LoggerService {
         needsAck: needsAck,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // قراءة
-  // ═══════════════════════════════════════════════════════════
   static Future<List<LogEvent>> getLogs({
     LogLevel? level,
     LogCategory? category,
@@ -332,7 +323,6 @@ class LoggerService {
     }
   }
 
-  // 🆕 عدد الإشعارات التي تحتاج تأكيدًا (بحسب needsAck)
   static Future<int> getPendingAckCount() async {
     try {
       return await DatabaseHelper.instance.getPendingAckCount();
@@ -342,7 +332,6 @@ class LoggerService {
     }
   }
 
-  // 🆕 كل الإشعارات المعلقة
   static Future<List<LogEvent>> getAllPendingAck({int limit = 100}) async {
     try {
       final rows =
@@ -374,9 +363,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // الاعتراف
-  // ═══════════════════════════════════════════════════════════
   static Future<bool> acknowledge(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -411,9 +397,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إحصائيات
-  // ═══════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>> getStats() async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -468,9 +451,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حذف
-  // ═══════════════════════════════════════════════════════════
   static Future<bool> deleteLog(int id) async {
     try {
       final db = await DatabaseHelper.instance.database;
@@ -506,9 +486,6 @@ class LoggerService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تنظيف تلقائي
-  // ═══════════════════════════════════════════════════════════
   static Future<void> _autoCleanup() async {
     try {
       final days = await getRetentionDays();
@@ -551,10 +528,6 @@ class LoggerService {
     await _notifyPendingCount();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // دوال مختصرة للأحداث
-  // ═══════════════════════════════════════════════════════════
-
   static Future<void> logTransactionAdded({
     required String typeLabel,
     required String customerName,
@@ -589,19 +562,84 @@ class LoggerService {
     );
   }
 
+  // 🆕 دالة الحذف مع التفاصيل الكاملة
   static Future<void> logTransactionDeleted({
     required String customerName,
     required double amount,
     String? code,
+    String? items,
+    String? currency,
+    String? type,
+    bool isHard = false,
     String? accountant,
-  }) =>
-      warning(
-        'حذف عملية',
-        'تم حذف عملية بمبلغ ${amount.toStringAsFixed(0)} للعميل "$customerName"${code != null ? " (رمز: $code)" : ""}',
-        category: LogCategory.transaction,
-        accountant: accountant,
-        needsAck: false,
-      );
+  }) {
+    final buf = StringBuffer();
+    buf.write('تم حذف عملية');
+    if (type != null && type.isNotEmpty) {
+      final typeLabel = {
+            'debt': 'دين',
+            'payment': 'سداد',
+            'return': 'مرتجع',
+          }[type] ??
+          type;
+      buf.write(' ($typeLabel)');
+    }
+    buf.write(' بمبلغ ${amount.toStringAsFixed(0)} ${currency ?? "YER"}');
+    buf.write(' للعميل "$customerName"');
+    if (code != null && code.isNotEmpty) buf.write('\nالرمز: $code');
+    if (items != null && items.isNotEmpty) {
+      final clean = items.replaceFirst(RegExp(r'^مرتجع:?\s*'), '').trim();
+      if (clean.isNotEmpty) buf.write('\nالأصناف: $clean');
+    }
+    if (isHard) {
+      buf.write('\n🗑️ الحذف نهائي — لا يمكن الاستعادة');
+    } else {
+      buf.write('\n♻️ يمكن استعادتها من سلة المحذوفات');
+    }
+
+    return warning(
+      isHard ? '🗑️ حذف نهائي لعملية' : '🗑️ حذف عملية إلى السلة',
+      buf.toString(),
+      category: LogCategory.transaction,
+      accountant: accountant,
+      needsAck: false,
+    );
+  }
+
+  // 🆕 دالة حذف العميل مع التفاصيل الكاملة
+  static Future<void> logCustomerDeleted(
+    String name, {
+    String? phone,
+    String? accountType,
+    bool isHard = false,
+    String? accountant,
+  }) {
+    final buf = StringBuffer();
+    buf.write('تم حذف الحساب "$name"');
+    if (phone != null && phone.isNotEmpty) buf.write('\nالهاتف: $phone');
+    if (accountType != null && accountType.isNotEmpty) {
+      final typeLabel = {
+            'customer': 'عميل',
+            'supplier': 'مورد',
+            'other': 'أخرى',
+          }[accountType] ??
+          accountType;
+      buf.write('\nالنوع: $typeLabel');
+    }
+    if (isHard) {
+      buf.write('\n🗑️ الحذف نهائي — لا يمكن الاستعادة');
+    } else {
+      buf.write('\n♻️ يمكن استعادته من سلة المحذوفات');
+    }
+
+    return warning(
+      isHard ? '🗑️ حذف نهائي لعميل' : '🗑️ حذف عميل إلى السلة',
+      buf.toString(),
+      category: LogCategory.customer,
+      accountant: accountant,
+      needsAck: false,
+    );
+  }
 
   static Future<void> logCustomerAdded(String name, {String? accountant}) =>
       success(
@@ -609,15 +647,6 @@ class LoggerService {
         'تم إنشاء حساب جديد: "$name"',
         category: LogCategory.customer,
         accountant: accountant,
-      );
-
-  static Future<void> logCustomerDeleted(String name, {String? accountant}) =>
-      warning(
-        'حذف عميل',
-        'تم حذف الحساب: "$name"',
-        category: LogCategory.customer,
-        accountant: accountant,
-        needsAck: false,
       );
 
   static Future<void> logCustomerStatusChanged({
@@ -630,10 +659,6 @@ class LoggerService {
               category: LogCategory.customer, accountant: accountant)
           : warning('إيقاف حساب', 'تم إيقاف حساب "$name"',
               category: LogCategory.customer, accountant: accountant);
-
-  // ═══════════════════════════════════════════════════════════
-  // (Legacy) دوال التوافق
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> logCustomerLimitExceeded({
     required String name,
@@ -655,10 +680,6 @@ class LoggerService {
         category: LogCategory.sync,
         accountant: accountant,
       );
-
-  // ═══════════════════════════════════════════════════════════
-  // دوال الإشعارات المهمة (needsAck = true)
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> logDebtOnInactiveAccount({
     required String customerName,
@@ -731,9 +752,6 @@ class LoggerService {
         needsAck: true,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // المزامنة
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
@@ -768,9 +786,6 @@ class LoggerService {
         accountant: accountant,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // النسخ الاحتياطي
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logBackupCreated({
     required int customersCount,
     required int transactionsCount,
@@ -797,9 +812,6 @@ class LoggerService {
         accountant: accountant,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // الصوت
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logVoiceSuccess({
     required String text,
     String? audioPath,
@@ -866,9 +878,6 @@ class LoggerService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // الإعدادات
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logSettingChanged({
     required String settingName,
     required String oldValue,
@@ -882,9 +891,6 @@ class LoggerService {
         accountant: accountant,
       );
 
-  // ═══════════════════════════════════════════════════════════
-  // الأمان
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logSecurityEvent({
     required String action,
     required String description,
@@ -893,9 +899,6 @@ class LoggerService {
       info(action, description,
           category: LogCategory.security, accountant: accountant);
 
-  // ═══════════════════════════════════════════════════════════
-  // الرموز
-  // ═══════════════════════════════════════════════════════════
   static Future<void> logCodeChanged({
     required String type,
     required String oldPrefix,
