@@ -45,7 +45,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
     final bal = await db.customerBalance(_customer.id!);
     final allTx = await db.customerTransactions(_customer.id!);
 
-    // 🆕 إصلاح الأداء: جلب عميل واحد فقط
     final updated = await db.getCustomer(_customer.id!);
     if (updated != null) {
       _customer = updated;
@@ -366,7 +365,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                 ),
                 const SizedBox(height: 12),
-                // 🆕 إظهار الحقل لجميع العمليات
                 TextField(
                   controller: itemsCtrl,
                   enabled: !isSaving,
@@ -524,7 +522,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _editTransaction(Transaction t) async {
-    // 🆕 إعداد واحد فقط للتحكم بكل التعديلات
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -596,7 +593,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 decoration: const InputDecoration(labelText: 'المبلغ'),
               ),
               const SizedBox(height: 12),
-              // 🆕 إظهار الحقل دائماً عند التعديل
               TextField(
                 controller: itemsCtrl,
                 decoration: InputDecoration(
@@ -617,7 +613,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                // 🆕 إعداد واحد يتحكم بالمبلغ والأصناف والنوع
                 final amt = double.tryParse(amountCtrl.text);
                 if (amt == null || amt <= 0) return;
 
@@ -693,7 +688,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _deleteTransaction(Transaction t) async {
-    // 🆕 فحص منع حذف العمليات
     if (SettingsService.getBool(
       AppSettings.blockTransactionDeletion,
       defaultValue: false,
@@ -759,10 +753,15 @@ class _CustomerScreenState extends State<CustomerScreen> {
         await db.hardDeleteTransaction(t.id!);
       }
 
+      // 🆕 تمرير التفاصيل الكاملة
       await LoggerService.logTransactionDeleted(
         customerName: _customer.name,
         amount: t.amount,
         code: t.code,
+        items: t.items,
+        currency: t.currency,
+        type: t.type,
+        isHard: !useSoft,
         accountant: accountant,
       );
 
@@ -783,7 +782,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
   void _showTransactionMenu(Transaction t) {
     showModalBottomSheet(
       context: context,
-      // 🆕 إصلاح: جعل النافذة قابلة للتمرير
       isScrollControlled: true,
       builder: (_) => Directionality(
         textDirection: TextDirection.rtl,
@@ -2062,7 +2060,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   }
 
   Future<void> _showDeleteCustomer() async {
-    // 🆕 فحص منع حذف الحسابات
     if (SettingsService.getBool(
       AppSettings.blockCustomerDeletion,
       defaultValue: false,
@@ -2244,8 +2241,12 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       await db.hardDeleteCustomer(_customer.id!);
     }
 
+    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       _customer.name,
+      phone: _customer.phone,
+      accountType: _customer.accountType,
+      isHard: !useSoft,
       accountant: accountant,
     );
 
