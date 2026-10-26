@@ -13,11 +13,7 @@ import '../screens/customer_screen.dart';
 import '../screens/voice_screen.dart';
 import '../widgets/quick_transaction_dialog.dart';
 
-enum CustomerStatusFilter {
-  active,
-  inactive,
-  all,
-}
+enum CustomerStatusFilter { active, inactive, all }
 
 class CustomersTab extends StatefulWidget {
   const CustomersTab({super.key});
@@ -80,11 +76,7 @@ class _CustomersTabState extends State<CustomersTab> {
     _refresh();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حذف عميل — مع الفحوصات الكاملة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _deleteCustomer(Customer c) async {
-    // 1) فحص الرصيد
     final balance = await db.customerBalance(c.id!);
 
     if (SettingsService.getBool(
@@ -147,7 +139,6 @@ class _CustomersTabState extends State<CustomersTab> {
       return;
     }
 
-    // 2) فحص وجود معاملات
     final txCount = await db.countCustomerTransactions(c.id!);
 
     if (SettingsService.getBool(
@@ -184,7 +175,6 @@ class _CustomersTabState extends State<CustomersTab> {
       return;
     }
 
-    // 3) تأكيد الحذف
     final useSoft = SettingsService.getBool(
       AppSettings.softDeleteEnabled,
       defaultValue: true,
@@ -224,7 +214,6 @@ class _CustomersTabState extends State<CustomersTab> {
     );
     if (ok != true) return;
 
-    // 4) تنفيذ الحذف + تسجيل من حذف
     final accountant = await AccountantService.getAccountantName();
 
     if (useSoft) {
@@ -233,8 +222,12 @@ class _CustomersTabState extends State<CustomersTab> {
       await db.hardDeleteCustomer(c.id!);
     }
 
+    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       c.name,
+      phone: c.phone,
+      accountType: c.accountType,
+      isHard: !useSoft,
       accountant: accountant,
     );
 
@@ -295,7 +288,6 @@ class _CustomersTabState extends State<CustomersTab> {
 
     if (confirmed != true) return;
 
-    // 🆕 من عدّل
     final accountant = await AccountantService.getAccountantName();
 
     await db.setCustomerActive(c.id!, !c.isActive, by: accountant);
