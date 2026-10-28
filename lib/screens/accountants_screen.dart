@@ -3,7 +3,8 @@ import '../services/accountants_service.dart';
 import '../services/accountant_service.dart';
 import '../services/device_service.dart';
 import '../services/gdrive_service.dart';
-import 'link_to_primary_screen.dart'; // 🆕
+import '../services/sync_service.dart';
+import 'link_to_primary_screen.dart';
 
 class AccountantsScreen extends StatefulWidget {
   const AccountantsScreen({super.key});
@@ -52,7 +53,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 ربط بالأساسي
+  // ربط بالأساسي
   // ═══════════════════════════════════════════════════════════
   Future<void> _linkToPrimary() async {
     final result = await Navigator.push(
@@ -158,7 +159,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
     _load();
   }
 
-  // ========== إضافة محاسب ==========
+  // ========== إضافة محاسب (مع مزامنة ومشاركة تلقائية) ==========
   Future<void> _showAddDialog() async {
     final nameCtrl = TextEditingController();
     final codeCtrl = TextEditingController();
@@ -212,7 +213,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       labelText: 'الإيميل (اختياري)',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.email),
-                      helperText: 'للمشاركة عبر Google Drive',
+                      helperText: 'سيُزامن ويُشارك تلقائياً',
                     ),
                   ),
                   if (error != null)
@@ -220,8 +221,8 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         error!,
-                        style:
-                            const TextStyle(color: Colors.red, fontSize: 12),
+                        style: const TextStyle(
+                            color: Colors.red, fontSize: 12),
                       ),
                     ),
                 ],
@@ -229,7 +230,8 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: saving ? null : () => Navigator.pop(ctx, false),
+                onPressed:
+                    saving ? null : () => Navigator.pop(ctx, false),
                 child: const Text('إلغاء'),
               ),
               FilledButton(
@@ -245,7 +247,9 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                           error = null;
                         });
 
-                        final res = await AccountantsService.addAccountant(
+                        // 1) إضافة محلية
+                        final res =
+                            await AccountantsService.addAccountant(
                           name: nameCtrl.text,
                           code: codeCtrl.text,
                           email: emailCtrl.text.trim().isEmpty
@@ -254,27 +258,46 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                         );
 
                         if (res['success'] != true) {
+                          if (!ctx.mounted) return;
                           setSt(() {
                             saving = false;
-                            error = res['message'] as String? ?? 'فشل';
+                            error =
+                                res['message'] as String? ?? 'فشل';
                           });
                           return;
                         }
 
-                        final email = emailCtrl.text.trim();
-                        if (email.isNotEmpty && _isPrimary) {
-                          final shareRes = await GDriveService
-                              .shareSyncFileWithEmail(
-                            email: email,
-                            role: 'writer',
-                          );
-                          if (shareRes['success'] != true) {
-                            debugPrint(
-                                '⚠️ Share failed: ${shareRes['message']}');
+                        // 2) مزامنة تلقائية (رفع إلى Drive)
+                        if (_isPrimary) {
+                          try {
+                            await SyncService.manualSync();
+                            await Future.delayed(
+                                const Duration(seconds: 1));
+                          } catch (e) {
+                            debugPrint('⚠️ Auto-sync error: $e');
                           }
                         }
 
-                        if (ctx.mounted) Navigator.pop(ctx, true);
+                        // 3) مشاركة الإيميل بعد المزامنة
+                        final email = emailCtrl.text.trim();
+                        if (email.isNotEmpty && _isPrimary) {
+                          try {
+                            final shareRes = await GDriveService
+                                .shareSyncFileWithEmail(
+                              email: email,
+                              role: 'writer',
+                            );
+                            if (shareRes['success'] != true) {
+                              debugPrint(
+                                  '⚠️ Share failed: ${shareRes['message']}');
+                            }
+                          } catch (e) {
+                            debugPrint('⚠️ Share error: $e');
+                          }
+                        }
+
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx, true);
                       },
                 child: saving
                     ? const SizedBox(
@@ -296,7 +319,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
     if (result == true) _load();
   }
 
-  // ========== تعديل محاسب ==========
+  // ========== تعديل محاسب (مع مزامنة ومشاركة عند تغيير الإيميل) ==========
   Future<void> _showEditDialog(Accountant acc) async {
     final nameCtrl = TextEditingController(text: acc.name);
     final codeCtrl = TextEditingController(text: acc.code);
@@ -347,6 +370,8 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
             ),
             FilledButton(
               onPressed: () async {
+                final oldEmail = acc.email;
+
                 await AccountantsService.updateAccountant(
                   id: acc.id,
                   name: nameCtrl.text,
@@ -355,11 +380,30 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       ? null
                       : emailCtrl.text.trim(),
                 );
+
                 if (acc.deviceId == _myDeviceId &&
                     nameCtrl.text.trim().isNotEmpty) {
                   await AccountantService.setAccountantName(
                       nameCtrl.text.trim());
                 }
+
+                // مزامنة + مشاركة عند تغيير الإيميل
+                final newEmail = emailCtrl.text.trim();
+                if (_isPrimary &&
+                    newEmail.isNotEmpty &&
+                    newEmail != oldEmail) {
+                  try {
+                    await SyncService.manualSync();
+                    await Future.delayed(const Duration(seconds: 1));
+                    await GDriveService.shareSyncFileWithEmail(
+                      email: newEmail,
+                      role: 'writer',
+                    );
+                  } catch (e) {
+                    debugPrint('⚠️ Sync/Share after edit: $e');
+                  }
+                }
+
                 if (ctx.mounted) Navigator.pop(ctx, true);
               },
               child: const Text('حفظ'),
@@ -489,7 +533,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
     _load();
   }
 
-  // ========== قبول جهاز ==========
+  // ========== قبول جهاز (مع مزامنة ومشاركة تلقائية) ==========
   Future<void> _approveDevice(PendingDevice dev) async {
     final nameCtrl = TextEditingController(text: dev.deviceName);
     final codeCtrl = TextEditingController();
@@ -557,11 +601,25 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
       code: codeCtrl.text.trim(),
     );
 
+    // مزامنة + مشاركة بعد القبول
+    if (_isPrimary) {
+      try {
+        await SyncService.manualSync();
+        await Future.delayed(const Duration(seconds: 1));
+      } catch (e) {
+        debugPrint('⚠️ Sync after approve: $e');
+      }
+    }
+
     if (dev.email != null && dev.email!.isNotEmpty) {
-      await GDriveService.shareSyncFileWithEmail(
-        email: dev.email!,
-        role: 'writer',
-      );
+      try {
+        await GDriveService.shareSyncFileWithEmail(
+          email: dev.email!,
+          role: 'writer',
+        );
+      } catch (e) {
+        debugPrint('⚠️ Share after approve: $e');
+      }
     }
 
     _load();
@@ -790,8 +848,6 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // 🆕 زر "ربط بالأساسي" — الخيار الأول (إذا كان لديك أساسي)
               FilledButton.icon(
                 onPressed: _linkToPrimary,
                 icon: const Icon(Icons.link),
@@ -804,9 +860,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(
-                    child: Divider(color: Colors.grey.shade400),
-                  ),
+                  Expanded(child: Divider(color: Colors.grey.shade400)),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Text(
@@ -817,14 +871,10 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: Divider(color: Colors.grey.shade400),
-                  ),
+                  Expanded(child: Divider(color: Colors.grey.shade400)),
                 ],
               ),
               const SizedBox(height: 8),
-
-              // الخيار الثاني: تعيين نفسي (إذا كنت الأساسي)
               OutlinedButton.icon(
                 onPressed: _registerSelf,
                 icon: const Icon(Icons.person_add),
