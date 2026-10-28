@@ -16,6 +16,7 @@ import '../services/backup_service.dart';
 import '../services/cloud_backup_service.dart';
 import '../services/code_service.dart';
 import '../services/crypto_service.dart';
+import '../services/device_service.dart';
 import '../services/export_service.dart';
 import '../services/gdrive_service.dart';
 import '../services/keywords_service.dart';
@@ -83,6 +84,8 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _hasRecoveryCode = false;
   bool _hasSecurityQuestion = false;
 
+  bool _isPrimary = true; // 🆕
+
   @override
   void initState() {
     super.initState();
@@ -97,6 +100,12 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadAccountantName();
     _loadPendingFilters();
     _loadRecoveryInfo();
+    _loadPrimaryStatus(); // 🆕
+  }
+
+  Future<void> _loadPrimaryStatus() async {
+    final isP = await DeviceService.isPrimaryDevice();
+    if (mounted) setState(() => _isPrimary = isP);
   }
 
   Future<void> _loadAccountantName() async {
@@ -1656,28 +1665,30 @@ class _SettingsTabState extends State<SettingsTab> {
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ========== المحاسب ==========
-          const _SectionHeader('المحاسب'),
-          ListTile(
-            leading: Icon(
-              Icons.person,
-              color: _accountantName != null ? Colors.teal : Colors.grey,
-            ),
-            title: const Text('اسم المحاسب'),
-            subtitle: Text(
-              _accountantName ?? 'لم يتم ضبطه - اضغط للإضافة',
-              style: TextStyle(
+          // ========== المحاسب (للأساسي فقط) ==========
+          if (_isPrimary) ...[
+            const _SectionHeader('المحاسب'),
+            ListTile(
+              leading: Icon(
+                Icons.person,
                 color: _accountantName != null ? Colors.teal : Colors.grey,
-                fontWeight: _accountantName != null
-                    ? FontWeight.bold
-                    : FontWeight.normal,
               ),
+              title: const Text('اسم المحاسب'),
+              subtitle: Text(
+                _accountantName ?? 'لم يتم ضبطه - اضغط للإضافة',
+                style: TextStyle(
+                  color: _accountantName != null ? Colors.teal : Colors.grey,
+                  fontWeight: _accountantName != null
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                ),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _editAccountantName,
             ),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: _editAccountantName,
-          ),
+          ],
 
-          // ========== 🆕 المحاسبون والأجهزة ==========
+          // ========== إدارة المحاسبين والأجهزة ==========
           ListTile(
             leading: const Icon(Icons.people, color: Colors.teal),
             title: const Text('إدارة المحاسبين والأجهزة'),
@@ -1813,151 +1824,152 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== رموز العمليات ==========
-          const _SectionHeader('رموز العمليات'),
-          SwitchListTile(
-            secondary: const Icon(Icons.qr_code, color: Colors.blue),
-            title: const Text('تفعيل رموز العمليات'),
-            value: _codeEnabled,
-            onChanged: _toggleCodeEnabled,
-          ),
-          if (_codeEnabled) ...[
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.arrow_upward, color: Colors.red),
-              title: const Text('رمز الدين'),
-              trailing: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(_debtPrefix,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Colors.red)),
-              ),
-              onTap: () => _editPrefix('debt'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.payments, color: Colors.green),
-              title: const Text('رمز السداد'),
-              trailing: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(_paymentPrefix,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Colors.green)),
-              ),
-              onTap: () => _editPrefix('payment'),
-            ),
-            ListTile(
-              leading:
-                  const Icon(Icons.keyboard_return, color: Colors.orange),
-              title: const Text('رمز المرتجع'),
-              trailing: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(_returnPrefix,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Colors.orange)),
-              ),
-              onTap: () => _editPrefix('return'),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.numbers, color: Colors.purple),
-              title: const Text('عدد الأرقام'),
-              subtitle: Text(
-                  'يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('$_codeDigits',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16)),
-                  const Icon(Icons.arrow_forward_ios, size: 16),
-                ],
-              ),
-              onTap: _changeDigits,
-            ),
-            ListTile(
-              leading: const Icon(Icons.shuffle, color: Colors.indigo),
-              title: const Text('طريقة التوليد'),
-              subtitle: Text(CodeService.describeMode(_codeMode)),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _changeCodeMode,
-            ),
-
-            // 🆕 رمز المحاسب
-            const Divider(height: 1),
+          // ========== رموز العمليات (للأساسي فقط) ==========
+          if (_isPrimary) ...[
+            const _SectionHeader('رموز العمليات'),
             SwitchListTile(
-              secondary: const Icon(Icons.person_pin, color: Colors.teal),
-              title: const Text('إضافة رمز المحاسب للعملية'),
-              subtitle: const Text('مثال: D-0001-S أو S-D-0001'),
-              value: _includeAccountant,
-              onChanged: (v) async {
-                await SettingsService.setBool(
-                    AppSettings.codeIncludeAccountant, v);
-                if (mounted) setState(() => _includeAccountant = v);
-              },
+              secondary: const Icon(Icons.qr_code, color: Colors.blue),
+              title: const Text('تفعيل رموز العمليات'),
+              value: _codeEnabled,
+              onChanged: _toggleCodeEnabled,
             ),
-            if (_includeAccountant) ...[
+            if (_codeEnabled) ...[
+              const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.vertical_align_bottom,
-                    color: Colors.teal),
-                title: const Text('موضع الرمز'),
-                trailing: DropdownButton<String>(
-                  value: _accountantPosition,
-                  onChanged: (v) async {
-                    if (v == null) return;
-                    await SettingsService.setString(
-                        AppSettings.codeAccountantPosition, v);
-                    if (mounted) setState(() => _accountantPosition = v);
-                  },
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'suffix',
-                        child: Text('في النهاية (D-0001-S)')),
-                    DropdownMenuItem(
-                        value: 'prefix',
-                        child: Text('في البداية (S-D-0001)')),
-                  ],
+                leading: const Icon(Icons.arrow_upward, color: Colors.red),
+                title: const Text('رمز الدين'),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(_debtPrefix,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.red)),
                 ),
+                onTap: () => _editPrefix('debt'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.payments, color: Colors.green),
+                title: const Text('رمز السداد'),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(_paymentPrefix,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.green)),
+                ),
+                onTap: () => _editPrefix('payment'),
               ),
               ListTile(
                 leading:
-                    const Icon(Icons.horizontal_rule, color: Colors.teal),
-                title: const Text('الفاصل'),
-                trailing: DropdownButton<String>(
-                  value: _accountantSeparator,
-                  onChanged: (v) async {
-                    if (v == null) return;
-                    await SettingsService.setString(
-                        AppSettings.codeAccountantSeparator, v);
-                    if (mounted) setState(() => _accountantSeparator = v);
-                  },
-                  items: const [
-                    DropdownMenuItem(value: '-', child: Text('شرطة (-)')),
-                    DropdownMenuItem(value: '_', child: Text('شرطة سفلية (_)')),
-                    DropdownMenuItem(value: '', child: Text('بدون فاصل')),
+                    const Icon(Icons.keyboard_return, color: Colors.orange),
+                title: const Text('رمز المرتجع'),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(_returnPrefix,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.orange)),
+                ),
+                onTap: () => _editPrefix('return'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.numbers, color: Colors.purple),
+                title: const Text('عدد الأرقام'),
+                subtitle: Text(
+                    'يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$_codeDigits',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    const Icon(Icons.arrow_forward_ios, size: 16),
                   ],
                 ),
+                onTap: _changeDigits,
               ),
+              ListTile(
+                leading: const Icon(Icons.shuffle, color: Colors.indigo),
+                title: const Text('طريقة التوليد'),
+                subtitle: Text(CodeService.describeMode(_codeMode)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _changeCodeMode,
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.person_pin, color: Colors.teal),
+                title: const Text('إضافة رمز المحاسب للعملية'),
+                subtitle: const Text('مثال: D-0001-S أو S-D-0001'),
+                value: _includeAccountant,
+                onChanged: (v) async {
+                  await SettingsService.setBool(
+                      AppSettings.codeIncludeAccountant, v);
+                  if (mounted) setState(() => _includeAccountant = v);
+                },
+              ),
+              if (_includeAccountant) ...[
+                ListTile(
+                  leading: const Icon(Icons.vertical_align_bottom,
+                      color: Colors.teal),
+                  title: const Text('موضع الرمز'),
+                  trailing: DropdownButton<String>(
+                    value: _accountantPosition,
+                    onChanged: (v) async {
+                      if (v == null) return;
+                      await SettingsService.setString(
+                          AppSettings.codeAccountantPosition, v);
+                      if (mounted) setState(() => _accountantPosition = v);
+                    },
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'suffix',
+                          child: Text('في النهاية (D-0001-S)')),
+                      DropdownMenuItem(
+                          value: 'prefix',
+                          child: Text('في البداية (S-D-0001)')),
+                    ],
+                  ),
+                ),
+                ListTile(
+                  leading:
+                      const Icon(Icons.horizontal_rule, color: Colors.teal),
+                  title: const Text('الفاصل'),
+                  trailing: DropdownButton<String>(
+                    value: _accountantSeparator,
+                    onChanged: (v) async {
+                      if (v == null) return;
+                      await SettingsService.setString(
+                          AppSettings.codeAccountantSeparator, v);
+                      if (mounted) setState(() => _accountantSeparator = v);
+                    },
+                    items: const [
+                      DropdownMenuItem(value: '-', child: Text('شرطة (-)')),
+                      DropdownMenuItem(
+                          value: '_', child: Text('شرطة سفلية (_)')),
+                      DropdownMenuItem(value: '', child: Text('بدون فاصل')),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ],
 
@@ -1984,36 +1996,27 @@ class _SettingsTabState extends State<SettingsTab> {
 
           // ========== الحماية ==========
           const _SectionHeader('الحماية'),
-          FutureBuilder<bool>(
-            future: AuthService.isEnabled(),
-            builder: (_, snap) {
-              final enabled = snap.data ?? false;
-              return Column(
-                children: [
-                  if (!enabled)
-                    ListTile(
-                      leading: const Icon(Icons.lock_outline),
-                      title: const Text('تفعيل القفل'),
-                      trailing: FilledButton(
-                        onPressed: () => _enableLockDialog(),
-                        child: const Text('تفعيل'),
-                      ),
-                    ),
-                  if (enabled) ...[
-                    const ListTile(
-                      leading: Icon(Icons.lock, color: Colors.green),
-                      title: Text('القفل مفعّل'),
-                    ),
-                    ListTile(
-                      leading:
-                          const Icon(Icons.lock_open, color: Colors.red),
-                      title: const Text('تعطيل القفل',
-                          style: TextStyle(color: Colors.red)),
-                      onTap: () => _disableLockDialog(),
-                    ),
-                  ],
-                ],
-              );
+          SwitchListTile(
+            secondary: const Icon(Icons.lock, color: Colors.blue),
+            title: const Text('قفل التطبيق'),
+            subtitle: const Text('عند التفعيل، يُطلب رمز المرور عند فتح التطبيق'),
+            value: SettingsService.getBool(AppSettings.lockEnabled, defaultValue: false),
+            onChanged: (v) async {
+              if (v) {
+                final hasPwd = await AuthService.hasPassword();
+                if (!hasPwd) {
+                  final ok = await _enableLockDialog();
+                  if (!ok) return; 
+                }
+                await SettingsService.setBool(AppSettings.lockEnabled, true);
+                if (mounted) setState(() {});
+              } else {
+                final ok = await _disableLockDialog();
+                if (ok) {
+                  await SettingsService.setBool(AppSettings.lockEnabled, false);
+                  if (mounted) setState(() {});
+                }
+              }
             },
           ),
 
@@ -2056,7 +2059,6 @@ class _SettingsTabState extends State<SettingsTab> {
                       }
                     },
                   ),
-                  // 🆕 زر توليد رمز الربط
                   if (hasPassword)
                     ListTile(
                       leading: const Icon(Icons.link, color: Colors.teal),
@@ -2471,7 +2473,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   // ========== حوارات القفل ==========
-  Future<void> _enableLockDialog() async {
+  Future<bool> _enableLockDialog() async {
     final pwd1 = TextEditingController();
     final pwd2 = TextEditingController();
     final answer = TextEditingController();
@@ -2616,7 +2618,7 @@ class _SettingsTabState extends State<SettingsTab> {
       ),
     );
 
-    if (result == null) return;
+    if (result == null) return false;
 
     await AuthService.setPassword(result['pwd'] as String);
     await RecoveryService.setSecurityQuestion(
@@ -2640,9 +2642,10 @@ class _SettingsTabState extends State<SettingsTab> {
     if (mounted) {
       await _showRecoveryCode();
     }
+    return true;
   }
 
-  Future<void> _disableLockDialog() async {
+  Future<bool> _disableLockDialog() async {
     final ctrl = TextEditingController();
     String? error;
     final ok = await showDialog<bool>(
@@ -2712,7 +2715,7 @@ class _SettingsTabState extends State<SettingsTab> {
       ),
     );
 
-    if (ok != true) return;
+    if (ok != true) return false;
 
     await AuthService.setEnabled(false);
     await AuthService.removePassword();
@@ -2725,6 +2728,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
     await _loadRecoveryInfo();
     if (mounted) setState(() {});
+    return true;
   }
 }
 
