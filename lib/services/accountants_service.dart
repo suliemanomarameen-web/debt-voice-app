@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'device_service.dart';
 
-/// نموذج المحاسب
 class Accountant {
   final String id;
   final String name;
@@ -89,7 +88,6 @@ class Accountant {
     for (final e in defaultPermissions.entries) {
       perms.putIfAbsent(e.key, () => e.value);
     }
-
     return Accountant(
       id: m['id'] as String? ?? '',
       name: m['name'] as String? ?? '',
@@ -128,7 +126,6 @@ class Accountant {
   bool can(String permission) => permissions[permission] == true;
 }
 
-/// نموذج جهاز في الانتظار
 class PendingDevice {
   final String deviceId;
   final String deviceName;
@@ -169,7 +166,6 @@ class PendingDevice {
       );
 }
 
-/// خدمة إدارة المحاسبين
 class AccountantsService {
   static const _uuid = Uuid();
   static const String _prefsKey = 'accountants_cache_v1';
@@ -178,10 +174,6 @@ class AccountantsService {
   static List<Accountant> _accountants = [];
   static List<PendingDevice> _pendingDevices = [];
   static bool _loaded = false;
-
-  // ═══════════════════════════════════════════════════════════
-  // التحميل والحفظ
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> init() async {
     if (_loaded) return;
@@ -228,13 +220,6 @@ class AccountantsService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // التكامل مع المزامنة
-  // ═══════════════════════════════════════════════════════════
-
-  /// 🆕 دمج بدلاً من استبدال:
-  /// - السحابة أوْلى إذا وُجد تطابق (id أو email)
-  /// - المحليون غير الموجودين في السحابة يبقون (لم يُزامنوا بعد)
   static Future<void> loadFromSync(Map<String, dynamic> syncData) async {
     try {
       final accList = syncData['accountants'] as List?;
@@ -257,64 +242,43 @@ class AccountantsService {
             }
             if (cloud.email != null &&
                 local.email != null &&
-                cloud.email!.toLowerCase() ==
-                    local.email!.toLowerCase()) {
+                cloud.email!.toLowerCase() == local.email!.toLowerCase()) {
               match = cloud;
               break;
             }
           }
-
           if (match != null) {
             merged.add(match);
             usedCloudIds.add(match.id);
           } else {
-            // محلي فقط — احتفظ به
             merged.add(local);
           }
         }
-
         for (final cloud in cloudAccountants) {
-          if (!usedCloudIds.contains(cloud.id)) {
-            merged.add(cloud);
-          }
+          if (!usedCloudIds.contains(cloud.id)) merged.add(cloud);
         }
-
         _accountants = merged;
-        debugPrint(
-            '✅ [Accountants] Merged: ${_accountants.length} total '
-            '(${cloudAccountants.length} from cloud)');
       }
 
       if (devList != null && devList.isNotEmpty) {
         _pendingDevices = devList
             .map((e) => PendingDevice.fromMap(e as Map<String, dynamic>))
             .toList();
-        debugPrint('✅ [Accountants] Loaded ${_pendingDevices.length} devices');
       }
-
       await _saveToLocal();
     } catch (e) {
       debugPrint('❌ [Accountants] loadFromSync: $e');
     }
   }
 
-  /// يُستدعى من sync_service قبل الرفع
-  static Map<String, dynamic> getForSync() {
-    return {
-      'accountants': _accountants.map((a) => a.toMap()).toList(),
-      'devices': _pendingDevices.map((d) => d.toMap()).toList(),
-    };
-  }
+  static Map<String, dynamic> getForSync() => {
+        'accountants': _accountants.map((a) => a.toMap()).toList(),
+        'devices': _pendingDevices.map((d) => d.toMap()).toList(),
+      };
 
-  // ═══════════════════════════════════════════════════════════
-  // القراءة
-  // ═══════════════════════════════════════════════════════════
+  static List<Accountant> getAll() => List<Accountant>.unmodifiable(_accountants);
 
-  static List<Accountant> getAll() =>
-      List<Accountant>.unmodifiable(_accountants);
-
-  static List<Accountant> getActive() =>
-      _accountants.where((a) => a.status == 'active').toList();
+  static List<Accountant> getActive() => _accountants.where((a) => a.status == 'active').toList();
 
   static Accountant? getById(String id) {
     try {
@@ -333,18 +297,12 @@ class AccountantsService {
     }
   }
 
-  static Future<bool> hasAnyAccountants() async {
-    return _accountants.isNotEmpty;
-  }
+  static Future<bool> hasAnyAccountants() async => _accountants.isNotEmpty;
 
   static Future<bool> isCurrentDevicePrimary() async {
     final current = await getCurrentAccountant();
     return current?.isPrimary == true;
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // فحص الصلاحيات
-  // ═══════════════════════════════════════════════════════════
 
   static Future<bool> hasPermission(String permission) async {
     final current = await getCurrentAccountant();
@@ -357,13 +315,7 @@ class AccountantsService {
     return acc?.can(permission) ?? false;
   }
 
-  static Future<bool> canManageAccountants() async {
-    return hasPermission('manage_accountants');
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // CRUD المحاسبين
-  // ═══════════════════════════════════════════════════════════
+  static Future<bool> canManageAccountants() async => hasPermission('manage_accountants');
 
   static Future<Map<String, dynamic>> addAccountant({
     required String name,
@@ -377,21 +329,14 @@ class AccountantsService {
       if (!isPrimary && !await canManageAccountants()) {
         return {'success': false, 'message': 'ليس لديك صلاحية إضافة محاسبين'};
       }
-
-      if (name.trim().isEmpty) {
-        return {'success': false, 'message': 'الاسم مطلوب'};
-      }
-
+      if (name.trim().isEmpty) return {'success': false, 'message': 'الاسم مطلوب'};
       final cleanName = name.trim();
       if (_accountants.any((a) => a.name == cleanName)) {
         return {'success': false, 'message': 'اسم المحاسب موجود مسبقاً'};
       }
-      if (email != null &&
-          email.isNotEmpty &&
-          _accountants.any((a) => a.email == email)) {
+      if (email != null && email.isNotEmpty && _accountants.any((a) => a.email == email)) {
         return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
       }
-
       final newAcc = Accountant(
         id: _uuid.v4(),
         name: cleanName,
@@ -402,14 +347,10 @@ class AccountantsService {
         permissions: permissions,
         createdAt: DateTime.now().toIso8601String(),
       );
-
       _accountants.add(newAcc);
       await _saveToLocal();
-
-      debugPrint('✅ [Accountants] Added: ${newAcc.name}');
       return {'success': true, 'accountant': newAcc};
     } catch (e) {
-      debugPrint('❌ [Accountants] add: $e');
       return {'success': false, 'message': 'خطأ: $e'};
     }
   }
@@ -424,20 +365,31 @@ class AccountantsService {
     String? status,
   }) async {
     try {
-      if (!await canManageAccountants()) {
-        final current = await getCurrentAccountant();
-        if (current == null || current.id != id) {
+      final isPrimaryDevice = await DeviceService.isPrimaryDevice();
+      final current = await getCurrentAccountant();
+      final isSelf = current?.id == id;
+
+      // 🆕 منع الجهاز الثانوي من التعديل
+      if (!isPrimaryDevice) {
+        if (!isSelf) {
           return {'success': false, 'message': 'ليس لديك صلاحية'};
+        }
+        if (name != null && name != current?.name) {
+          return {'success': false, 'message': 'لا يمكنك تغيير اسمك (يتحكم به الأساسي)'};
+        }
+        if (code != null && code != current?.code) {
+          return {'success': false, 'message': 'لا يمكنك تغيير رمزك (يتحكم به الأساسي)'};
+        }
+        if (permissions != null) {
+          return {'success': false, 'message': 'لا يمكنك تغيير صلاحياتك'};
         }
       }
 
       final idx = _accountants.indexWhere((a) => a.id == id);
-      if (idx == -1) {
-        return {'success': false, 'message': 'المحاسب غير موجود'};
-      }
+      if (idx == -1) return {'success': false, 'message': 'المحاسب غير موجود'};
 
-      final current = _accountants[idx];
-      final updated = current.copyWith(
+      final currentAcc = _accountants[idx];
+      final updated = currentAcc.copyWith(
         name: name?.trim(),
         code: code?.trim(),
         email: email?.trim(),
@@ -448,42 +400,25 @@ class AccountantsService {
 
       _accountants[idx] = updated;
       await _saveToLocal();
-
-      debugPrint('✅ [Accountants] Updated: ${updated.name}');
       return {'success': true, 'accountant': updated};
     } catch (e) {
-      debugPrint('❌ [Accountants] update: $e');
       return {'success': false, 'message': 'خطأ: $e'};
     }
   }
 
   static Future<Map<String, dynamic>> removeAccountant(String id) async {
     try {
-      if (!await canManageAccountants()) {
-        return {'success': false, 'message': 'ليس لديك صلاحية'};
-      }
-
+      if (!await canManageAccountants()) return {'success': false, 'message': 'ليس لديك صلاحية'};
       final acc = getById(id);
-      if (acc == null) {
-        return {'success': false, 'message': 'المحاسب غير موجود'};
-      }
-      if (acc.isPrimary) {
-        return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
-      }
-
+      if (acc == null) return {'success': false, 'message': 'المحاسب غير موجود'};
+      if (acc.isPrimary) return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
       _accountants.removeWhere((a) => a.id == id);
       await _saveToLocal();
-
-      debugPrint('✅ [Accountants] Removed: ${acc.name}');
       return {'success': true};
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
     }
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // إدارة الأجهزة
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> requestDeviceJoin({
     required String deviceId,
@@ -491,7 +426,6 @@ class AccountantsService {
     String? email,
   }) async {
     if (_pendingDevices.any((d) => d.deviceId == deviceId)) return;
-
     _pendingDevices.add(PendingDevice(
       deviceId: deviceId,
       deviceName: deviceName,
@@ -500,14 +434,12 @@ class AccountantsService {
       requestedAt: DateTime.now().toIso8601String(),
     ));
     await _saveToLocal();
-    debugPrint('📱 [Accountants] New pending device: $deviceName');
   }
 
   static List<PendingDevice> getPendingDevices() =>
       _pendingDevices.where((d) => d.status == 'pending').toList();
 
-  static List<PendingDevice> getAllDevices() =>
-      List<PendingDevice>.unmodifiable(_pendingDevices);
+  static List<PendingDevice> getAllDevices() => List<PendingDevice>.unmodifiable(_pendingDevices);
 
   static Future<Map<String, dynamic>> approveDevice({
     required String deviceId,
@@ -516,17 +448,10 @@ class AccountantsService {
     Map<String, bool>? permissions,
   }) async {
     try {
-      if (!await canManageAccountants()) {
-        return {'success': false, 'message': 'ليس لديك صلاحية'};
-      }
-
+      if (!await canManageAccountants()) return {'success': false, 'message': 'ليس لديك صلاحية'};
       final devIdx = _pendingDevices.indexWhere((d) => d.deviceId == deviceId);
-      if (devIdx == -1) {
-        return {'success': false, 'message': 'الجهاز غير موجود'};
-      }
-
+      if (devIdx == -1) return {'success': false, 'message': 'الجهاز غير موجود'};
       final dev = _pendingDevices[devIdx];
-
       final result = await addAccountant(
         name: accountantName,
         code: code,
@@ -534,11 +459,8 @@ class AccountantsService {
         deviceId: deviceId,
         permissions: permissions,
       );
-
       if (result['success'] != true) return result;
-
       final newAcc = result['accountant'] as Accountant;
-
       _pendingDevices[devIdx] = PendingDevice(
         deviceId: dev.deviceId,
         deviceName: dev.deviceName,
@@ -549,12 +471,7 @@ class AccountantsService {
         accountantId: newAcc.id,
       );
       await _saveToLocal();
-
-      return {
-        'success': true,
-        'accountant': newAcc,
-        'device': _pendingDevices[devIdx],
-      };
+      return {'success': true, 'accountant': newAcc, 'device': _pendingDevices[devIdx]};
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
     }
@@ -563,10 +480,8 @@ class AccountantsService {
   static Future<bool> rejectDevice(String deviceId) async {
     try {
       if (!await canManageAccountants()) return false;
-
       final idx = _pendingDevices.indexWhere((d) => d.deviceId == deviceId);
       if (idx == -1) return false;
-
       final dev = _pendingDevices[idx];
       _pendingDevices[idx] = PendingDevice(
         deviceId: dev.deviceId,
@@ -582,10 +497,6 @@ class AccountantsService {
       return false;
     }
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // مسح / إعادة تحميل
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> clearAll() async {
     _accountants = [];
