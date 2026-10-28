@@ -13,7 +13,7 @@ class Accountant {
   final String? deviceId;
   final bool isPrimary;
   final Map<String, bool> permissions;
-  final String status; // 'active' | 'revoked'
+  final String status;
   final String createdAt;
 
   Accountant({
@@ -133,7 +133,7 @@ class PendingDevice {
   final String deviceId;
   final String deviceName;
   final String? email;
-  final String status; // 'pending' | 'approved' | 'rejected'
+  final String status;
   final String requestedAt;
   final String? authorizedAt;
   final String? accountantId;
@@ -232,24 +232,64 @@ class AccountantsService {
   // التكامل مع المزامنة
   // ═══════════════════════════════════════════════════════════
 
-  /// يُستدعى من sync_service عند تنزيل بيانات من السحابة
+  /// 🆕 دمج بدلاً من استبدال:
+  /// - السحابة أوْلى إذا وُجد تطابق (id أو email)
+  /// - المحليون غير الموجودين في السحابة يبقون (لم يُزامنوا بعد)
   static Future<void> loadFromSync(Map<String, dynamic> syncData) async {
     try {
       final accList = syncData['accountants'] as List?;
       final devList = syncData['devices'] as List?;
 
       if (accList != null && accList.isNotEmpty) {
-        _accountants = accList
+        final cloudAccountants = accList
             .map((e) => Accountant.fromMap(e as Map<String, dynamic>))
             .toList();
-        debugPrint('✅ [Accountants] Loaded ${_accountants.length} from sync');
+
+        final merged = <Accountant>[];
+        final usedCloudIds = <String>{};
+
+        for (final local in _accountants) {
+          Accountant? match;
+          for (final cloud in cloudAccountants) {
+            if (cloud.id == local.id) {
+              match = cloud;
+              break;
+            }
+            if (cloud.email != null &&
+                local.email != null &&
+                cloud.email!.toLowerCase() ==
+                    local.email!.toLowerCase()) {
+              match = cloud;
+              break;
+            }
+          }
+
+          if (match != null) {
+            merged.add(match);
+            usedCloudIds.add(match.id);
+          } else {
+            // محلي فقط — احتفظ به
+            merged.add(local);
+          }
+        }
+
+        for (final cloud in cloudAccountants) {
+          if (!usedCloudIds.contains(cloud.id)) {
+            merged.add(cloud);
+          }
+        }
+
+        _accountants = merged;
+        debugPrint(
+            '✅ [Accountants] Merged: ${_accountants.length} total '
+            '(${cloudAccountants.length} from cloud)');
       }
 
       if (devList != null && devList.isNotEmpty) {
         _pendingDevices = devList
             .map((e) => PendingDevice.fromMap(e as Map<String, dynamic>))
             .toList();
-        debugPrint('✅ [Accountants] Loaded ${_pendingDevices.length} devices from sync');
+        debugPrint('✅ [Accountants] Loaded ${_pendingDevices.length} devices');
       }
 
       await _saveToLocal();
@@ -374,7 +414,6 @@ class AccountantsService {
     }
   }
 
-  /// 🆕 إضافة deviceId كمعامل اختياري
   static Future<Map<String, dynamic>> updateAccountant({
     required String id,
     String? name,
@@ -386,7 +425,6 @@ class AccountantsService {
   }) async {
     try {
       if (!await canManageAccountants()) {
-        // نسمح بتحديث self (بدون صلاحية إدارة)
         final current = await getCurrentAccountant();
         if (current == null || current.id != id) {
           return {'success': false, 'message': 'ليس لديك صلاحية'};
