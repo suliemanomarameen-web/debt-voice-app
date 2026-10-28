@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/recovery_service.dart';
+import '../config/app_settings.dart';
+import '../services/settings_service.dart';
 
 class LockScreen extends StatefulWidget {
   final Widget child;
@@ -53,16 +55,21 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
 
   Future<void> _checkEnabled() async {
     try {
-      final enabled = await AuthService.isEnabled();
+      final hasPassword = await AuthService.hasPassword();
+      final settingEnabled =
+          SettingsService.getBool(AppSettings.lockEnabled, defaultValue: false);
+      final enabled = hasPassword && settingEnabled;
       if (!mounted) return;
       setState(() {
         _enabled = enabled;
+        _unlocked = !enabled;
         _checking = false;
       });
     } catch (e) {
       if (mounted) {
         setState(() {
           _enabled = false;
+          _unlocked = true;
           _checking = false;
         });
       }
@@ -140,7 +147,6 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ============ شاشة القفل ============
   Widget _buildLock() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -172,8 +178,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
               counterText: '',
               errorText: _error,
               suffixIcon: IconButton(
-                icon:
-                    Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
                 onPressed: () => setState(() => _obscure = !_obscure),
               ),
             ),
@@ -185,9 +190,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
           onPressed: _tryPassword,
           icon: const Icon(Icons.login),
           label: const Text('فتح'),
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(220, 48),
-          ),
+          style: FilledButton.styleFrom(minimumSize: const Size(220, 48)),
         ),
         const SizedBox(height: 12),
         TextButton.icon(
@@ -201,7 +204,7 @@ class _LockScreenState extends State<LockScreen> with WidgetsBindingObserver {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🆕 شاشة الاستعادة (خياران فقط — بدون واتساب)
+// شاشة الاستعادة (خياران فقط — بدون واتساب)
 // ═══════════════════════════════════════════════════════════════
 class _RecoveryOptions extends StatefulWidget {
   final VoidCallback onSuccess;
@@ -217,7 +220,7 @@ class _RecoveryOptions extends StatefulWidget {
 }
 
 class _RecoveryOptionsState extends State<_RecoveryOptions> {
-  int _step = 0; // 0 = قائمة، 1 = سؤال، 2 = رمز
+  int _step = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -227,9 +230,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
     return _buildOptionsList();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 0. قائمة الخيارات
-  // ═══════════════════════════════════════════════════════════
   Widget _buildOptionsList() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -246,8 +246,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
         const Text('اختر طريقة الاستعادة:',
             style: TextStyle(fontSize: 13, color: Colors.grey)),
         const SizedBox(height: 24),
-
-        // خيار 1: سؤال الأمان
         _recoveryOption(
           icon: Icons.help_outline,
           color: Colors.blue,
@@ -256,8 +254,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
           onTap: () => setState(() => _step = 1),
         ),
         const SizedBox(height: 10),
-
-        // خيار 2: رمز الاسترداد المحفوظ
         _recoveryOption(
           icon: Icons.vpn_key,
           color: Colors.deepPurple,
@@ -266,7 +262,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
           onTap: () => setState(() => _step = 2),
         ),
         const SizedBox(height: 24),
-
         TextButton.icon(
           onPressed: widget.onBack,
           icon: const Icon(Icons.arrow_back),
@@ -304,9 +299,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 1. سؤال الأمان
-  // ═══════════════════════════════════════════════════════════
   Widget _buildSecurityQuestion() {
     return _SecurityQuestionStep(
       onVerified: widget.onSuccess,
@@ -314,9 +306,6 @@ class _RecoveryOptionsState extends State<_RecoveryOptions> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 2. إدخال رمز الاسترداد
-  // ═══════════════════════════════════════════════════════════
   Widget _buildRecoveryCodeInput() {
     return _RecoveryCodeStep(
       onVerified: widget.onSuccess,
@@ -338,8 +327,7 @@ class _SecurityQuestionStep extends StatefulWidget {
   });
 
   @override
-  State<_SecurityQuestionStep> createState() =>
-      _SecurityQuestionStepState();
+  State<_SecurityQuestionStep> createState() => _SecurityQuestionStepState();
 }
 
 class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
@@ -376,10 +364,8 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
       setState(() => _error = 'أدخل الإجابة');
       return;
     }
-
     final ok = await RecoveryService.verifySecurityAnswer(ans);
     if (!mounted) return;
-
     if (ok) {
       setState(() {
         _verified = true;
@@ -435,7 +421,6 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
         const Text('سؤال الأمان',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 20),
-
         Container(
           width: 320,
           padding: const EdgeInsets.all(16),
@@ -461,7 +446,6 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
           ),
         ),
         const SizedBox(height: 20),
-
         SizedBox(
           width: 280,
           child: TextField(
@@ -478,14 +462,11 @@ class _SecurityQuestionStepState extends State<_SecurityQuestionStep> {
           ),
         ),
         const SizedBox(height: 16),
-
         FilledButton.icon(
           onPressed: _verifyAnswer,
           icon: const Icon(Icons.verified_user),
           label: const Text('تحقق'),
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(220, 48),
-          ),
+          style: FilledButton.styleFrom(minimumSize: const Size(220, 48)),
         ),
         const SizedBox(height: 12),
         TextButton.icon(
@@ -548,10 +529,8 @@ class _RecoveryCodeStepState extends State<_RecoveryCodeStep> {
       setState(() => _error = 'أدخل الرمز');
       return;
     }
-
     final ok = await RecoveryService.verifyRecoveryCode(code);
     if (!mounted) return;
-
     if (ok) {
       setState(() {
         _verified = true;
@@ -611,7 +590,6 @@ class _RecoveryCodeStepState extends State<_RecoveryCodeStep> {
             style: TextStyle(fontSize: 12, color: Colors.grey),
             textAlign: TextAlign.center),
         const SizedBox(height: 24),
-
         SizedBox(
           width: 320,
           child: TextField(
@@ -640,14 +618,11 @@ class _RecoveryCodeStepState extends State<_RecoveryCodeStep> {
           ),
         ),
         const SizedBox(height: 16),
-
         FilledButton.icon(
           onPressed: _verifyCode,
           icon: const Icon(Icons.verified_user),
           label: const Text('تحقق'),
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(220, 48),
-          ),
+          style: FilledButton.styleFrom(minimumSize: const Size(220, 48)),
         ),
         const SizedBox(height: 12),
         TextButton.icon(
@@ -721,8 +696,7 @@ class _ResetPasswordFormState extends State<_ResetPasswordForm> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.check_circle,
-            size: 60, color: Colors.green.shade400),
+        Icon(Icons.check_circle, size: 60, color: Colors.green.shade400),
         const SizedBox(height: 12),
         const Text('✅ تم التحقق',
             style: TextStyle(
@@ -733,7 +707,6 @@ class _ResetPasswordFormState extends State<_ResetPasswordForm> {
         const Text('أدخل كلمة المرور الجديدة',
             style: TextStyle(fontSize: 13, color: Colors.grey)),
         const SizedBox(height: 24),
-
         SizedBox(
           width: 280,
           child: TextField(
@@ -756,7 +729,6 @@ class _ResetPasswordFormState extends State<_ResetPasswordForm> {
           ),
         ),
         const SizedBox(height: 12),
-
         SizedBox(
           width: 280,
           child: TextField(
@@ -780,14 +752,11 @@ class _ResetPasswordFormState extends State<_ResetPasswordForm> {
           ),
         ),
         const SizedBox(height: 16),
-
         FilledButton.icon(
           onPressed: _reset,
           icon: const Icon(Icons.save),
           label: const Text('حفظ كلمة المرور'),
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(220, 48),
-          ),
+          style: FilledButton.styleFrom(minimumSize: const Size(220, 48)),
         ),
       ],
     );
