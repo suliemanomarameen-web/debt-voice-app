@@ -5,18 +5,14 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'backup_service.dart';
 import 'crypto_service.dart';
 
-/// 🆕 نتيجة تنزيل الملف الخام (قبل فك التشفير)
+/// نتيجة تنزيل الملف الخام (قبل فك التشفير)
 class RawSyncFile {
-  /// هل الملف مشفر؟
   final bool isEncrypted;
-
-  /// المحتوى المشفر (base64، بدون بادئة ENC:1:) — فقط إذا isEncrypted == true
   final String? encryptedPayload;
-
-  /// البيانات العادية — فقط إذا isEncrypted == false
   final Map<String, dynamic>? plainData;
 
   RawSyncFile({
@@ -36,6 +32,9 @@ class GDriveService {
 
   static const String _syncFileName = 'debt_sync_data.json';
   static const String _encryptedPrefix = 'ENC:1:';
+
+  // مفتاح تخزين معرف الملف المشترك
+  static const String _keyLinkedFileId = 'linked_sync_file_id';
 
   static GoogleSignIn? _googleSignIn;
   static GoogleSignInAccount? _currentUser;
@@ -129,7 +128,7 @@ class GDriveService {
     return err == null;
   }
 
-  // ========== النسخ الاحتياطي ==========
+  // ========== النسخ الاحتياطي القديم ==========
   static Future<Map<String, dynamic>> uploadBackup() async {
     try {
       if (_driveApi == null) {
@@ -392,10 +391,30 @@ class GDriveService {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 إدارة معرف الملف المشترك
+  // ═══════════════════════════════════════════════════════════
+
+  static Future<void> setLinkedFileId(String? fileId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (fileId == null || fileId.isEmpty) {
+      await prefs.remove(_keyLinkedFileId);
+      debugPrint('🔗 [GDrive] Cleared linked file ID');
+    } else {
+      await prefs.setString(_keyLinkedFileId, fileId);
+      debugPrint('🔗 [GDrive] Linked to file: $fileId');
+    }
+  }
+
+  static Future<String?> getLinkedFileId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyLinkedFileId);
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // ملف المزامنة
   // ═══════════════════════════════════════════════════════════
 
-  /// البحث عن ملف المزامنة الذي **أنشأه هذا الحساب** (المالك)
+  /// البحث عن ملف المزامنة الذي **أنشأه هذا الحساب**
   static Future<String?> getSyncFileId() async {
     try {
       if (!await ensureSignedIn()) return null;
@@ -420,7 +439,6 @@ class GDriveService {
     try {
       if (!await ensureSignedIn()) return null;
 
-      // البحث الأول: sharedWithMe
       final result = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false and sharedWithMe = true",
         $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
@@ -433,7 +451,6 @@ class GDriveService {
         return file.id;
       }
 
-      // Fallback: البحث بدون sharedWithMe
       debugPrint('⚠️ [GDrive] Trying fallback search...');
       final fallback = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false",
@@ -459,15 +476,8 @@ class GDriveService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 تنزيل خام (بدون فك تشفير تلقائي) — يستخدم في الربط
-  // ═══════════════════════════════════════════════════════════
-
-  /// تنزيل الملف الخام للتحقق من التشفير قبل فكّه
-  /// - إذا كان مشفراً: يُرجع `isEncrypted: true` + `encryptedPayload`
-  /// - إذا كان عادياً: يُرجع `isEncrypted: false` + `plainData`
-  static Future<RawSyncFile?> downloadRawSyncFileById(
-      String fileId) async {
+  /// تنزيل الملف الخام (للتحقق من التشفير)
+  static Future<RawSyncFile?> downloadRawSyncFileById(String fileId) async {
     try {
       if (!await ensureSignedIn()) return null;
 
@@ -502,10 +512,7 @@ class GDriveService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تنزيل ملف المزامنة (مع فك تشفير تلقائي إذا كان مشفراً)
-  // ═══════════════════════════════════════════════════════════
-
+  /// تنزيل ملف المزامنة (مع فك التشفير تلقائياً)
   static Future<Map<String, dynamic>?> downloadSyncFileById(
       String fileId) async {
     try {
@@ -577,14 +584,24 @@ class GDriveService {
     }
   }
 
+  /// تنزيل ملف المزامنة (مع الأخذ بالاعتبار الملف المشترك)
   static Future<Map<String, dynamic>?> downloadSyncFile() async {
     try {
       if (!await ensureSignedIn()) return null;
 
-      var fileId = await getSyncFileId();
-
-      if (fileId == null) {
-        fileId = await findSharedSyncFileId();
+      var fileId = await getLinkedFileId();
+      if (fileId != null && fileId.isNotEmpty) {
+        debugPrint('🔗 [GDrive] Downloading from linked file: $fileId');
+      } else {
+        fileId = await getSyncFileId();
+        if (fileId != null) {
+          debugPrint('📄 [GDrive] Downloading from own file: $fileId');
+        } else {
+          fileId = await findSharedSyncFileId();
+          if (fileId != null) {
+            debugPrint('🔗 [GDrive] Downloading from shared file: $fileId');
+          }
+        }
       }
 
       if (fileId == null) return null;
@@ -596,6 +613,7 @@ class GDriveService {
     }
   }
 
+  /// رفع ملف المزامنة (مع الأخذ بالاعتبار الملف المشترك)
   static Future<bool> uploadSyncFile(Map<String, dynamic> data) async {
     try {
       if (!await ensureSignedIn()) return false;
@@ -613,24 +631,29 @@ class GDriveService {
       }
 
       final bytes = utf8.encode(content);
-      final existingId = await getSyncFileId();
 
-      if (existingId != null) {
+      final linkedId = await getLinkedFileId();
+      final ownId = await getSyncFileId();
+      final targetId = (linkedId != null && linkedId.isNotEmpty)
+          ? linkedId
+          : ownId;
+
+      if (targetId != null) {
         final driveFile = drive.File();
         final media = drive.Media(Stream.value(bytes), bytes.length);
         await _driveApi!.files.update(
           driveFile,
-          existingId,
+          targetId,
           uploadMedia: media,
         );
-        debugPrint('✅ Sync file updated');
+        debugPrint('✅ Sync file updated: $targetId');
       } else {
         final driveFile = drive.File()
           ..name = _syncFileName
           ..mimeType = 'application/json';
         final media = drive.Media(Stream.value(bytes), bytes.length);
         await _driveApi!.files.create(driveFile, uploadMedia: media);
-        debugPrint('✅ Sync file created');
+        debugPrint('✅ Sync file created (own)');
       }
       return true;
     } catch (e) {
