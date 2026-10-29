@@ -218,7 +218,6 @@ class PrimaryLinkService {
             'إيميلك ($myEmail) غير مضاف كـ محاسب.\n\nاطلب من الأساسي إضافتك:\nالإعدادات ← إدارة المحاسبين ← "+ محاسب جديد"');
       }
 
-      // التعامل مع التكرار: نختار الأحدث ونحذف الباقي
       Accountant myAcc;
       if (mine.length > 1) {
         mine.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -258,16 +257,16 @@ class PrimaryLinkService {
       await _importSharedSettings(data);
       await _importCodeSettings(data);
 
-      // 🆕 حفظ معرف الملف المشترك للاستخدام المستقبلي
+      // حفظ معرف الملف المشترك
       await GDriveService.setLinkedFileId(fileId);
 
-      // حذف أي ملف خاص قديم (لتفادي التعارض)
+      // حذف أي ملف خاص قديم
       await GDriveService.deleteOwnSyncFileIfExists();
       DatabaseHelper.onDataChanged?.call();
 
-      // مزامنة شاملة لسحب العملاء والعمليات
-      debugPrint('🔄 [Link] Triggering full sync to pull data...');
-      await SyncService.manualSync();
+      // 🆕 إجبار المزامنة الشاملة (forcePull: true)
+      debugPrint('🔄 [Link] Triggering FULL sync to pull data...');
+      await SyncService.manualSync(forcePull: true);
 
       return LinkResult.ok(myAcc.name, myAcc.code);
     } catch (e) {
@@ -321,7 +320,6 @@ class PrimaryLinkService {
         await CodeService.setEnabled(codeMap['enabled'] as bool);
       }
 
-      // إعدادات رمز المحاسب
       if (codeMap['code_include_accountant'] is bool) {
         await SettingsService.setBool(
             AppSettings.codeIncludeAccountant,
