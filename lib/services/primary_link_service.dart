@@ -315,6 +315,24 @@ class PrimaryLinkService {
       if (codeMap['enabled'] is bool) {
         await CodeService.setEnabled(codeMap['enabled'] as bool);
       }
+
+      // 🆕 إعدادات رمز المحاسب
+      if (codeMap['code_include_accountant'] is bool) {
+        await SettingsService.setBool(
+            AppSettings.codeIncludeAccountant,
+            codeMap['code_include_accountant'] as bool);
+      }
+      if (codeMap['code_accountant_position'] is String) {
+        await SettingsService.setString(
+            AppSettings.codeAccountantPosition,
+            codeMap['code_accountant_position'] as String);
+      }
+      if (codeMap['code_accountant_separator'] is String) {
+        await SettingsService.setString(
+            AppSettings.codeAccountantSeparator,
+            codeMap['code_accountant_separator'] as String);
+      }
+
       debugPrint('✅ Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
