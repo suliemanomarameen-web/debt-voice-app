@@ -237,16 +237,12 @@ class AccountantsService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // مزامنة: دمج + تصفية المحذوفين + إزالة التكرار + الأحدث يفوز
-  // ═══════════════════════════════════════════════════════════
   static Future<void> loadFromSync(Map<String, dynamic> syncData) async {
     try {
       final accList = syncData['accountants'] as List?;
       final devList = syncData['devices'] as List?;
       final deletedList = syncData['deleted_accountant_ids'] as List?;
 
-      // دمج قائمة المحذوفين من السحابة
       if (deletedList != null) {
         for (final id in deletedList) {
           _deletedAccountantIds.add(id.toString());
@@ -254,13 +250,11 @@ class AccountantsService {
       }
 
       if (accList != null && accList.isNotEmpty) {
-        // 1. اقرأ محاسبي السحابة واصفِ المحذوفين
         final cloudRaw = accList
             .map((e) => Accountant.fromMap(e as Map<String, dynamic>))
             .where((a) => !_deletedAccountantIds.contains(a.id))
             .toList();
 
-        // 2. إزالة التكرارات حسب الإيميل (نُبقي على الحساب المرتبط بجهاز، أو الأحدث)
         final Map<String, Accountant> uniqueByEmail = {};
         final List<Accountant> uniqueCloud = [];
 
@@ -289,7 +283,6 @@ class AccountantsService {
           }
         }
 
-        // 3. دمج المحلي مع السحابي (الأحدث يفوز)
         final merged = <Accountant>[];
         final usedCloudIds = <String>{};
 
@@ -313,15 +306,14 @@ class AccountantsService {
           if (match != null) {
             usedCloudIds.add(match.id);
 
-            // 🆕 المقارنة: أي النسختين أحدث؟
             final localTime = DateTime.tryParse(local.updatedAt ?? local.createdAt) ?? DateTime(2000);
             final cloudTime = DateTime.tryParse(match.updatedAt ?? match.createdAt) ?? DateTime(2000);
 
             if (localTime.isAfter(cloudTime)) {
-              merged.add(local); // المحلي أحدث → احتفظ به
+              merged.add(local);
               debugPrint('📌 [Accountants] Kept local (newer): ${local.name}');
             } else {
-              merged.add(match); // السحابي أحدث → استخدمه
+              merged.add(match);
             }
           } else {
             merged.add(local);
@@ -353,10 +345,6 @@ class AccountantsService {
         'devices': _pendingDevices.map((d) => d.toMap()).toList(),
         'deleted_accountant_ids': _deletedAccountantIds.toList(),
       };
-
-  // ═══════════════════════════════════════════════════════════
-  // القراءة
-  // ═══════════════════════════════════════════════════════════
 
   static List<Accountant> getAll() => List<Accountant>.unmodifiable(_accountants);
 
@@ -398,10 +386,6 @@ class AccountantsService {
   }
 
   static Future<bool> canManageAccountants() async => hasPermission('manage_accountants');
-
-  // ═══════════════════════════════════════════════════════════
-  // CRUD
-  // ═══════════════════════════════════════════════════════════
 
   static Future<Map<String, dynamic>> addAccountant({
     required String name,
@@ -462,7 +446,6 @@ class AccountantsService {
       final current = await getCurrentAccountant();
       final isSelf = current?.id == id;
 
-      // منع الجهاز الثانوي من التعديل
       if (!isPrimaryDevice) {
         if (!isSelf) {
           return {'success': false, 'message': 'ليس لديك صلاحية'};
@@ -496,7 +479,9 @@ class AccountantsService {
         }
       }
 
-      // 🆕 تحديث updated_at
+      // 🆕 الإصلاح الجديد: ربط الجهاز لا يُعد تعديلاً للبيانات
+      final hasOtherChanges = name != null || code != null || email != null || permissions != null || status != null;
+      
       final updated = currentAcc.copyWith(
         name: name?.trim(),
         code: code?.trim(),
@@ -504,7 +489,7 @@ class AccountantsService {
         deviceId: deviceId,
         permissions: permissions,
         status: status,
-        updatedAt: DateTime.now().toIso8601String(),
+        updatedAt: hasOtherChanges ? DateTime.now().toIso8601String() : currentAcc.updatedAt,
       );
 
       _accountants[idx] = updated;
@@ -532,10 +517,6 @@ class AccountantsService {
       return {'success': false, 'message': 'خطأ: $e'};
     }
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // الأجهزة
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> requestDeviceJoin({
     required String deviceId,
