@@ -11,6 +11,7 @@ import 'link_code_service.dart';
 import 'settings_service.dart';
 import 'sync_service.dart';
 
+/// نتيجة الخطوة 1: التحقق من الملف المشترك
 class LinkInitResult {
   final bool success;
   final String message;
@@ -26,7 +27,8 @@ class LinkInitResult {
     this.plainData,
   });
 
-  factory LinkInitResult.fail(String msg) => LinkInitResult(success: false, message: msg);
+  factory LinkInitResult.fail(String msg) =>
+      LinkInitResult(success: false, message: msg);
 
   factory LinkInitResult.needsPasswordInput(String fileId) => LinkInitResult(
         success: true,
@@ -36,9 +38,15 @@ class LinkInitResult {
       );
 
   factory LinkInitResult.plainReady(Map<String, dynamic> data) =>
-      LinkInitResult(success: true, message: 'تم العثور على الملف', plainData: data);
+      LinkInitResult(
+        success: true,
+        message: 'تم العثور على الملف',
+        needsPassword: false,
+        plainData: data,
+      );
 }
 
+/// نتيجة الخطوة 2: إكمال الربط
 class LinkResult {
   final bool success;
   final String message;
@@ -52,7 +60,8 @@ class LinkResult {
     this.accountantCode,
   });
 
-  factory LinkResult.fail(String msg) => LinkResult(success: false, message: msg);
+  factory LinkResult.fail(String msg) =>
+      LinkResult(success: false, message: msg);
 
   factory LinkResult.ok(String name, String code) => LinkResult(
         success: true,
@@ -63,23 +72,38 @@ class LinkResult {
 }
 
 class PrimaryLinkService {
-  static Future<LinkInitResult> requestLinkInit(String primaryEmailRaw) async {
+  // ═══════════════════════════════════════════════════════════
+  // الخطوة 1: التحقق من وجود الملف المشترك
+  // ═══════════════════════════════════════════════════════════
+  static Future<LinkInitResult> requestLinkInit(
+      String primaryEmailRaw) async {
     try {
       final primaryEmail = primaryEmailRaw.trim().toLowerCase();
+
       if (!primaryEmail.contains('@') || primaryEmail.length < 5) {
         return LinkInitResult.fail('بريد إلكتروني غير صالح');
       }
+
       if (!GDriveService.isSignedIn) {
         final err = await GDriveService.signInWithError();
-        if (err != null) return LinkInitResult.fail('فشل تسجيل الدخول: $err');
+        if (err != null) {
+          return LinkInitResult.fail('فشل تسجيل الدخول: $err');
+        }
       }
+
       final myEmail = GDriveService.userEmail;
       if (myEmail == null || myEmail.isEmpty) {
-        return LinkInitResult.fail('لم نتمكن من قراءة إيميل Google الخاص بك');
+        return LinkInitResult.fail(
+            'لم نتمكن من قراءة إيميل Google الخاص بك');
       }
+
       if (myEmail.toLowerCase() == primaryEmail) {
-        return LinkInitResult.fail('لا يمكنك ربط جهازك بنفسك.\n\nأدخل إيميل المحاسب الأساسي (شخص آخر).');
+        return LinkInitResult.fail(
+          'لا يمكنك ربط جهازك بنفسك.\n\n'
+          'أدخل إيميل المحاسب الأساسي (شخص آخر).',
+        );
       }
+
       final fileId = await GDriveService.findSharedSyncFileId();
       if (fileId == null) {
         return LinkInitResult.fail(
@@ -90,19 +114,30 @@ class PrimaryLinkService {
           '• أنت مسجل دخول بإيميلك ($myEmail)',
         );
       }
+
       final raw = await GDriveService.downloadRawSyncFileById(fileId);
-      if (raw == null) return LinkInitResult.fail('فشل تنزيل الملف من Drive');
+      if (raw == null) {
+        return LinkInitResult.fail('فشل تنزيل الملف من Drive');
+      }
+
       if (!raw.isEncrypted) {
         final data = raw.plainData;
-        if (data == null) return LinkInitResult.fail('الملف تالف أو غير صالح');
+        if (data == null) {
+          return LinkInitResult.fail('الملف تالف أو غير صالح');
+        }
         return LinkInitResult.plainReady(data);
       }
+
       return LinkInitResult.needsPasswordInput(fileId);
     } catch (e) {
+      debugPrint('❌ requestLinkInit error: $e');
       return LinkInitResult.fail('خطأ غير متوقع: $e');
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // الخطوة 2: إكمال الربط
+  // ═══════════════════════════════════════════════════════════
   static Future<LinkResult> completeLink({
     required String primaryEmail,
     String? password,
@@ -110,63 +145,103 @@ class PrimaryLinkService {
   }) async {
     try {
       final cleanPrimaryEmail = primaryEmail.trim().toLowerCase();
-      if (!cleanPrimaryEmail.contains('@')) return LinkResult.fail('بريد إلكتروني غير صالح');
+      if (!cleanPrimaryEmail.contains('@')) {
+        return LinkResult.fail('بريد إلكتروني غير صالح');
+      }
 
       final fileId = await GDriveService.findSharedSyncFileId();
-      if (fileId == null) return LinkResult.fail('لم يتم العثور على الملف المشترك.\nتأكد من أن الأساسي شاركه معك.');
+      if (fileId == null) {
+        return LinkResult.fail(
+            'لم يتم العثور على الملف المشترك.\nتأكد من أن الأساسي شاركه معك.');
+      }
 
       final raw = await GDriveService.downloadRawSyncFileById(fileId);
-      if (raw == null) return LinkResult.fail('فشل تنزيل الملف من Drive');
+      if (raw == null) {
+        return LinkResult.fail('فشل تنزيل الملف من Drive');
+      }
 
       Map<String, dynamic>? data;
 
       if (raw.isEncrypted) {
-        if (password == null || password.trim().isEmpty) return LinkResult.fail('كلمة المرور مطلوبة');
-        if (linkCode == null || linkCode.trim().isEmpty) return LinkResult.fail('رمز الربط مطلوب');
+        if (password == null || password.trim().isEmpty) {
+          return LinkResult.fail('كلمة المرور مطلوبة');
+        }
+        if (linkCode == null || linkCode.trim().isEmpty) {
+          return LinkResult.fail('رمز الربط مطلوب');
+        }
+
         final parsed = LinkCodeService.parse(linkCode);
-        if (parsed == null) return LinkResult.fail('رمز الربط غير صالح.\n\nتأكد من نسخه كاملاً من جهاز الأساسي.');
+        if (parsed == null) {
+          return LinkResult.fail(
+              'رمز الربط غير صالح.\n\nتأكد من نسخه كاملاً من جهاز الأساسي.');
+        }
 
         try {
-          data = await CryptoService.decryptDataWithSalt(raw.encryptedPayload!, password.trim(), parsed.saltBase64);
+          data = await CryptoService.decryptDataWithSalt(
+              raw.encryptedPayload!, password.trim(), parsed.saltBase64);
         } catch (e) {
-          return LinkResult.fail('فشل فك التشفير.\n\nتأكد من:\n• كلمة المرور صحيحة\n• رمز الربط صحيح');
+          return LinkResult.fail(
+              'فشل فك التشفير.\n\nتأكد من:\n• كلمة المرور صحيحة\n• رمز الربط صحيح');
         }
 
         final primaryId = data['primary_device_id'] as String?;
         if (!LinkCodeService.matchesPrimaryDevice(parsed, primaryId)) {
-          return LinkResult.fail('رمز الربط لا ينتمي لهذا الملف.\n\nتأكد من استخدام رمز الربط الصحيح.');
+          return LinkResult.fail(
+              'رمز الربط لا ينتمي لهذا الملف.\n\nتأكد من استخدام رمز الربط الصحيح.');
         }
 
         try {
-          await CryptoService.setMasterPasswordWithSalt(password.trim(), parsed.saltBase64);
+          await CryptoService.setMasterPasswordWithSalt(
+              password.trim(), parsed.saltBase64);
         } catch (e) {
           debugPrint('⚠️ Failed to save password: $e');
         }
       } else {
         data = raw.plainData;
-        if (data == null) return LinkResult.fail('الملف تالف أو غير صالح');
+        if (data == null) {
+          return LinkResult.fail('الملف تالف أو غير صالح');
+        }
       }
 
+      // استيراد المحاسبين (مع دمج السحابة)
       await AccountantsService.loadFromSync(data);
       final all = AccountantsService.getAll();
 
       final myEmail = GDriveService.userEmail?.toLowerCase();
-      if (myEmail == null) return LinkResult.fail('لم نتمكن من قراءة إيميلك');
+      if (myEmail == null) {
+        return LinkResult.fail('لم نتمكن من قراءة إيميلك');
+      }
 
       final mine = all.where((a) => a.email?.toLowerCase() == myEmail).toList();
       if (mine.isEmpty) {
-        return LinkResult.fail('إيميلك ($myEmail) غير مضاف كـ محاسب.\n\nاطلب من الأساسي إضافتك:\nالإعدادات ← إدارة المحاسبين ← "+ محاسب جديد"');
+        return LinkResult.fail(
+            'إيميلك ($myEmail) غير مضاف كـ محاسب.\n\nاطلب من الأساسي إضافتك:\nالإعدادات ← إدارة المحاسبين ← "+ محاسب جديد"');
       }
-      if (mine.length > 1) return LinkResult.fail('يوجد أكثر من محاسب بنفس الإيميل.\nتواصل مع الأساسي لحل التعارض.');
 
-      final myAcc = mine.first;
+      // 🆕 التعامل مع التكرار: نختار الأحدث ونحذف الباقي
+      Accountant myAcc;
+      if (mine.length > 1) {
+        mine.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        myAcc = mine.first;
+        for (int i = 1; i < mine.length; i++) {
+          await AccountantsService.removeAccountant(mine[i].id, force: true);
+        }
+        debugPrint('🗑️ Removed ${mine.length - 1} duplicate accountants');
+      } else {
+        myAcc = mine.first;
+      }
+
       final myDeviceId = await DeviceService.getDeviceId();
 
-      if (myAcc.deviceId != null && myAcc.deviceId!.isNotEmpty && myAcc.deviceId != myDeviceId) {
-        return LinkResult.fail('حسابك مرتبط بجهاز آخر بالفعل.\n\nتواصل مع الأساسي لإلغاء ربط الجهاز القديم أولاً.');
+      if (myAcc.deviceId != null &&
+          myAcc.deviceId!.isNotEmpty &&
+          myAcc.deviceId != myDeviceId) {
+        return LinkResult.fail(
+            'حسابك مرتبط بجهاز آخر بالفعل.\n\nتواصل مع الأساسي لإلغاء ربط الجهاز القديم أولاً.');
       }
 
-      await AccountantsService.updateAccountant(id: myAcc.id, deviceId: myDeviceId);
+      await AccountantsService.updateAccountant(
+          id: myAcc.id, deviceId: myDeviceId);
 
       final primaryDeviceId = data['primary_device_id'] as String?;
       if (primaryDeviceId != null && primaryDeviceId.isNotEmpty) {
@@ -185,19 +260,25 @@ class PrimaryLinkService {
       await GDriveService.deleteOwnSyncFileIfExists();
       DatabaseHelper.onDataChanged?.call();
 
-      // 🆕 مزامنة شاملة لسحب العملاء والعمليات
+      // مزامنة شاملة لسحب العملاء والعمليات
       debugPrint('🔄 [Link] Triggering full sync to pull data...');
       await SyncService.manualSync();
 
       return LinkResult.ok(myAcc.name, myAcc.code);
     } catch (e) {
+      debugPrint('❌ completeLink error: $e');
       return LinkResult.fail('خطأ غير متوقع: $e');
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // دوال مساعدة
+  // ═══════════════════════════════════════════════════════════
+
   static Future<void> _importSharedSettings(Map<String, dynamic> data) async {
     final settingsMap = data['settings'] as Map<String, dynamic>?;
     if (settingsMap == null) return;
+
     for (final entry in settingsMap.entries) {
       if (AppSettings.sharedSettings.contains(entry.key)) {
         try {
@@ -207,18 +288,34 @@ class PrimaryLinkService {
         }
       }
     }
+    debugPrint('✅ Imported shared settings');
   }
 
   static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
     final codeMap = data['code_settings'] as Map<String, dynamic>?;
     if (codeMap == null) return;
+
     try {
-      if (codeMap['debt_prefix'] is String) await CodeService.setDebtPrefix(codeMap['debt_prefix'] as String);
-      if (codeMap['payment_prefix'] is String) await CodeService.setPaymentPrefix(codeMap['payment_prefix'] as String);
-      if (codeMap['return_prefix'] is String) await CodeService.setReturnPrefix(codeMap['return_prefix'] as String);
-      if (codeMap['digits'] is int) await CodeService.setDigits(codeMap['digits'] as int);
-      if (codeMap['mode'] is String) await CodeService.setMode(codeMap['mode'] as String);
-      if (codeMap['enabled'] is bool) await CodeService.setEnabled(codeMap['enabled'] as bool);
+      if (codeMap['debt_prefix'] is String) {
+        await CodeService.setDebtPrefix(codeMap['debt_prefix'] as String);
+      }
+      if (codeMap['payment_prefix'] is String) {
+        await CodeService.setPaymentPrefix(
+            codeMap['payment_prefix'] as String);
+      }
+      if (codeMap['return_prefix'] is String) {
+        await CodeService.setReturnPrefix(codeMap['return_prefix'] as String);
+      }
+      if (codeMap['digits'] is int) {
+        await CodeService.setDigits(codeMap['digits'] as int);
+      }
+      if (codeMap['mode'] is String) {
+        await CodeService.setMode(codeMap['mode'] as String);
+      }
+      if (codeMap['enabled'] is bool) {
+        await CodeService.setEnabled(codeMap['enabled'] as bool);
+      }
+      debugPrint('✅ Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
     }
