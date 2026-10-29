@@ -218,7 +218,7 @@ class PrimaryLinkService {
             'إيميلك ($myEmail) غير مضاف كـ محاسب.\n\nاطلب من الأساسي إضافتك:\nالإعدادات ← إدارة المحاسبين ← "+ محاسب جديد"');
       }
 
-      // 🆕 التعامل مع التكرار: نختار الأحدث ونحذف الباقي
+      // التعامل مع التكرار: نختار الأحدث ونحذف الباقي
       Accountant myAcc;
       if (mine.length > 1) {
         mine.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -257,6 +257,11 @@ class PrimaryLinkService {
       await AccountantService.setAccountantName(myAcc.name);
       await _importSharedSettings(data);
       await _importCodeSettings(data);
+
+      // 🆕 حفظ معرف الملف المشترك للاستخدام المستقبلي
+      await GDriveService.setLinkedFileId(fileId);
+
+      // حذف أي ملف خاص قديم (لتفادي التعارض)
       await GDriveService.deleteOwnSyncFileIfExists();
       DatabaseHelper.onDataChanged?.call();
 
@@ -316,7 +321,7 @@ class PrimaryLinkService {
         await CodeService.setEnabled(codeMap['enabled'] as bool);
       }
 
-      // 🆕 إعدادات رمز المحاسب
+      // إعدادات رمز المحاسب
       if (codeMap['code_include_accountant'] is bool) {
         await SettingsService.setBool(
             AppSettings.codeIncludeAccountant,
