@@ -89,7 +89,6 @@ class SyncService {
 
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
-  // ═══════════════════════════════════════════════════════════
   static Future<void> init() async {
     await DeviceService.getDeviceId();
     await AccountantsService.init();
@@ -191,15 +190,19 @@ class SyncService {
     return _runSync(silent: false);
   }
 
-  static Future<SyncResult> manualSync() async {
+  /// 🆕 إضافة forcePull لإجبار التنزيل
+  static Future<SyncResult> manualSync({bool forcePull = false}) async {
     if (!GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) return SyncResult(success: false, message: err);
     }
-    return _runSync(silent: false);
+    return _runSync(silent: false, forcePull: forcePull);
   }
 
-  static Future<SyncResult> _runSync({required bool silent}) async {
+  static Future<SyncResult> _runSync({
+    required bool silent,
+    bool forcePull = false,
+  }) async {
     if (_isSyncing && _currentSyncFuture != null) {
       try {
         return await _currentSyncFuture!;
@@ -210,7 +213,7 @@ class SyncService {
 
     try {
       _isSyncing = true;
-      final future = _performSync(silent: silent);
+      final future = _performSync(silent: silent, forcePull: forcePull);
       _currentSyncFuture = future;
       return await future;
     } finally {
@@ -219,7 +222,10 @@ class SyncService {
     }
   }
 
-  static Future<SyncResult> _performSync({required bool silent}) async {
+  static Future<SyncResult> _performSync({
+    required bool silent,
+    bool forcePull = false,
+  }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
@@ -247,8 +253,10 @@ class SyncService {
 
       final hasLocalChanges =
           lastLocal != null && (lastSync == null || lastLocal.isAfter(lastSync));
-      final hasCloudChanges = cloudModified != null &&
-          (lastSync == null || cloudModified.isAfter(lastSync));
+      
+      // 🆕 إذا كان forcePull نشطاً، نجبر التنزيل مهما كانت الأوقات
+      final hasCloudChanges = forcePull || (cloudModified != null &&
+          (lastSync == null || cloudModified.isAfter(lastSync)));
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
@@ -434,7 +442,6 @@ class SyncService {
     int conflicts = 0;
 
     try {
-      // 🆕 استيراد المحاسبين والإعدادات
       if (cloudData['accountants'] != null ||
           cloudData['devices'] != null ||
           cloudData['deleted_accountant_ids'] != null) {
@@ -442,11 +449,12 @@ class SyncService {
         debugPrint('✅ [Sync] Accountants merged from cloud');
       }
 
-      // 🆕 استيراد الإعدادات المشتركة
-      await _importSharedSettings(cloudData);
-
-      // 🆕 استيراد إعدادات الرموز (بما فيها رمز المحاسب)
-      await _importCodeSettings(cloudData);
+      // 🆕 حماية إعدادات الأساسي: لا تستورد الإعدادات إذا كنت الأساسي
+      final isPrimary = await DeviceService.isPrimaryDevice();
+      if (!isPrimary) {
+        await _importSharedSettings(cloudData);
+        await _importCodeSettings(cloudData);
+      }
 
       final cloudCustomers = (cloudData['customers'] as List?) ?? [];
       final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
@@ -667,7 +675,6 @@ class SyncService {
         await CodeService.setEnabled(codeMap['enabled'] as bool);
       }
 
-      // 🆕 إعدادات رمز المحاسب
       if (codeMap['code_include_accountant'] is bool) {
         await SettingsService.setBool(
             AppSettings.codeIncludeAccountant,
@@ -1094,7 +1101,6 @@ class SyncService {
           ? await db.allTombstonesRaw()
           : <Map<String, dynamic>>[];
 
-      // الإعدادات المشتركة
       final Map<String, dynamic> sharedSettingsMap = {};
       for (final key in AppSettings.sharedSettings) {
         final def = AppSettings.defaults[key];
@@ -1109,7 +1115,6 @@ class SyncService {
         }
       }
 
-      // 🆕 إعدادات الرموز (مع رمز المحاسب)
       final codeSettingsMap = {
         'debt_prefix': await CodeService.getDebtPrefix(),
         'payment_prefix': await CodeService.getPaymentPrefix(),
