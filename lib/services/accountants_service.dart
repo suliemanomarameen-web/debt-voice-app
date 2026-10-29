@@ -14,6 +14,7 @@ class Accountant {
   final Map<String, bool> permissions;
   final String status;
   final String createdAt;
+  final String? updatedAt;
 
   Accountant({
     required this.id,
@@ -25,6 +26,7 @@ class Accountant {
     Map<String, bool>? permissions,
     this.status = 'active',
     required this.createdAt,
+    this.updatedAt,
   }) : permissions = permissions ?? Map<String, bool>.from(defaultPermissions);
 
   static const Map<String, bool> defaultPermissions = {
@@ -75,6 +77,7 @@ class Accountant {
         'permissions': permissions,
         'status': status,
         'created_at': createdAt,
+        'updated_at': updatedAt,
       };
 
   factory Accountant.fromMap(Map<String, dynamic> m) {
@@ -98,6 +101,7 @@ class Accountant {
       permissions: perms,
       status: m['status'] as String? ?? 'active',
       createdAt: m['created_at'] as String? ?? '',
+      updatedAt: m['updated_at'] as String?,
     );
   }
 
@@ -109,6 +113,7 @@ class Accountant {
     bool? isPrimary,
     Map<String, bool>? permissions,
     String? status,
+    String? updatedAt,
   }) {
     return Accountant(
       id: id,
@@ -120,6 +125,7 @@ class Accountant {
       permissions: permissions ?? Map.from(this.permissions),
       status: status ?? this.status,
       createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -232,7 +238,7 @@ class AccountantsService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 مزامنة: دمج + تصفية المحذوفين + إزالة التكرار
+  // مزامنة: دمج + تصفية المحذوفين + إزالة التكرار + الأحدث يفوز
   // ═══════════════════════════════════════════════════════════
   static Future<void> loadFromSync(Map<String, dynamic> syncData) async {
     try {
@@ -266,12 +272,9 @@ class AccountantsService {
               uniqueCloud.add(cloud);
             } else {
               final existing = uniqueByEmail[emailKey]!;
-              final existingHasDevice =
-                  existing.deviceId != null && existing.deviceId!.isNotEmpty;
-              final cloudHasDevice =
-                  cloud.deviceId != null && cloud.deviceId!.isNotEmpty;
+              final existingHasDevice = existing.deviceId != null && existing.deviceId!.isNotEmpty;
+              final cloudHasDevice = cloud.deviceId != null && cloud.deviceId!.isNotEmpty;
 
-              // نُبقي الأحدث أو الأكثر اكتمالاً
               if (!existingHasDevice && cloudHasDevice) {
                 _deletedAccountantIds.add(existing.id);
                 final idx = uniqueCloud.indexWhere((a) => a.id == existing.id);
@@ -286,7 +289,7 @@ class AccountantsService {
           }
         }
 
-        // 3. دمج المحلي مع السحابي
+        // 3. دمج المحلي مع السحابي (الأحدث يفوز)
         final merged = <Accountant>[];
         final usedCloudIds = <String>{};
 
@@ -308,8 +311,18 @@ class AccountantsService {
           }
 
           if (match != null) {
-            merged.add(match);
             usedCloudIds.add(match.id);
+
+            // 🆕 المقارنة: أي النسختين أحدث؟
+            final localTime = DateTime.tryParse(local.updatedAt ?? local.createdAt) ?? DateTime(2000);
+            final cloudTime = DateTime.tryParse(match.updatedAt ?? match.createdAt) ?? DateTime(2000);
+
+            if (localTime.isAfter(cloudTime)) {
+              merged.add(local); // المحلي أحدث → احتفظ به
+              debugPrint('📌 [Accountants] Kept local (newer): ${local.name}');
+            } else {
+              merged.add(match); // السحابي أحدث → استخدمه
+            }
           } else {
             merged.add(local);
           }
@@ -320,9 +333,7 @@ class AccountantsService {
         }
 
         _accountants = merged;
-        debugPrint(
-            '✅ [Accountants] Merged: ${_accountants.length} '
-            '(deleted: ${_deletedAccountantIds.length})');
+        debugPrint('✅ [Accountants] Merged: ${_accountants.length} (deleted: ${_deletedAccountantIds.length})');
       }
 
       if (devList != null && devList.isNotEmpty) {
@@ -337,7 +348,6 @@ class AccountantsService {
     }
   }
 
-  /// يُستدعى من sync_service قبل الرفع
   static Map<String, dynamic> getForSync() => {
         'accountants': _accountants.map((a) => a.toMap()).toList(),
         'devices': _pendingDevices.map((d) => d.toMap()).toList(),
@@ -348,11 +358,9 @@ class AccountantsService {
   // القراءة
   // ═══════════════════════════════════════════════════════════
 
-  static List<Accountant> getAll() =>
-      List<Accountant>.unmodifiable(_accountants);
+  static List<Accountant> getAll() => List<Accountant>.unmodifiable(_accountants);
 
-  static List<Accountant> getActive() =>
-      _accountants.where((a) => a.status == 'active').toList();
+  static List<Accountant> getActive() => _accountants.where((a) => a.status == 'active').toList();
 
   static Accountant? getById(String id) {
     try {
@@ -389,8 +397,7 @@ class AccountantsService {
     return acc?.can(permission) ?? false;
   }
 
-  static Future<bool> canManageAccountants() async =>
-      hasPermission('manage_accountants');
+  static Future<bool> canManageAccountants() async => hasPermission('manage_accountants');
 
   // ═══════════════════════════════════════════════════════════
   // CRUD
@@ -416,11 +423,11 @@ class AccountantsService {
       }
       if (email != null &&
           email.isNotEmpty &&
-          _accountants.any((a) =>
-              a.email?.toLowerCase() == email.trim().toLowerCase())) {
+          _accountants.any((a) => a.email?.toLowerCase() == email.trim().toLowerCase())) {
         return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
       }
 
+      final now = DateTime.now().toIso8601String();
       final newAcc = Accountant(
         id: _uuid.v4(),
         name: cleanName,
@@ -429,14 +436,12 @@ class AccountantsService {
         deviceId: deviceId,
         isPrimary: isPrimary,
         permissions: permissions,
-        createdAt: DateTime.now().toIso8601String(),
+        createdAt: now,
+        updatedAt: now,
       );
 
       _accountants.add(newAcc);
-      // لا نضيف ID إلى المحذوفين لأن هذا ID جديد
       await _saveToLocal();
-
-      debugPrint('✅ [Accountants] Added: ${newAcc.name}');
       return {'success': true, 'accountant': newAcc};
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
@@ -478,24 +483,20 @@ class AccountantsService {
 
       final currentAcc = _accountants[idx];
 
-      // فحص التكرار عند تغيير الاسم/الإيميل
       if (name != null && name.trim() != currentAcc.name) {
-        if (_accountants.any(
-            (a) => a.id != id && a.name == name.trim())) {
+        if (_accountants.any((a) => a.id != id && a.name == name.trim())) {
           return {'success': false, 'message': 'اسم المحاسب موجود مسبقاً'};
         }
       }
       if (email != null &&
           email.trim().isNotEmpty &&
-          email.trim().toLowerCase() !=
-              (currentAcc.email ?? '').toLowerCase()) {
-        if (_accountants.any((a) =>
-            a.id != id &&
-            a.email?.toLowerCase() == email.trim().toLowerCase())) {
+          email.trim().toLowerCase() != (currentAcc.email ?? '').toLowerCase()) {
+        if (_accountants.any((a) => a.id != id && a.email?.toLowerCase() == email.trim().toLowerCase())) {
           return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
         }
       }
 
+      // 🆕 تحديث updated_at
       final updated = currentAcc.copyWith(
         name: name?.trim(),
         code: code?.trim(),
@@ -503,6 +504,7 @@ class AccountantsService {
         deviceId: deviceId,
         permissions: permissions,
         status: status,
+        updatedAt: DateTime.now().toIso8601String(),
       );
 
       _accountants[idx] = updated;
@@ -513,27 +515,18 @@ class AccountantsService {
     }
   }
 
-  /// 🆕 force = true يتخطى فحص الصلاحية (يُستخدم عند دمج المكرر)
-  static Future<Map<String, dynamic>> removeAccountant(
-    String id, {
-    bool force = false,
-  }) async {
+  static Future<Map<String, dynamic>> removeAccountant(String id, {bool force = false}) async {
     try {
       if (!force && !await canManageAccountants()) {
         return {'success': false, 'message': 'ليس لديك صلاحية'};
       }
       final acc = getById(id);
       if (acc == null) return {'success': false, 'message': 'المحاسب غير موجود'};
-      if (acc.isPrimary) {
-        return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
-      }
+      if (acc.isPrimary) return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
 
       _accountants.removeWhere((a) => a.id == id);
-      // 🆕 سجّل الحذف لمنع عودته من السحابة
       _deletedAccountantIds.add(id);
       await _saveToLocal();
-
-      debugPrint('✅ [Accountants] Removed: ${acc.name} (tombstone)');
       return {'success': true};
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
@@ -560,11 +553,9 @@ class AccountantsService {
     await _saveToLocal();
   }
 
-  static List<PendingDevice> getPendingDevices() =>
-      _pendingDevices.where((d) => d.status == 'pending').toList();
+  static List<PendingDevice> getPendingDevices() => _pendingDevices.where((d) => d.status == 'pending').toList();
 
-  static List<PendingDevice> getAllDevices() =>
-      List<PendingDevice>.unmodifiable(_pendingDevices);
+  static List<PendingDevice> getAllDevices() => List<PendingDevice>.unmodifiable(_pendingDevices);
 
   static Future<Map<String, dynamic>> approveDevice({
     required String deviceId,
@@ -573,9 +564,7 @@ class AccountantsService {
     Map<String, bool>? permissions,
   }) async {
     try {
-      if (!await canManageAccountants()) {
-        return {'success': false, 'message': 'ليس لديك صلاحية'};
-      }
+      if (!await canManageAccountants()) return {'success': false, 'message': 'ليس لديك صلاحية'};
       final devIdx = _pendingDevices.indexWhere((d) => d.deviceId == deviceId);
       if (devIdx == -1) return {'success': false, 'message': 'الجهاز غير موجود'};
 
@@ -600,11 +589,7 @@ class AccountantsService {
         accountantId: newAcc.id,
       );
       await _saveToLocal();
-      return {
-        'success': true,
-        'accountant': newAcc,
-        'device': _pendingDevices[devIdx],
-      };
+      return {'success': true, 'accountant': newAcc, 'device': _pendingDevices[devIdx]};
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
     }
