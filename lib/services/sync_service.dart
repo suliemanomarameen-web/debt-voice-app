@@ -9,7 +9,7 @@ import 'logger_service.dart';
 import 'settings_service.dart';
 import 'accountants_service.dart';
 import 'device_service.dart';
-import 'code_service.dart'; // 🆕
+import 'code_service.dart';
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
@@ -434,11 +434,19 @@ class SyncService {
     int conflicts = 0;
 
     try {
+      // 🆕 استيراد المحاسبين والإعدادات
       if (cloudData['accountants'] != null ||
-          cloudData['devices'] != null) {
+          cloudData['devices'] != null ||
+          cloudData['deleted_accountant_ids'] != null) {
         await AccountantsService.loadFromSync(cloudData);
         debugPrint('✅ [Sync] Accountants merged from cloud');
       }
+
+      // 🆕 استيراد الإعدادات المشتركة
+      await _importSharedSettings(cloudData);
+
+      // 🆕 استيراد إعدادات الرموز (بما فيها رمز المحاسب)
+      await _importCodeSettings(cloudData);
 
       final cloudCustomers = (cloudData['customers'] as List?) ?? [];
       final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
@@ -614,6 +622,72 @@ class SyncService {
       'logs_added': addedLogs,
       'conflicts': conflicts,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // استيراد الإعدادات
+  // ═══════════════════════════════════════════════════════════
+  static Future<void> _importSharedSettings(Map<String, dynamic> data) async {
+    final settingsMap = data['settings'] as Map<String, dynamic>?;
+    if (settingsMap == null) return;
+
+    for (final entry in settingsMap.entries) {
+      if (AppSettings.sharedSettings.contains(entry.key)) {
+        try {
+          await SettingsService.set(entry.key, entry.value);
+        } catch (e) {
+          debugPrint('⚠️ Import setting ${entry.key}: $e');
+        }
+      }
+    }
+    debugPrint('✅ [Sync] Imported shared settings');
+  }
+
+  static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
+    final codeMap = data['code_settings'] as Map<String, dynamic>?;
+    if (codeMap == null) return;
+
+    try {
+      if (codeMap['debt_prefix'] is String) {
+        await CodeService.setDebtPrefix(codeMap['debt_prefix'] as String);
+      }
+      if (codeMap['payment_prefix'] is String) {
+        await CodeService.setPaymentPrefix(codeMap['payment_prefix'] as String);
+      }
+      if (codeMap['return_prefix'] is String) {
+        await CodeService.setReturnPrefix(codeMap['return_prefix'] as String);
+      }
+      if (codeMap['digits'] is int) {
+        await CodeService.setDigits(codeMap['digits'] as int);
+      }
+      if (codeMap['mode'] is String) {
+        await CodeService.setMode(codeMap['mode'] as String);
+      }
+      if (codeMap['enabled'] is bool) {
+        await CodeService.setEnabled(codeMap['enabled'] as bool);
+      }
+
+      // 🆕 إعدادات رمز المحاسب
+      if (codeMap['code_include_accountant'] is bool) {
+        await SettingsService.setBool(
+            AppSettings.codeIncludeAccountant,
+            codeMap['code_include_accountant'] as bool);
+      }
+      if (codeMap['code_accountant_position'] is String) {
+        await SettingsService.setString(
+            AppSettings.codeAccountantPosition,
+            codeMap['code_accountant_position'] as String);
+      }
+      if (codeMap['code_accountant_separator'] is String) {
+        await SettingsService.setString(
+            AppSettings.codeAccountantSeparator,
+            codeMap['code_accountant_separator'] as String);
+      }
+
+      debugPrint('✅ [Sync] Imported code settings');
+    } catch (e) {
+      debugPrint('⚠️ Import code settings: $e');
+    }
   }
 
   static Future<_ResolutionResult> _resolveCustomerConflict({
@@ -980,10 +1054,6 @@ class SyncService {
           whereArgs: [row['id']],
         );
       }
-      if (customers.isNotEmpty) {
-        debugPrint(
-            '✅ [Sync] Generated cloud_id for ${customers.length} customers');
-      }
 
       final transactions = await db.query(
         'transactions',
@@ -997,10 +1067,6 @@ class SyncService {
           where: 'id = ?',
           whereArgs: [row['id']],
         );
-      }
-      if (transactions.isNotEmpty) {
-        debugPrint(
-            '✅ [Sync] Generated cloud_id for ${transactions.length} transactions');
       }
     } catch (e) {
       debugPrint('⚠️ [Sync] _ensureCloudIds error: $e');
@@ -1028,7 +1094,7 @@ class SyncService {
           ? await db.allTombstonesRaw()
           : <Map<String, dynamic>>[];
 
-      // 🆕 استخراج الإعدادات المشتركة
+      // الإعدادات المشتركة
       final Map<String, dynamic> sharedSettingsMap = {};
       for (final key in AppSettings.sharedSettings) {
         final def = AppSettings.defaults[key];
@@ -1043,7 +1109,7 @@ class SyncService {
         }
       }
 
-      // 🆕 استخراج إعدادات رموز العمليات
+      // 🆕 إعدادات الرموز (مع رمز المحاسب)
       final codeSettingsMap = {
         'debt_prefix': await CodeService.getDebtPrefix(),
         'payment_prefix': await CodeService.getPaymentPrefix(),
@@ -1051,11 +1117,20 @@ class SyncService {
         'digits': await CodeService.getDigits(),
         'mode': await CodeService.getMode(),
         'enabled': await CodeService.isEnabled(),
+        'code_include_accountant': SettingsService.getBool(
+            AppSettings.codeIncludeAccountant,
+            defaultValue: false),
+        'code_accountant_position': SettingsService.getString(
+            AppSettings.codeAccountantPosition,
+            defaultValue: 'suffix'),
+        'code_accountant_separator': SettingsService.getString(
+            AppSettings.codeAccountantSeparator,
+            defaultValue: ''),
       };
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 7, // ⬆️ 6 → 7
+        'version': 8,
         'created_at': DateTime.now().toIso8601String(),
         'primary_device_id': primaryDeviceId,
         'customers': customers,
@@ -1063,8 +1138,8 @@ class SyncService {
         'used_codes': usedCodes,
         'log_events': logEvents,
         'tombstones': tombstones,
-        'settings': sharedSettingsMap, // 🆕
-        'code_settings': codeSettingsMap, // 🆕
+        'settings': sharedSettingsMap,
+        'code_settings': codeSettingsMap,
         ...accountantsData,
       };
 
