@@ -1,8 +1,10 @@
+// النموذج v2: إضافة حقل isPermanentlyDeleted لدعم الحذف النهائي عبر المزامنة
+
 import 'account_type.dart';
 
 class Customer {
   final int? id;
-  final String? cloudId; // 🆕 UUID عالمي فريد (لا يتغير أبداً)
+  final String? cloudId;
   final String name;
   final String? phone;
   final String accountType;
@@ -12,15 +14,16 @@ class Customer {
   final double? maxBalance;
   final bool isActive;
 
-  // 🆕 Tracking
+  // Tracking
   final String? createdBy;
   final String? updatedBy;
   final String? updatedAt;
 
-  // 🆕 Soft Delete + من حذف
+  // Soft Delete + Hard Delete
   final bool isDeleted;
+  final bool isPermanentlyDeleted;
   final String? deletedAt;
-  final String? deletedBy; // ⬅️ المحاسب الذي حذف الحساب
+  final String? deletedBy;
 
   final String createdAt;
 
@@ -35,12 +38,13 @@ class Customer {
     this.category = 'normal',
     this.maxBalance,
     this.isActive = true,
-    // 🆕 Tracking
+    // Tracking
     this.createdBy,
     this.updatedBy,
     this.updatedAt,
-    // 🆕 Soft Delete
+    // Soft Delete
     this.isDeleted = false,
+    this.isPermanentlyDeleted = false,
     this.deletedAt,
     this.deletedBy,
     required this.createdAt,
@@ -57,12 +61,13 @@ class Customer {
         'category': category,
         'max_balance': maxBalance,
         'is_active': isActive ? 1 : 0,
-        // 🆕 Tracking
+        // Tracking
         'created_by': createdBy,
         'updated_by': updatedBy,
         'updated_at': updatedAt,
-        // 🆕 Soft Delete
+        // Soft Delete
         'is_deleted': isDeleted ? 1 : 0,
+        'is_permanently_deleted': isPermanentlyDeleted ? 1 : 0,
         'deleted_at': deletedAt,
         'deleted_by': deletedBy,
         'created_at': createdAt,
@@ -81,12 +86,13 @@ class Customer {
             ? (m['max_balance'] as num).toDouble()
             : null,
         isActive: m['is_active'] == null || m['is_active'] == 1,
-        // 🆕 Tracking
+        // Tracking
         createdBy: m['created_by'],
         updatedBy: m['updated_by'],
         updatedAt: m['updated_at'],
-        // 🆕 Soft Delete
+        // Soft Delete
         isDeleted: m['is_deleted'] == 1,
+        isPermanentlyDeleted: m['is_permanently_deleted'] == 1,
         deletedAt: m['deleted_at'],
         deletedBy: m['deleted_by'],
         createdAt: m['created_at'] ?? '',
@@ -103,12 +109,13 @@ class Customer {
     String? category,
     double? maxBalance,
     bool? isActive,
-    // 🆕 Tracking
+    // Tracking
     String? createdBy,
     String? updatedBy,
     String? updatedAt,
-    // 🆕 Soft Delete
+    // Soft Delete
     bool? isDeleted,
+    bool? isPermanentlyDeleted,
     String? deletedAt,
     String? deletedBy,
     String? createdAt,
@@ -124,12 +131,14 @@ class Customer {
       category: category ?? this.category,
       maxBalance: maxBalance ?? this.maxBalance,
       isActive: isActive ?? this.isActive,
-      // 🆕 Tracking
+      // Tracking
       createdBy: createdBy ?? this.createdBy,
       updatedBy: updatedBy ?? this.updatedBy,
       updatedAt: updatedAt ?? this.updatedAt,
-      // 🆕 Soft Delete
+      // Soft Delete
       isDeleted: isDeleted ?? this.isDeleted,
+      isPermanentlyDeleted:
+          isPermanentlyDeleted ?? this.isPermanentlyDeleted,
       deletedAt: deletedAt ?? this.deletedAt,
       deletedBy: deletedBy ?? this.deletedBy,
       createdAt: createdAt ?? this.createdAt,
@@ -153,29 +162,39 @@ class Customer {
     return currentBalance / maxBalance!;
   }
 
-  /// 🆕 هل الحساب نشط + غير محذوف؟
-  bool get isCurrentlyActive => isActive && !isDeleted;
+  /// هل الحساب نشط + غير محذوف؟
+  bool get isCurrentlyActive => isActive && !isDeleted && !isPermanentlyDeleted;
 
-  /// 🆕 هل الحساب في سلة المحذوفات؟
-  bool get isTrashed => isDeleted;
+  /// هل الحساب في سلة المحذوفات (soft delete فقط)؟
+  bool get isTrashed => isDeleted && !isPermanentlyDeleted;
 
-  /// 🆕 هل تم تعديله بعد الإنشاء؟
+  /// هل الحساب محذوف نهائياً (لا يُستعاد)؟
+  bool get isGoneForever => isPermanentlyDeleted;
+
+  /// هل يجب عرضه للمستخدم في أي قائمة؟
+  bool get isVisible {
+    if (isPermanentlyDeleted) return false;
+    if (isDeleted) return false;
+    return true;
+  }
+
+  /// هل تم تعديله بعد الإنشاء؟
   bool get wasModified {
     if (updatedAt == null || createdAt.isEmpty) return false;
     return updatedAt != createdAt;
   }
 
-  /// 🆕 هل تم تعديله بواسطة شخص مختلف عن المنشئ؟
+  /// هل تم تعديله بواسطة شخص مختلف عن المنشئ؟
   bool get wasModifiedByOther {
     if (!wasModified) return false;
     if (createdBy == null || updatedBy == null) return false;
     return createdBy != updatedBy;
   }
 
-  /// 🆕 هل له معرّف سحابي؟
+  /// هل له معرّف سحابي؟
   bool get hasCloudId => cloudId != null && cloudId!.isNotEmpty;
 
-  /// 🆕 نص وصفي لمن حذف الحساب
+  /// نص وصفي لمن حذف الحساب
   String get deletedByLabel {
     if (deletedBy == null || deletedBy!.isEmpty) return 'غير معروف';
     return deletedBy!;
