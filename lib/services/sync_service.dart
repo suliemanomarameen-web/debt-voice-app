@@ -190,13 +190,21 @@ class SyncService {
     return _runSync(silent: false);
   }
 
-  /// 🆕 إضافة forcePull لإجبار التنزيل
   static Future<SyncResult> manualSync({bool forcePull = false}) async {
     if (!GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) return SyncResult(success: false, message: err);
     }
     return _runSync(silent: false, forcePull: forcePull);
+  }
+
+  /// دمج البيانات مباشرة (بدون إعادة تنزيل)
+  static Future<void> mergeDataDirectly(Map<String, dynamic> cloudData) async {
+    await _mergeCloudData(cloudData);
+    await _uploadCurrentState();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
+    await _saveHasPendingChanges(false);
   }
 
   static Future<SyncResult> _runSync({
@@ -254,7 +262,6 @@ class SyncService {
       final hasLocalChanges =
           lastLocal != null && (lastSync == null || lastLocal.isAfter(lastSync));
       
-      // 🆕 إذا كان forcePull نشطاً، نجبر التنزيل مهما كانت الأوقات
       final hasCloudChanges = forcePull || (cloudModified != null &&
           (lastSync == null || cloudModified.isAfter(lastSync)));
 
@@ -270,6 +277,17 @@ class SyncService {
         );
         if (!_resultController.isClosed) _resultController.add(r);
         return r;
+      }
+
+      // حماية: إذا كان هناك تغييرات سحابية وفشل التنزيل، لا نرفع بيانات فارغة
+      if (hasCloudChanges && cloudData == null) {
+        if (!silent) _setStatus(SyncStatus.error);
+        final errResult = SyncResult(
+          success: false,
+          message: 'فشل تنزيل البيانات السحابية. لن يتم رفع بيانات محلية لتجنب المسح.',
+        );
+        if (!_resultController.isClosed) _resultController.add(errResult);
+        return errResult;
       }
 
       int addedCustomers = 0;
@@ -449,7 +467,6 @@ class SyncService {
         debugPrint('✅ [Sync] Accountants merged from cloud');
       }
 
-      // 🆕 حماية إعدادات الأساسي: لا تستورد الإعدادات إذا كنت الأساسي
       final isPrimary = await DeviceService.isPrimaryDevice();
       if (!isPrimary) {
         await _importSharedSettings(cloudData);
@@ -496,6 +513,8 @@ class SyncService {
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
+          // في هذه المرحلة، لا نقوم بأي دمج تلقائي بالاسم.
+          // نضيف الحساب كما هو (إن لم يكن موجوداً بنفس cloud_id).
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -614,9 +633,6 @@ class SyncService {
           }
         }
       }
-
-      debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
     }
@@ -632,9 +648,6 @@ class SyncService {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استيراد الإعدادات
-  // ═══════════════════════════════════════════════════════════
   static Future<void> _importSharedSettings(Map<String, dynamic> data) async {
     final settingsMap = data['settings'] as Map<String, dynamic>?;
     if (settingsMap == null) return;
@@ -648,7 +661,6 @@ class SyncService {
         }
       }
     }
-    debugPrint('✅ [Sync] Imported shared settings');
   }
 
   static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
@@ -690,8 +702,6 @@ class SyncService {
             AppSettings.codeAccountantSeparator,
             codeMap['code_accountant_separator'] as String);
       }
-
-      debugPrint('✅ [Sync] Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
     }
@@ -1135,7 +1145,7 @@ class SyncService {
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 8,
+        'version': 10,
         'created_at': DateTime.now().toIso8601String(),
         'primary_device_id': primaryDeviceId,
         'customers': customers,
