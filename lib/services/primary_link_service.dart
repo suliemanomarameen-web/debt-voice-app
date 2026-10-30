@@ -11,7 +11,7 @@ import 'link_code_service.dart';
 import 'settings_service.dart';
 import 'sync_service.dart';
 
-/// نتيجة الخطوة 1: التحقق من الملف المشترك
+/// نتيجة الخطوة 1: التحقق من وجود الملف المشترك
 class LinkInitResult {
   final bool success;
   final String message;
@@ -218,6 +218,7 @@ class PrimaryLinkService {
             'إيميلك ($myEmail) غير مضاف كـ محاسب.\n\nاطلب من الأساسي إضافتك:\nالإعدادات ← إدارة المحاسبين ← "+ محاسب جديد"');
       }
 
+      // التعامل مع التكرار (حسابات بنفس الإيميل): نختار الأحدث ونحذف الباقي
       Accountant myAcc;
       if (mine.length > 1) {
         mine.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -239,6 +240,7 @@ class PrimaryLinkService {
             'حسابك مرتبط بجهاز آخر بالفعل.\n\nتواصل مع الأساسي لإلغاء ربط الجهاز القديم أولاً.');
       }
 
+      // تحديث deviceId للمحاسب (سيتم قبوله بفضل isLinking في updateAccountant)
       await AccountantsService.updateAccountant(
           id: myAcc.id, deviceId: myDeviceId);
 
@@ -254,19 +256,20 @@ class PrimaryLinkService {
 
       await DeviceService.setDeviceStatus(DeviceService.statusAuthorized);
       await AccountantService.setAccountantName(myAcc.name);
+      
+      // استيراد الإعدادات المباشرة
       await _importSharedSettings(data);
       await _importCodeSettings(data);
 
-      // حفظ معرف الملف المشترك
+      // حفظ معرف الملف المشترك (للمزامنات القادمة)
       await GDriveService.setLinkedFileId(fileId);
 
-      // حذف أي ملف خاص قديم
+      // حذف أي ملف خاص قديم (لتفادي التعارض)
       await GDriveService.deleteOwnSyncFileIfExists();
-      DatabaseHelper.onDataChanged?.call();
-
-      // 🆕 إجبار المزامنة الشاملة (forcePull: true)
-      debugPrint('🔄 [Link] Triggering FULL sync to pull data...');
-      await SyncService.manualSync(forcePull: true);
+      
+      // 🆕 دمج البيانات مباشرة (لضمان وصول العملاء دون الحاجة لتنزيل مرة أخرى)
+      debugPrint('🔄 [Link] Merging data directly...');
+      await SyncService.mergeDataDirectly(data);
 
       return LinkResult.ok(myAcc.name, myAcc.code);
     } catch (e) {
@@ -292,7 +295,6 @@ class PrimaryLinkService {
         }
       }
     }
-    debugPrint('✅ Imported shared settings');
   }
 
   static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
@@ -335,8 +337,6 @@ class PrimaryLinkService {
             AppSettings.codeAccountantSeparator,
             codeMap['code_accountant_separator'] as String);
       }
-
-      debugPrint('✅ Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
     }
