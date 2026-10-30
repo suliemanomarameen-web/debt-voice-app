@@ -190,15 +190,35 @@ class SyncService {
     return _runSync(silent: false);
   }
 
-  static Future<SyncResult> manualSync({bool forcePull = false}) async {
+  static Future<SyncResult> manualSync({
+    bool forcePull = false,
+    bool forceUpload = false,
+  }) async {
     if (!GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) return SyncResult(success: false, message: err);
     }
-    return _runSync(silent: false, forcePull: forcePull);
+    return _runSync(
+      silent: false,
+      forcePull: forcePull,
+      forceUpload: forceUpload,
+    );
   }
 
-  /// دمج البيانات مباشرة (بدون إعادة تنزيل)
+  /// 🆕 رفع البيانات مباشرة دون تنزيل (للإجبار عند إضافة محاسب)
+  static Future<void> forceUploadNow() async {
+    if (!GDriveService.isSignedIn) {
+      await GDriveService.trySilentSignIn();
+    }
+    if (!GDriveService.isSignedIn) return;
+    await _uploadCurrentState();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
+    await prefs.setString(_keyLastUpload, DateTime.now().toIso8601String());
+    await _saveHasPendingChanges(false);
+    debugPrint('✅ [Sync] Force upload completed');
+  }
+
   static Future<void> mergeDataDirectly(Map<String, dynamic> cloudData) async {
     await _mergeCloudData(cloudData);
     await _uploadCurrentState();
@@ -210,6 +230,7 @@ class SyncService {
   static Future<SyncResult> _runSync({
     required bool silent,
     bool forcePull = false,
+    bool forceUpload = false,
   }) async {
     if (_isSyncing && _currentSyncFuture != null) {
       try {
@@ -221,7 +242,11 @@ class SyncService {
 
     try {
       _isSyncing = true;
-      final future = _performSync(silent: silent, forcePull: forcePull);
+      final future = _performSync(
+        silent: silent,
+        forcePull: forcePull,
+        forceUpload: forceUpload,
+      );
       _currentSyncFuture = future;
       return await future;
     } finally {
@@ -233,6 +258,7 @@ class SyncService {
   static Future<SyncResult> _performSync({
     required bool silent,
     bool forcePull = false,
+    bool forceUpload = false,
   }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
@@ -259,8 +285,8 @@ class SyncService {
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
       final cloudData = await GDriveService.downloadSyncFile();
 
-      final hasLocalChanges =
-          lastLocal != null && (lastSync == null || lastLocal.isAfter(lastSync));
+      final hasLocalChanges = forceUpload || (lastLocal != null && 
+          (lastSync == null || lastLocal.isAfter(lastSync)));
       
       final hasCloudChanges = forcePull || (cloudModified != null &&
           (lastSync == null || cloudModified.isAfter(lastSync)));
@@ -279,7 +305,6 @@ class SyncService {
         return r;
       }
 
-      // حماية: إذا كان هناك تغييرات سحابية وفشل التنزيل، لا نرفع بيانات فارغة
       if (hasCloudChanges && cloudData == null) {
         if (!silent) _setStatus(SyncStatus.error);
         final errResult = SyncResult(
@@ -478,6 +503,13 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
+      debugPrint('📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
+      await LoggerService.info(
+        '📊 استيراد بيانات',
+        'السحابة تحتوي على: ${cloudCustomers.length} عميل، ${cloudTransactions.length} عملية',
+        category: LogCategory.sync,
+      );
+
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -513,8 +545,6 @@ class SyncService {
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
-          // في هذه المرحلة، لا نقوم بأي دمج تلقائي بالاسم.
-          // نضيف الحساب كما هو (إن لم يكن موجوداً بنفس cloud_id).
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -633,8 +663,12 @@ class SyncService {
           }
         }
       }
+
+      debugPrint(
+          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
+      await LoggerService.logSyncError('خطأ في الدمج: $e');
     }
 
     return {
@@ -661,6 +695,7 @@ class SyncService {
         }
       }
     }
+    debugPrint('✅ [Sync] Imported shared settings');
   }
 
   static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
@@ -702,6 +737,8 @@ class SyncService {
             AppSettings.codeAccountantSeparator,
             codeMap['code_accountant_separator'] as String);
       }
+
+      debugPrint('✅ [Sync] Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
     }
@@ -1111,6 +1148,13 @@ class SyncService {
           ? await db.allTombstonesRaw()
           : <Map<String, dynamic>>[];
 
+      debugPrint('📤 [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions');
+      await LoggerService.info(
+        '📤 رفع بيانات',
+        'يتم رفع: ${customers.length} عميل، ${transactions.length} عملية',
+        category: LogCategory.sync,
+      );
+
       final Map<String, dynamic> sharedSettingsMap = {};
       for (final key in AppSettings.sharedSettings) {
         final def = AppSettings.defaults[key];
@@ -1145,7 +1189,7 @@ class SyncService {
 
       final data = {
         'app': 'debt_voice_app',
-        'version': 10,
+        'version': 11,
         'created_at': DateTime.now().toIso8601String(),
         'primary_device_id': primaryDeviceId,
         'customers': customers,
