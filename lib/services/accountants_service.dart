@@ -266,8 +266,10 @@ class AccountantsService {
               uniqueCloud.add(cloud);
             } else {
               final existing = uniqueByEmail[emailKey]!;
-              final existingHasDevice = existing.deviceId != null && existing.deviceId!.isNotEmpty;
-              final cloudHasDevice = cloud.deviceId != null && cloud.deviceId!.isNotEmpty;
+              final existingHasDevice =
+                  existing.deviceId != null && existing.deviceId!.isNotEmpty;
+              final cloudHasDevice =
+                  cloud.deviceId != null && cloud.deviceId!.isNotEmpty;
 
               if (!existingHasDevice && cloudHasDevice) {
                 _deletedAccountantIds.add(existing.id);
@@ -305,13 +307,10 @@ class AccountantsService {
 
           if (match != null) {
             usedCloudIds.add(match.id);
-
             final localTime = DateTime.tryParse(local.updatedAt ?? local.createdAt) ?? DateTime(2000);
             final cloudTime = DateTime.tryParse(match.updatedAt ?? match.createdAt) ?? DateTime(2000);
-
             if (localTime.isAfter(cloudTime)) {
               merged.add(local);
-              debugPrint('📌 [Accountants] Kept local (newer): ${local.name}');
             } else {
               merged.add(match);
             }
@@ -325,7 +324,6 @@ class AccountantsService {
         }
 
         _accountants = merged;
-        debugPrint('✅ [Accountants] Merged: ${_accountants.length} (deleted: ${_deletedAccountantIds.length})');
       }
 
       if (devList != null && devList.isNotEmpty) {
@@ -333,7 +331,6 @@ class AccountantsService {
             .map((e) => PendingDevice.fromMap(e as Map<String, dynamic>))
             .toList();
       }
-
       await _saveToLocal();
     } catch (e) {
       debugPrint('❌ [Accountants] loadFromSync: $e');
@@ -444,20 +441,27 @@ class AccountantsService {
     try {
       final isPrimaryDevice = await DeviceService.isPrimaryDevice();
       final current = await getCurrentAccountant();
+      final myDeviceId = await DeviceService.getDeviceId();
+
+      // 🆕 السماح بتحديث deviceId أثناء عملية الربط
+      final isLinking = deviceId != null && deviceId == myDeviceId;
       final isSelf = current?.id == id;
 
       if (!isPrimaryDevice) {
-        if (!isSelf) {
+        if (!isSelf && !isLinking) {
           return {'success': false, 'message': 'ليس لديك صلاحية'};
         }
-        if (name != null && name != current?.name) {
-          return {'success': false, 'message': 'لا يمكنك تغيير اسمك (يتحكم به الأساسي)'};
-        }
-        if (code != null && code != current?.code) {
-          return {'success': false, 'message': 'لا يمكنك تغيير رمزك (يتحكم به الأساسي)'};
-        }
-        if (permissions != null) {
-          return {'success': false, 'message': 'لا يمكنك تغيير صلاحياتك'};
+
+        if (!isLinking) {
+          if (name != null && name != current?.name) {
+            return {'success': false, 'message': 'لا يمكنك تغيير اسمك (يتحكم به الأساسي)'};
+          }
+          if (code != null && code != current?.code) {
+            return {'success': false, 'message': 'لا يمكنك تغيير رمزك (يتحكم به الأساسي)'};
+          }
+          if (permissions != null) {
+            return {'success': false, 'message': 'لا يمكنك تغيير صلاحياتك'};
+          }
         }
       }
 
@@ -479,9 +483,8 @@ class AccountantsService {
         }
       }
 
-      // 🆕 الإصلاح الجديد: ربط الجهاز لا يُعد تعديلاً للبيانات
       final hasOtherChanges = name != null || code != null || email != null || permissions != null || status != null;
-      
+
       final updated = currentAcc.copyWith(
         name: name?.trim(),
         code: code?.trim(),
