@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -238,7 +239,7 @@ class AccountantsService {
     }
   }
 
-  /// 🆕 استنتاج رمز من الاسم (أول حرف غير فارغ)
+  /// استنتاج رمز من الاسم (أول حرف غير فارغ)
   static String _deriveCodeFromName(String name) {
     final cleaned = name.trim();
     if (cleaned.isEmpty) return '';
@@ -330,13 +331,13 @@ class AccountantsService {
             if (localTime.isAfter(cloudTime)) {
               chosen = local;
             } else {
-              // 🆕 الحفاظ على deviceId + code المحليين (مفاهيم خاصة بالجهاز)
+              // الحفاظ على deviceId + code المحليين (مفاهيم خاصة بالجهاز)
               final preservedDeviceId =
                   (match.deviceId != null && match.deviceId!.isNotEmpty)
                       ? match.deviceId
                       : local.deviceId;
 
-              // 🆕 الحفاظ على code المحلي إذا السحابة تفتقده
+              // الحفاظ على code المحلي إذا السحابة تفتقده
               final preservedCode = (match.code.trim().isNotEmpty)
                   ? match.code
                   : local.code;
@@ -397,7 +398,7 @@ class AccountantsService {
     // 1. المحاولة الأساسية: البحث بـ deviceId
     try {
       final byDevice = _accountants.firstWhere((a) => a.deviceId == deviceId);
-      // 🆕 Self-heal للرمز إذا كان فارغاً
+      // Self-heal للرمز إذا كان فارغاً
       if (byDevice.code.trim().isEmpty) {
         final derived = _deriveCodeFromName(byDevice.name);
         if (derived.isNotEmpty) {
@@ -416,7 +417,7 @@ class AccountantsService {
       return byDevice;
     } catch (_) {}
 
-    // 2. 🆕 محاولة احتياطية: البحث بالاسم
+    // 2. محاولة احتياطية: البحث بالاسم
     try {
       final name = await AccountantService.getAccountantName();
       if (name != null && name.isNotEmpty) {
@@ -502,7 +503,7 @@ class AccountantsService {
         return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
       }
 
-      // 🆕 إذا الرمز فارغ → استنتجه من الاسم
+      // إذا الرمز فارغ → استنتجه من الاسم
       String finalCode = code.trim();
       if (finalCode.isEmpty) {
         finalCode = _deriveCodeFromName(cleanName);
@@ -750,3 +751,4 @@ class AccountantsService {
 }
 
 // المحاسبون v3: حماية code من المسح + استنتاج تلقائي + Self-heal كامل
+// المحاسبون v3.1: إصلاح فشل البناء — استيراد characters في accountants_service
