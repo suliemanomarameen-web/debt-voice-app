@@ -205,7 +205,6 @@ class SyncService {
     );
   }
 
-  /// 🆕 رفع البيانات مباشرة دون تنزيل (للإجبار عند إضافة محاسب)
   static Future<void> forceUploadNow() async {
     if (!GDriveService.isSignedIn) {
       await GDriveService.trySilentSignIn();
@@ -285,11 +284,13 @@ class SyncService {
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
       final cloudData = await GDriveService.downloadSyncFile();
 
-      final hasLocalChanges = forceUpload || (lastLocal != null && 
-          (lastSync == null || lastLocal.isAfter(lastSync)));
-      
-      final hasCloudChanges = forcePull || (cloudModified != null &&
-          (lastSync == null || cloudModified.isAfter(lastSync)));
+      final hasLocalChanges = forceUpload ||
+          (lastLocal != null &&
+              (lastSync == null || lastLocal.isAfter(lastSync)));
+
+      final hasCloudChanges = forcePull ||
+          (cloudModified != null &&
+              (lastSync == null || cloudModified.isAfter(lastSync)));
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
@@ -309,7 +310,8 @@ class SyncService {
         if (!silent) _setStatus(SyncStatus.error);
         final errResult = SyncResult(
           success: false,
-          message: 'فشل تنزيل البيانات السحابية. لن يتم رفع بيانات محلية لتجنب المسح.',
+          message:
+              'فشل تنزيل البيانات السحابية. لن يتم رفع بيانات محلية لتجنب المسح.',
         );
         if (!_resultController.isClosed) _resultController.add(errResult);
         return errResult;
@@ -326,6 +328,23 @@ class SyncService {
       if (hasCloudChanges && cloudData != null) {
         if (!silent) _setStatus(SyncStatus.downloading);
         final result = await _mergeCloudData(cloudData);
+
+        // 🆕 P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
+        if ((result['error'] ?? 0) == 1) {
+          if (!silent) _setStatus(SyncStatus.error);
+          final errMsg =
+              'فشل دمج البيانات السحابية — لم يتم الرفع لحماية بياناتك';
+          debugPrint('🚫 [Sync] P0-X: Merge failed, upload blocked');
+          if (!silent) await LoggerService.logSyncError(errMsg);
+
+          final errResult = SyncResult(
+            success: false,
+            message: errMsg,
+          );
+          if (!_resultController.isClosed) _resultController.add(errResult);
+          return errResult;
+        }
+
         addedCustomers = result['customers_added'] ?? 0;
         addedTransactions = result['transactions_added'] ?? 0;
         updatedCustomers = result['customers_updated'] ?? 0;
@@ -483,6 +502,7 @@ class SyncService {
     int restoredCustomers = 0;
     int addedLogs = 0;
     int conflicts = 0;
+    int mergeErrors = 0; // 🆕 P0-X
 
     try {
       if (cloudData['accountants'] != null ||
@@ -503,12 +523,8 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
-      debugPrint('📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
-      await LoggerService.info(
-        '📊 استيراد بيانات',
-        'السحابة تحتوي على: ${cloudCustomers.length} عميل، ${cloudTransactions.length} عملية',
-        category: LogCategory.sync,
-      );
+      debugPrint(
+          '📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
 
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
@@ -623,7 +639,8 @@ class SyncService {
 
           if (SettingsService.getBool(AppSettings.logRemoteActivity)) {
             await _logRemoteActivity(
-              item: 'عملية بمبلغ ${(ct['amount'] as num).toStringAsFixed(0)}',
+              item:
+                  'عملية بمبلغ ${(ct['amount'] as num).toStringAsFixed(0)}',
               action: 'إضافة من جهاز آخر',
               by: ct['accountant'] as String?,
             );
@@ -669,6 +686,7 @@ class SyncService {
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
       await LoggerService.logSyncError('خطأ في الدمج: $e');
+      mergeErrors = 1; // 🆕 P0-X: علّم الفشل
     }
 
     return {
@@ -679,6 +697,7 @@ class SyncService {
       'transactions_updated': updatedTransactions,
       'logs_added': addedLogs,
       'conflicts': conflicts,
+      'error': mergeErrors, // 🆕 P0-X
     };
   }
 
@@ -751,6 +770,107 @@ class SyncService {
     final db = DatabaseHelper.instance;
     final localId = localRow['id'] as int;
     final name = localRow['name'] as String? ?? '';
+
+    final localPerm = localRow['is_permanently_deleted'] == 1;
+    final cloudPerm = cloudRow['is_permanently_deleted'] == 1;
+
+    // 🆕 P0-Y: التعامل مع الحذف النهائي حسب الإعداد
+    if (localPerm != cloudPerm) {
+      final alwaysWins = SettingsService.getBool(
+        AppSettings.permanentDeleteAlwaysWins,
+        defaultValue: true,
+      );
+
+      if (alwaysWins) {
+        // وضع "الحذف النهائي يفوز دائماً" — لا استعادة أبداً
+        if (localPerm) {
+          debugPrint(
+              '🪦 [Sync] P0-Y: Permanent delete (local) wins for "$name"');
+          return _ResolutionResult('no_change');
+        } else {
+          final now = DateTime.now().toIso8601String();
+          await db.updateCustomerFields(localId, {
+            'is_deleted': 1,
+            'is_permanently_deleted': 1,
+            'deleted_at': cloudRow['deleted_at'] ?? now,
+            'deleted_by': cloudRow['deleted_by'] ?? 'المزامنة',
+            'updated_at': now,
+          });
+          await _logDeletionConflict(
+            item: 'حساب "$name"',
+            deletedBy: cloudRow['deleted_by'] as String?,
+            deletedAt: cloudRow['deleted_at'] as String?,
+            restoredBy: 'لا — الحذف النهائي نهائي',
+            reason: 'حذف نهائي سحابي يفوز دائماً (P0-Y)',
+          );
+          return _ResolutionResult('conflict');
+        }
+      } else {
+        // وضع "الاستعادة إذا وُجد تعديل أحدث"
+        final localUpdatedAt = localRow['updated_at'] as String? ??
+            localRow['created_at'] as String? ??
+            '';
+        final cloudUpdatedAt = cloudRow['updated_at'] as String? ??
+            cloudRow['created_at'] as String? ??
+            '';
+        final localTime =
+            DateTime.tryParse(localUpdatedAt) ?? DateTime(2000);
+        final cloudTime =
+            DateTime.tryParse(cloudUpdatedAt) ?? DateTime(2000);
+
+        if (localPerm) {
+          // المحلي محذوف نهائياً، السحابة نشطة
+          // إذا السحابة معدّلة بعد الحذف المحلي → استعادة
+          final localDelTime =
+              DateTime.tryParse(localRow['deleted_at'] as String? ?? '') ??
+                  localTime;
+          if (cloudTime.isAfter(localDelTime)) {
+            await db.restoreCustomer(localId, by: 'المزامنة');
+            await _logDeletionConflict(
+              item: 'حساب "$name"',
+              deletedBy: localRow['deleted_by'] as String?,
+              deletedAt: localRow['deleted_at'] as String?,
+              restoredBy: 'المزامنة',
+              reason: 'تعديل سحابي أحدث من الحذف النهائي — استُعيد السجل',
+            );
+            return _ResolutionResult('restored');
+          }
+          return _ResolutionResult('no_change');
+        } else {
+          // السحابة محذوفة نهائياً، المحلي نشط
+          // إذا المحلي معدّل بعد الحذف السحابي → لا نطبق الحذف
+          final cloudDelTime =
+              DateTime.tryParse(cloudRow['deleted_at'] as String? ?? '') ??
+                  cloudTime;
+          if (localTime.isAfter(cloudDelTime)) {
+            await _logDeletionConflict(
+              item: 'حساب "$name"',
+              deletedBy: cloudRow['deleted_by'] as String?,
+              deletedAt: cloudRow['deleted_at'] as String?,
+              restoredBy: 'لا — تعديل محلي أحدث',
+              reason: 'تعديل محلي أحدث من الحذف النهائي — لم يُطبَّق الحذف',
+            );
+            return _ResolutionResult('no_change');
+          }
+          final now = DateTime.now().toIso8601String();
+          await db.updateCustomerFields(localId, {
+            'is_deleted': 1,
+            'is_permanently_deleted': 1,
+            'deleted_at': cloudRow['deleted_at'] ?? now,
+            'deleted_by': cloudRow['deleted_by'] ?? 'المزامنة',
+            'updated_at': now,
+          });
+          await _logDeletionConflict(
+            item: 'حساب "$name"',
+            deletedBy: cloudRow['deleted_by'] as String?,
+            deletedAt: cloudRow['deleted_at'] as String?,
+            restoredBy: 'المزامنة (حذف نهائي سحابي)',
+            reason: 'حذف نهائي سحابي أحدث من التعديل المحلي',
+          );
+          return _ResolutionResult('conflict');
+        }
+      }
+    }
 
     final localDeleted = localRow['is_deleted'] == 1;
     final cloudDeleted = cloudRow['is_deleted'] == 1;
@@ -1148,12 +1268,8 @@ class SyncService {
           ? await db.allTombstonesRaw()
           : <Map<String, dynamic>>[];
 
-      debugPrint('📤 [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions');
-      await LoggerService.info(
-        '📤 رفع بيانات',
-        'يتم رفع: ${customers.length} عميل، ${transactions.length} عملية',
-        category: LogCategory.sync,
-      );
+      debugPrint(
+          '📤 [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions');
 
       final Map<String, dynamic> sharedSettingsMap = {};
       for (final key in AppSettings.sharedSettings) {
@@ -1247,3 +1363,5 @@ class _ResolutionResult {
   final String action;
   _ResolutionResult(this.action);
 }
+
+// المزامنة v2.1: منع الرفع بعد فشل الدمج (P0-X) + احترام خيار "الحذف النهائي يفوز دائماً" في التعارضات (P0-Y)
