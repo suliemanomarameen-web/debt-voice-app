@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'device_service.dart';
+import 'accountant_service.dart';
 
 class Accountant {
   final String id;
@@ -237,6 +238,17 @@ class AccountantsService {
     }
   }
 
+  /// 🆕 استنتاج رمز من الاسم (أول حرف غير فارغ)
+  static String _deriveCodeFromName(String name) {
+    final cleaned = name.trim();
+    if (cleaned.isEmpty) return '';
+    final firstChar = cleaned.characters.first;
+    if (RegExp(r'[A-Za-z\u0600-\u06FF]').hasMatch(firstChar)) {
+      return firstChar.toUpperCase();
+    }
+    return '';
+  }
+
   static Future<void> loadFromSync(Map<String, dynamic> syncData) async {
     try {
       final accList = syncData['accountants'] as List?;
@@ -307,13 +319,34 @@ class AccountantsService {
 
           if (match != null) {
             usedCloudIds.add(match.id);
-            final localTime = DateTime.tryParse(local.updatedAt ?? local.createdAt) ?? DateTime(2000);
-            final cloudTime = DateTime.tryParse(match.updatedAt ?? match.createdAt) ?? DateTime(2000);
+            final localTime =
+                DateTime.tryParse(local.updatedAt ?? local.createdAt) ??
+                    DateTime(2000);
+            final cloudTime =
+                DateTime.tryParse(match.updatedAt ?? match.createdAt) ??
+                    DateTime(2000);
+
+            Accountant chosen;
             if (localTime.isAfter(cloudTime)) {
-              merged.add(local);
+              chosen = local;
             } else {
-              merged.add(match);
+              // 🆕 الحفاظ على deviceId + code المحليين (مفاهيم خاصة بالجهاز)
+              final preservedDeviceId =
+                  (match.deviceId != null && match.deviceId!.isNotEmpty)
+                      ? match.deviceId
+                      : local.deviceId;
+
+              // 🆕 الحفاظ على code المحلي إذا السحابة تفتقده
+              final preservedCode = (match.code.trim().isNotEmpty)
+                  ? match.code
+                  : local.code;
+
+              chosen = match.copyWith(
+                deviceId: preservedDeviceId,
+                code: preservedCode,
+              );
             }
+            merged.add(chosen);
           } else {
             merged.add(local);
           }
@@ -343,9 +376,11 @@ class AccountantsService {
         'deleted_accountant_ids': _deletedAccountantIds.toList(),
       };
 
-  static List<Accountant> getAll() => List<Accountant>.unmodifiable(_accountants);
+  static List<Accountant> getAll() =>
+      List<Accountant>.unmodifiable(_accountants);
 
-  static List<Accountant> getActive() => _accountants.where((a) => a.status == 'active').toList();
+  static List<Accountant> getActive() =>
+      _accountants.where((a) => a.status == 'active').toList();
 
   static Accountant? getById(String id) {
     try {
@@ -355,13 +390,68 @@ class AccountantsService {
     }
   }
 
+  /// جلب المحاسب الحالي — مع Self-heal تلقائي للـ deviceId والـ code
   static Future<Accountant?> getCurrentAccountant() async {
     final deviceId = await DeviceService.getDeviceId();
+
+    // 1. المحاولة الأساسية: البحث بـ deviceId
     try {
-      return _accountants.firstWhere((a) => a.deviceId == deviceId);
-    } catch (_) {
-      return null;
-    }
+      final byDevice = _accountants.firstWhere((a) => a.deviceId == deviceId);
+      // 🆕 Self-heal للرمز إذا كان فارغاً
+      if (byDevice.code.trim().isEmpty) {
+        final derived = _deriveCodeFromName(byDevice.name);
+        if (derived.isNotEmpty) {
+          final healed = byDevice.copyWith(code: derived);
+          final idx = _accountants.indexWhere((a) => a.id == byDevice.id);
+          if (idx != -1) {
+            _accountants[idx] = healed;
+            await _saveToLocal();
+            debugPrint(
+              '🔧 [Accountants] Self-healed code for "${healed.name}" → ${healed.code}',
+            );
+          }
+          return healed;
+        }
+      }
+      return byDevice;
+    } catch (_) {}
+
+    // 2. 🆕 محاولة احتياطية: البحث بالاسم
+    try {
+      final name = await AccountantService.getAccountantName();
+      if (name != null && name.isNotEmpty) {
+        final byName = _accountants.firstWhere((a) => a.name == name);
+
+        var healed = byName;
+
+        // Self-heal: deviceId
+        if (healed.deviceId == null || healed.deviceId!.isEmpty) {
+          healed = healed.copyWith(deviceId: deviceId);
+        }
+
+        // Self-heal: code
+        if (healed.code.trim().isEmpty) {
+          final derived = _deriveCodeFromName(healed.name);
+          if (derived.isNotEmpty) healed = healed.copyWith(code: derived);
+        }
+
+        // احفظ إذا تغيّر شيء
+        final idx = _accountants.indexWhere((a) => a.id == healed.id);
+        if (idx != -1 &&
+            (_accountants[idx].deviceId != healed.deviceId ||
+                _accountants[idx].code != healed.code)) {
+          _accountants[idx] = healed;
+          await _saveToLocal();
+          debugPrint(
+            '🔧 [Accountants] Self-healed "${healed.name}" '
+            '(deviceId: ${healed.deviceId?.substring(0, 8)}, code: ${healed.code})',
+          );
+        }
+        return healed;
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   static Future<bool> hasAnyAccountants() async => _accountants.isNotEmpty;
@@ -382,7 +472,8 @@ class AccountantsService {
     return acc?.can(permission) ?? false;
   }
 
-  static Future<bool> canManageAccountants() async => hasPermission('manage_accountants');
+  static Future<bool> canManageAccountants() async =>
+      hasPermission('manage_accountants');
 
   static Future<Map<String, dynamic>> addAccountant({
     required String name,
@@ -396,7 +487,9 @@ class AccountantsService {
       if (!isPrimary && !await canManageAccountants()) {
         return {'success': false, 'message': 'ليس لديك صلاحية إضافة محاسبين'};
       }
-      if (name.trim().isEmpty) return {'success': false, 'message': 'الاسم مطلوب'};
+      if (name.trim().isEmpty) {
+        return {'success': false, 'message': 'الاسم مطلوب'};
+      }
 
       final cleanName = name.trim();
       if (_accountants.any((a) => a.name == cleanName)) {
@@ -404,15 +497,27 @@ class AccountantsService {
       }
       if (email != null &&
           email.isNotEmpty &&
-          _accountants.any((a) => a.email?.toLowerCase() == email.trim().toLowerCase())) {
+          _accountants.any(
+              (a) => a.email?.toLowerCase() == email.trim().toLowerCase())) {
         return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
+      }
+
+      // 🆕 إذا الرمز فارغ → استنتجه من الاسم
+      String finalCode = code.trim();
+      if (finalCode.isEmpty) {
+        finalCode = _deriveCodeFromName(cleanName);
+        if (finalCode.isNotEmpty) {
+          debugPrint(
+            '💡 [Accountants] Auto-derived code "$finalCode" from name "$cleanName"',
+          );
+        }
       }
 
       final now = DateTime.now().toIso8601String();
       final newAcc = Accountant(
         id: _uuid.v4(),
         name: cleanName,
-        code: code.trim(),
+        code: finalCode,
         email: email?.trim(),
         deviceId: deviceId,
         isPrimary: isPrimary,
@@ -443,7 +548,6 @@ class AccountantsService {
       final current = await getCurrentAccountant();
       final myDeviceId = await DeviceService.getDeviceId();
 
-      // 🆕 السماح بتحديث deviceId أثناء عملية الربط
       final isLinking = deviceId != null && deviceId == myDeviceId;
       final isSelf = current?.id == id;
 
@@ -454,10 +558,16 @@ class AccountantsService {
 
         if (!isLinking) {
           if (name != null && name != current?.name) {
-            return {'success': false, 'message': 'لا يمكنك تغيير اسمك (يتحكم به الأساسي)'};
+            return {
+              'success': false,
+              'message': 'لا يمكنك تغيير اسمك (يتحكم به الأساسي)'
+            };
           }
           if (code != null && code != current?.code) {
-            return {'success': false, 'message': 'لا يمكنك تغيير رمزك (يتحكم به الأساسي)'};
+            return {
+              'success': false,
+              'message': 'لا يمكنك تغيير رمزك (يتحكم به الأساسي)'
+            };
           }
           if (permissions != null) {
             return {'success': false, 'message': 'لا يمكنك تغيير صلاحياتك'};
@@ -466,7 +576,9 @@ class AccountantsService {
       }
 
       final idx = _accountants.indexWhere((a) => a.id == id);
-      if (idx == -1) return {'success': false, 'message': 'المحاسب غير موجود'};
+      if (idx == -1) {
+        return {'success': false, 'message': 'المحاسب غير موجود'};
+      }
 
       final currentAcc = _accountants[idx];
 
@@ -477,13 +589,20 @@ class AccountantsService {
       }
       if (email != null &&
           email.trim().isNotEmpty &&
-          email.trim().toLowerCase() != (currentAcc.email ?? '').toLowerCase()) {
-        if (_accountants.any((a) => a.id != id && a.email?.toLowerCase() == email.trim().toLowerCase())) {
+          email.trim().toLowerCase() !=
+              (currentAcc.email ?? '').toLowerCase()) {
+        if (_accountants.any((a) =>
+            a.id != id &&
+            a.email?.toLowerCase() == email.trim().toLowerCase())) {
           return {'success': false, 'message': 'الإيميل مستخدم مسبقاً'};
         }
       }
 
-      final hasOtherChanges = name != null || code != null || email != null || permissions != null || status != null;
+      final hasOtherChanges = name != null ||
+          code != null ||
+          email != null ||
+          permissions != null ||
+          status != null;
 
       final updated = currentAcc.copyWith(
         name: name?.trim(),
@@ -492,7 +611,9 @@ class AccountantsService {
         deviceId: deviceId,
         permissions: permissions,
         status: status,
-        updatedAt: hasOtherChanges ? DateTime.now().toIso8601String() : currentAcc.updatedAt,
+        updatedAt: hasOtherChanges
+            ? DateTime.now().toIso8601String()
+            : currentAcc.updatedAt,
       );
 
       _accountants[idx] = updated;
@@ -503,14 +624,19 @@ class AccountantsService {
     }
   }
 
-  static Future<Map<String, dynamic>> removeAccountant(String id, {bool force = false}) async {
+  static Future<Map<String, dynamic>> removeAccountant(String id,
+      {bool force = false}) async {
     try {
       if (!force && !await canManageAccountants()) {
         return {'success': false, 'message': 'ليس لديك صلاحية'};
       }
       final acc = getById(id);
-      if (acc == null) return {'success': false, 'message': 'المحاسب غير موجود'};
-      if (acc.isPrimary) return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
+      if (acc == null) {
+        return {'success': false, 'message': 'المحاسب غير موجود'};
+      }
+      if (acc.isPrimary) {
+        return {'success': false, 'message': 'لا يمكن حذف المحاسب الأساسي'};
+      }
 
       _accountants.removeWhere((a) => a.id == id);
       _deletedAccountantIds.add(id);
@@ -537,9 +663,11 @@ class AccountantsService {
     await _saveToLocal();
   }
 
-  static List<PendingDevice> getPendingDevices() => _pendingDevices.where((d) => d.status == 'pending').toList();
+  static List<PendingDevice> getPendingDevices() =>
+      _pendingDevices.where((d) => d.status == 'pending').toList();
 
-  static List<PendingDevice> getAllDevices() => List<PendingDevice>.unmodifiable(_pendingDevices);
+  static List<PendingDevice> getAllDevices() =>
+      List<PendingDevice>.unmodifiable(_pendingDevices);
 
   static Future<Map<String, dynamic>> approveDevice({
     required String deviceId,
@@ -548,9 +676,14 @@ class AccountantsService {
     Map<String, bool>? permissions,
   }) async {
     try {
-      if (!await canManageAccountants()) return {'success': false, 'message': 'ليس لديك صلاحية'};
-      final devIdx = _pendingDevices.indexWhere((d) => d.deviceId == deviceId);
-      if (devIdx == -1) return {'success': false, 'message': 'الجهاز غير موجود'};
+      if (!await canManageAccountants()) {
+        return {'success': false, 'message': 'ليس لديك صلاحية'};
+      }
+      final devIdx =
+          _pendingDevices.indexWhere((d) => d.deviceId == deviceId);
+      if (devIdx == -1) {
+        return {'success': false, 'message': 'الجهاز غير موجود'};
+      }
 
       final dev = _pendingDevices[devIdx];
       final result = await addAccountant(
@@ -573,7 +706,11 @@ class AccountantsService {
         accountantId: newAcc.id,
       );
       await _saveToLocal();
-      return {'success': true, 'accountant': newAcc, 'device': _pendingDevices[devIdx]};
+      return {
+        'success': true,
+        'accountant': newAcc,
+        'device': _pendingDevices[devIdx]
+      };
     } catch (e) {
       return {'success': false, 'message': 'خطأ: $e'};
     }
@@ -611,3 +748,5 @@ class AccountantsService {
     await _loadFromLocal();
   }
 }
+
+// المحاسبون v3: حماية code من المسح + استنتاج تلقائي + Self-heal كامل
