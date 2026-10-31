@@ -18,8 +18,12 @@ class AppSettings {
   static const String blockTransactionDeletion =
       'block_transaction_deletion';
 
+  // 🆕 الحذف النهائي
+  static const String permanentDeleteAlwaysWins =
+      'permanent_delete_always_wins';
+
   // ═══════════════════════════════════════════════════════════
-  // ✏️ مجموعة التعديل (مبسّطة إلى إعداد واحد)
+  // ✏️ مجموعة التعديل
   // ═══════════════════════════════════════════════════════════
 
   static const String allowEditTransactions = 'allow_edit_transactions';
@@ -102,7 +106,7 @@ class AppSettings {
   static const String compactMode = 'compact_mode';
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 مجموعة رمز المحاسب في العمليات
+  // رمز المحاسب في العمليات
   // ═══════════════════════════════════════════════════════════
 
   static const String codeIncludeAccountant = 'code_include_accountant';
@@ -122,6 +126,9 @@ class AppSettings {
     autoCleanupDeleted: true,
     blockCustomerDeletion: false,
     blockTransactionDeletion: false,
+
+    // 🆕 الحذف النهائي
+    permanentDeleteAlwaysWins: true,
 
     // ✏️ التعديل
     allowEditTransactions: true,
@@ -196,6 +203,7 @@ class AppSettings {
     deletionConflictRestore,
     blockCustomerDeletion,
     blockTransactionDeletion,
+    permanentDeleteAlwaysWins, // 🆕
   };
 
   static const Set<String> sharedSettings = {
@@ -206,6 +214,7 @@ class AppSettings {
     autoCleanupDeleted,
     blockCustomerDeletion,
     blockTransactionDeletion,
+    permanentDeleteAlwaysWins, // 🆕
     allowEditTransactions,
     allowEditCustomerBalance,
     trackEdits,
@@ -257,3 +266,5 @@ class AppSettings {
   static bool isLocal(String key) => localSettings.contains(key);
   static bool isDangerous(String key) => dangerousSettings.contains(key);
 }
+
+// الإعدادات v2: إضافة permanentDeleteAlwaysWins للتحكم في سلوك الحذف النهائي عند التعارض
