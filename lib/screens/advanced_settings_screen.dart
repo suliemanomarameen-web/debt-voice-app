@@ -200,6 +200,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
       AppSettings.blockCustomerDeletion: 'منع حذف الحسابات نهائياً',
       AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
+      AppSettings.permanentDeleteAlwaysWins: '🪦 الحذف النهائي يفوز دائماً',
       AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
       AppSettings.allowEditCustomerBalance: 'السماح بتعديل الرصيد مباشرة',
       AppSettings.trackEdits: 'تسجيل كل تعديل في السجل',
@@ -253,6 +254,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي بعد انتهاء المدة',
       AppSettings.blockCustomerDeletion: 'منع حذف أي حساب نهائياً حتى من السلة',
       AppSettings.blockTransactionDeletion: 'منع حذف أي عملية نهائياً حتى من السلة',
+      AppSettings.permanentDeleteAlwaysWins:
+          'مفعّل: الحذف النهائي لا يُستعاد أبداً (آمن). معطّل: يمكن استعادة السجل إذا وُجد تعديل أحدث من وقت الحذف.',
       AppSettings.allowEditTransactions: 'التحكم الكامل: إذا مُعطّل، لا يمكن تعديل أي عملية (المبلغ، الأصناف، النوع)',
       AppSettings.allowEditCustomerBalance: 'تعديل الرصيد بدون معاملة',
       AppSettings.trackEdits: 'كل تعديل يُسجَّل في سجل الأحداث',
@@ -321,7 +324,16 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                 Expanded(child: Text('التحكم الكامل في سلوك التطبيق. الإعدادات تُحفظ فورًا. الإعدادات الخطيرة تحتاج كلمة المرور.', style: TextStyle(fontSize: 12, height: 1.5))),
               ]),
             ),
-            _buildGroup(title: '🗑️ الحذف', groupName: 'الحذف', keys: const [AppSettings.blockDeleteNonzeroBalance, AppSettings.blockDeleteWithTransactions, AppSettings.softDeleteEnabled, AppSettings.retentionDays, AppSettings.autoCleanupDeleted, AppSettings.blockCustomerDeletion, AppSettings.blockTransactionDeletion], children: [
+            _buildGroup(title: '🗑️ الحذف', groupName: 'الحذف', keys: const [
+              AppSettings.blockDeleteNonzeroBalance,
+              AppSettings.blockDeleteWithTransactions,
+              AppSettings.softDeleteEnabled,
+              AppSettings.retentionDays,
+              AppSettings.autoCleanupDeleted,
+              AppSettings.blockCustomerDeletion,
+              AppSettings.blockTransactionDeletion,
+              AppSettings.permanentDeleteAlwaysWins,
+            ], children: [
               _buildBoolTile(AppSettings.blockDeleteNonzeroBalance),
               _buildBoolTile(AppSettings.blockDeleteWithTransactions),
               _buildBoolTile(AppSettings.softDeleteEnabled),
@@ -330,6 +342,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               const Divider(height: 1),
               _buildBoolTile(AppSettings.blockCustomerDeletion),
               _buildBoolTile(AppSettings.blockTransactionDeletion),
+              const Divider(height: 1),
+              _buildBoolTile(AppSettings.permanentDeleteAlwaysWins),
             ]),
             _buildGroup(title: '✏️ التعديل', groupName: 'التعديل', keys: const [AppSettings.allowEditTransactions, AppSettings.allowEditCustomerBalance, AppSettings.trackEdits, AppSettings.requireEditReason], children: [
               _buildBoolTile(AppSettings.allowEditTransactions),
@@ -444,3 +458,5 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 }
+
+// الإعدادات المتقدمة v2: إضافة خيار "الحذف النهائي يفوز دائماً" في قسم 🗑️ الحذف
