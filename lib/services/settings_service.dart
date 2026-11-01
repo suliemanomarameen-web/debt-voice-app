@@ -15,6 +15,9 @@ class SettingsService {
   static final Map<String, dynamic> _cache = {};
   static bool _loaded = false;
 
+  /// 🆕 يُستدعى عند تغيير أي إعداد مشترك (للمزامنة)
+  static void Function()? onChanged;
+
   // ═══════════════════════════════════════════════════════════
   // التحميل
   // ═══════════════════════════════════════════════════════════
@@ -138,6 +141,7 @@ class SettingsService {
       await sp.setBool(key, value);
       _cache[key] = value;
       debugPrint('✅ [Settings] $key = $value');
+      _notifyIfShared(key);
       return true;
     } catch (e) {
       debugPrint('❌ [Settings] setBool $key error: $e');
@@ -151,6 +155,7 @@ class SettingsService {
       await sp.setInt(key, value);
       _cache[key] = value;
       debugPrint('✅ [Settings] $key = $value');
+      _notifyIfShared(key);
       return true;
     } catch (e) {
       debugPrint('❌ [Settings] setInt $key error: $e');
@@ -164,6 +169,7 @@ class SettingsService {
       await sp.setDouble(key, value);
       _cache[key] = value;
       debugPrint('✅ [Settings] $key = $value');
+      _notifyIfShared(key);
       return true;
     } catch (e) {
       debugPrint('❌ [Settings] setDouble $key error: $e');
@@ -177,6 +183,7 @@ class SettingsService {
       await sp.setString(key, value);
       _cache[key] = value;
       debugPrint('✅ [Settings] $key = $value');
+      _notifyIfShared(key);
       return true;
     } catch (e) {
       debugPrint('❌ [Settings] setString $key error: $e');
@@ -221,6 +228,9 @@ class SettingsService {
       _cache.clear();
       _cache.addAll(AppSettings.defaults);
       debugPrint('✅ [Settings] All reset to defaults');
+      try {
+        onChanged?.call();
+      } catch (_) {}
     } catch (e) {
       debugPrint('❌ [Settings] resetAll error: $e');
     }
@@ -284,6 +294,17 @@ class SettingsService {
     }
   }
 
+  /// 🆕 يُخبر المزامنة بأن هناك تغييراً محلياً (إذا كان الإعداد مشتركاً)
+  static void _notifyIfShared(String key) {
+    if (AppSettings.isShared(key)) {
+      try {
+        onChanged?.call();
+      } catch (e) {
+        debugPrint('⚠️ [Settings] onChanged error: $e');
+      }
+    }
+  }
+
   /// للاختبار
   @visibleForTesting
   static void clearCache() {
@@ -291,3 +312,5 @@ class SettingsService {
     _loaded = false;
   }
 }
+
+// الإعدادات v2.1: إضافة onChanged callback لربط تغييرات الإعدادات المشتركة بالمزامنة
