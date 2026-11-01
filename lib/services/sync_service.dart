@@ -10,6 +10,7 @@ import 'settings_service.dart';
 import 'accountants_service.dart';
 import 'device_service.dart';
 import 'code_service.dart';
+import 'notification_service.dart';
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
@@ -89,11 +90,16 @@ class SyncService {
 
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
+  /// يمنع إطلاق onChanged أثناء استيراد الإعدادات من السحابة
+  /// (لتجنب حلقة لا نهائية: استيراد → تغيير → جدولة مزامنة → استيراد...)
+  static bool _isImportingSettings = false;
+
   static Future<void> init() async {
     await DeviceService.getDeviceId();
     await AccountantsService.init();
 
     DatabaseHelper.onDataChanged = _onLocalDataChanged;
+    SettingsService.onChanged = _onSharedSettingChanged;
 
     Future.delayed(const Duration(seconds: 3), () {
       if (SettingsService.getBool(AppSettings.syncOnAppOpen)) {
@@ -130,6 +136,20 @@ class SyncService {
   static void _onLocalDataChanged() {
     if (!SettingsService.getBool(AppSettings.syncOnDataChange)) return;
 
+    _saveLastLocalChange(DateTime.now());
+    _saveHasPendingChanges(true);
+
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(seconds: 5), () {
+      silentSync();
+    });
+  }
+
+  static void _onSharedSettingChanged() {
+    if (_isImportingSettings) return;
+    if (!SettingsService.getBool(AppSettings.syncOnDataChange)) return;
+
+    debugPrint('⚙️ [Sync] Shared setting changed — marking local change');
     _saveLastLocalChange(DateTime.now());
     _saveHasPendingChanges(true);
 
@@ -329,7 +349,7 @@ class SyncService {
         if (!silent) _setStatus(SyncStatus.downloading);
         final result = await _mergeCloudData(cloudData);
 
-        // 🆕 P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
+        // P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
         if ((result['error'] ?? 0) == 1) {
           if (!silent) _setStatus(SyncStatus.error);
           final errMsg =
@@ -433,8 +453,16 @@ class SyncService {
     if (tombstones == null || tombstones.isEmpty) return;
 
     final db = DatabaseHelper.instance;
+    final mode = _resolveConflictMode(
+      SettingsService.getBool(AppSettings.modificationAlwaysWins,
+          defaultValue: false),
+      SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
+          defaultValue: true),
+    );
+
     int applied = 0;
     int deletedLocal = 0;
+    int deferred = 0;
 
     for (final tomb in tombstones) {
       if (tomb is! Map) continue;
@@ -444,6 +472,15 @@ class SyncService {
 
       await db.addTombstone(cloudId: cloudId, type: type);
       applied++;
+
+      // في نمط "التعديل يفوز" أو "الافتراضي" → لا نحذف السجل، نترك _resolve...
+      // في نمط "الحذف يفوز" → نحذف فوراً
+      if (mode != 'permanent_delete') {
+        debugPrint(
+            '⏸️ [Sync] Deferring tombstone deletion for $cloudId (mode=$mode)');
+        deferred++;
+        continue;
+      }
 
       try {
         if (type == 'customer') {
@@ -476,7 +513,7 @@ class SyncService {
 
     if (applied > 0) {
       debugPrint(
-          '🪦 [Sync] Applied $applied tombstones, deleted $deletedLocal local records');
+          '🪦 [Sync] Tombstones: applied=$applied, deleted=$deletedLocal, deferred=$deferred (mode=$mode)');
     }
   }
 
@@ -502,7 +539,7 @@ class SyncService {
     int restoredCustomers = 0;
     int addedLogs = 0;
     int conflicts = 0;
-    int mergeErrors = 0; // 🆕 P0-X
+    int mergeErrors = 0;
 
     try {
       if (cloudData['accountants'] != null ||
@@ -526,6 +563,13 @@ class SyncService {
       debugPrint(
           '📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
 
+      final mode = _resolveConflictMode(
+        SettingsService.getBool(AppSettings.modificationAlwaysWins,
+            defaultValue: false),
+        SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
+            defaultValue: true),
+      );
+
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -536,12 +580,19 @@ class SyncService {
 
       final Map<int, int> cloudIdToLocalId = {};
 
+      // ═══════════════════════════════════════════════════
+      // 1) معالجة العملاء
+      // ═══════════════════════════════════════════════════
       for (final cc in cloudCustomers) {
         final cloudId = cc['cloud_id'] as String?;
         final cloudName = cc['name'] as String? ?? '';
 
+        // في نمط "الحذف يفوز" فقط نتخطى الـ tombstones
         if (cloudId != null && cloudId.isNotEmpty) {
-          if (await db.hasTombstone(cloudId)) continue;
+          if (mode == 'permanent_delete' &&
+              await db.hasTombstone(cloudId)) {
+            continue;
+          }
         }
 
         if (cloudId == null || cloudId.isEmpty) {
@@ -561,6 +612,16 @@ class SyncService {
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
+          // إذا كان السجل محذوفاً محلياً بـ tombstone، والسحابة تحمل حذفاً نهائياً
+          // وفي نمط modification/default → نتجاهله إذا كان محذوفاً نهائياً
+          if (mode != 'permanent_delete' &&
+              await db.hasTombstone(cloudId)) {
+            final cloudPerm = cc['is_permanently_deleted'] == 1;
+            if (cloudPerm) {
+              continue;
+            }
+          }
+
           final newMap = Map<String, dynamic>.from(cc);
           newMap.remove('id');
           final newId = await db.insertCustomerRaw(newMap);
@@ -593,6 +654,9 @@ class SyncService {
         }
       }
 
+      // ═══════════════════════════════════════════════════
+      // 2) معالجة المعاملات
+      // ═══════════════════════════════════════════════════
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
         final cloudCustomerId = ct['customer_id'] as int?;
@@ -600,7 +664,10 @@ class SyncService {
         if (cloudCustomerId == null) continue;
 
         if (cloudId != null && cloudId.isNotEmpty) {
-          if (await db.hasTombstone(cloudId)) continue;
+          if (mode == 'permanent_delete' &&
+              await db.hasTombstone(cloudId)) {
+            continue;
+          }
         }
 
         final localCustomerId = cloudIdToLocalId[cloudCustomerId];
@@ -631,6 +698,11 @@ class SyncService {
             where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
 
         if (localRows.isEmpty) {
+          if (mode != 'permanent_delete' &&
+              await db.hasTombstone(cloudId)) {
+            continue;
+          }
+
           final newMap = Map<String, dynamic>.from(ct);
           newMap.remove('id');
           newMap['customer_id'] = localCustomerId;
@@ -654,6 +726,8 @@ class SyncService {
           if (resolution.action == 'updated') {
             updatedTransactions++;
           } else if (resolution.action == 'conflict') {
+            conflicts++;
+          } else if (resolution.action == 'restored') {
             conflicts++;
           }
         }
@@ -682,11 +756,11 @@ class SyncService {
       }
 
       debugPrint(
-          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts');
+          '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts (mode=$mode)');
     } catch (e) {
       debugPrint('❌ [Sync] Merge error: $e');
       await LoggerService.logSyncError('خطأ في الدمج: $e');
-      mergeErrors = 1; // 🆕 P0-X: علّم الفشل
+      mergeErrors = 1;
     }
 
     return {
@@ -697,7 +771,7 @@ class SyncService {
       'transactions_updated': updatedTransactions,
       'logs_added': addedLogs,
       'conflicts': conflicts,
-      'error': mergeErrors, // 🆕 P0-X
+      'error': mergeErrors,
     };
   }
 
@@ -705,22 +779,28 @@ class SyncService {
     final settingsMap = data['settings'] as Map<String, dynamic>?;
     if (settingsMap == null) return;
 
-    for (final entry in settingsMap.entries) {
-      if (AppSettings.sharedSettings.contains(entry.key)) {
-        try {
-          await SettingsService.set(entry.key, entry.value);
-        } catch (e) {
-          debugPrint('⚠️ Import setting ${entry.key}: $e');
+    _isImportingSettings = true;
+    try {
+      for (final entry in settingsMap.entries) {
+        if (AppSettings.sharedSettings.contains(entry.key)) {
+          try {
+            await SettingsService.set(entry.key, entry.value);
+          } catch (e) {
+            debugPrint('⚠️ Import setting ${entry.key}: $e');
+          }
         }
       }
+      debugPrint('✅ [Sync] Imported shared settings');
+    } finally {
+      _isImportingSettings = false;
     }
-    debugPrint('✅ [Sync] Imported shared settings');
   }
 
   static Future<void> _importCodeSettings(Map<String, dynamic> data) async {
     final codeMap = data['code_settings'] as Map<String, dynamic>?;
     if (codeMap == null) return;
 
+    _isImportingSettings = true;
     try {
       if (codeMap['debt_prefix'] is String) {
         await CodeService.setDebtPrefix(codeMap['debt_prefix'] as String);
@@ -760,6 +840,76 @@ class SyncService {
       debugPrint('✅ [Sync] Imported code settings');
     } catch (e) {
       debugPrint('⚠️ Import code settings: $e');
+    } finally {
+      _isImportingSettings = false;
+    }
+  }
+
+  /// يحدّد نمط حل التعارض (حصري)
+  /// - return 'permanent_delete' إذا كان الحذف النهائي يفوز
+  /// - return 'modification' إذا كان التعديل يفوز
+  /// - return 'default' إذا كانا معطّلين (الوضع الافتراضي)
+  static String _resolveConflictMode(
+      bool modificationAlwaysWins, bool permanentDeleteAlwaysWins) {
+    if (permanentDeleteAlwaysWins && modificationAlwaysWins) {
+      debugPrint(
+          '⚠️ [Sync] Both modes enabled — falling back to "permanent delete wins" for safety');
+      return 'permanent_delete';
+    }
+    if (permanentDeleteAlwaysWins) return 'permanent_delete';
+    if (modificationAlwaysWins) return 'modification';
+    return 'default';
+  }
+
+  /// إشعار محلي + سجل عند استعادة سجل محذوف نهائياً
+  static Future<void> _notifyRestoration({
+    required String type, // 'customer' أو 'transaction'
+    required String name,
+    String? code,
+    double? amount,
+    String? customerName,
+    required String reason,
+  }) async {
+    try {
+      final String title;
+      final String body;
+
+      if (type == 'customer') {
+        title = '🔄 استعادة حساب';
+        body = 'تم استعادة حساب "$name"\nالسبب: $reason';
+      } else {
+        final codeStr = (code != null && code.isNotEmpty) ? ' برقم $code' : '';
+        final amtStr = (amount != null)
+            ? ' بمبلغ ${amount.toStringAsFixed(0)}'
+            : '';
+        final custStr = (customerName != null && customerName.isNotEmpty)
+            ? ' على الحساب "$customerName"'
+            : '';
+        title = '🔄 استعادة عملية';
+        body = 'تم استعادة عملية$codeStr$amtStr$custStr\nالسبب: $reason';
+      }
+
+      // 1) إشعار محلي على الجوال
+      await NotificationService.show(title, body);
+
+      // 2) سجل الأحداث (يُزامَن مع الأجهزة الأخرى)
+      await LoggerService.log(
+        action: title,
+        description: body,
+        level: LogLevel.warning,
+        category: LogCategory.sync,
+        needsAck: true,
+        metadata: {
+          'type': type,
+          'restored_item': name,
+          'code': code,
+          'amount': amount,
+          'customer_name': customerName,
+          'reason': reason,
+        },
+      );
+    } catch (e) {
+      debugPrint('❌ [Sync] _notifyRestoration error: $e');
     }
   }
 
@@ -774,18 +924,66 @@ class SyncService {
     final localPerm = localRow['is_permanently_deleted'] == 1;
     final cloudPerm = cloudRow['is_permanently_deleted'] == 1;
 
-    // 🆕 P0-Y: التعامل مع الحذف النهائي حسب الإعداد
-    if (localPerm != cloudPerm) {
-      final alwaysWins = SettingsService.getBool(
-        AppSettings.permanentDeleteAlwaysWins,
-        defaultValue: true,
-      );
+    final mode = _resolveConflictMode(
+      SettingsService.getBool(AppSettings.modificationAlwaysWins,
+          defaultValue: false),
+      SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
+          defaultValue: true),
+    );
 
-      if (alwaysWins) {
-        // وضع "الحذف النهائي يفوز دائماً" — لا استعادة أبداً
-        if (localPerm) {
-          debugPrint(
-              '🪦 [Sync] P0-Y: Permanent delete (local) wins for "$name"');
+    // ═══════════════════════════════════════════════════
+    // حالة: أحد الجانبين محذوف نهائياً
+    // ═══════════════════════════════════════════════════
+    if (localPerm != cloudPerm) {
+      final deletedRow = localPerm ? localRow : cloudRow;
+      final activeRow = localPerm ? cloudRow : localRow;
+      final deletedIsLocal = localPerm;
+
+      final activeTime = DateTime.tryParse(
+            activeRow['updated_at'] as String? ??
+                activeRow['created_at'] as String? ??
+                '',
+          ) ??
+          DateTime(2000);
+      final deletedTime = DateTime.tryParse(
+            deletedRow['deleted_at'] as String? ??
+                deletedRow['updated_at'] as String? ??
+                '',
+          ) ??
+          DateTime(2000);
+
+      final isActiveNewer = activeTime.isAfter(deletedTime);
+      final activeName = activeRow['name'] as String? ?? '';
+      final deletedName = deletedRow['name'] as String? ?? '';
+      final nameChanged = activeName != deletedName;
+
+      // ①: نمط "التعديل يفوز دائماً" — استعادة دائماً
+      if (mode == 'modification') {
+        if (deletedIsLocal) {
+          await db.restoreCustomerWithCloudFields(
+            localId: localId,
+            cloudRow: cloudRow,
+            by: 'المزامنة (التعديل يفوز دائماً)',
+          );
+          await _notifyRestoration(
+            type: 'customer',
+            name: name,
+            reason: 'إعداد "التعديل يفوز دائماً" مفعّل',
+          );
+          return _ResolutionResult('restored');
+        } else {
+          await _notifyRestoration(
+            type: 'customer',
+            name: name,
+            reason: 'إعداد "التعديل يفوز دائماً" مفعّل',
+          );
+          return _ResolutionResult('no_change');
+        }
+      }
+
+      // ②: نمط "الحذف النهائي يفوز دائماً"
+      if (mode == 'permanent_delete') {
+        if (deletedIsLocal) {
           return _ResolutionResult('no_change');
         } else {
           final now = DateTime.now().toIso8601String();
@@ -801,77 +999,66 @@ class SyncService {
             deletedBy: cloudRow['deleted_by'] as String?,
             deletedAt: cloudRow['deleted_at'] as String?,
             restoredBy: 'لا — الحذف النهائي نهائي',
-            reason: 'حذف نهائي سحابي يفوز دائماً (P0-Y)',
-          );
-          return _ResolutionResult('conflict');
-        }
-      } else {
-        // وضع "الاستعادة إذا وُجد تعديل أحدث"
-        final localUpdatedAt = localRow['updated_at'] as String? ??
-            localRow['created_at'] as String? ??
-            '';
-        final cloudUpdatedAt = cloudRow['updated_at'] as String? ??
-            cloudRow['created_at'] as String? ??
-            '';
-        final localTime =
-            DateTime.tryParse(localUpdatedAt) ?? DateTime(2000);
-        final cloudTime =
-            DateTime.tryParse(cloudUpdatedAt) ?? DateTime(2000);
-
-        if (localPerm) {
-          // المحلي محذوف نهائياً، السحابة نشطة
-          // إذا السحابة معدّلة بعد الحذف المحلي → استعادة
-          final localDelTime =
-              DateTime.tryParse(localRow['deleted_at'] as String? ?? '') ??
-                  localTime;
-          if (cloudTime.isAfter(localDelTime)) {
-            await db.restoreCustomer(localId, by: 'المزامنة');
-            await _logDeletionConflict(
-              item: 'حساب "$name"',
-              deletedBy: localRow['deleted_by'] as String?,
-              deletedAt: localRow['deleted_at'] as String?,
-              restoredBy: 'المزامنة',
-              reason: 'تعديل سحابي أحدث من الحذف النهائي — استُعيد السجل',
-            );
-            return _ResolutionResult('restored');
-          }
-          return _ResolutionResult('no_change');
-        } else {
-          // السحابة محذوفة نهائياً، المحلي نشط
-          // إذا المحلي معدّل بعد الحذف السحابي → لا نطبق الحذف
-          final cloudDelTime =
-              DateTime.tryParse(cloudRow['deleted_at'] as String? ?? '') ??
-                  cloudTime;
-          if (localTime.isAfter(cloudDelTime)) {
-            await _logDeletionConflict(
-              item: 'حساب "$name"',
-              deletedBy: cloudRow['deleted_by'] as String?,
-              deletedAt: cloudRow['deleted_at'] as String?,
-              restoredBy: 'لا — تعديل محلي أحدث',
-              reason: 'تعديل محلي أحدث من الحذف النهائي — لم يُطبَّق الحذف',
-            );
-            return _ResolutionResult('no_change');
-          }
-          final now = DateTime.now().toIso8601String();
-          await db.updateCustomerFields(localId, {
-            'is_deleted': 1,
-            'is_permanently_deleted': 1,
-            'deleted_at': cloudRow['deleted_at'] ?? now,
-            'deleted_by': cloudRow['deleted_by'] ?? 'المزامنة',
-            'updated_at': now,
-          });
-          await _logDeletionConflict(
-            item: 'حساب "$name"',
-            deletedBy: cloudRow['deleted_by'] as String?,
-            deletedAt: cloudRow['deleted_at'] as String?,
-            restoredBy: 'المزامنة (حذف نهائي سحابي)',
-            reason: 'حذف نهائي سحابي أحدث من التعديل المحلي',
+            reason: 'حذف نهائي سحابي يفوز دائماً',
           );
           return _ResolutionResult('conflict');
         }
       }
+
+      // ③: الوضع الافتراضي — للحسابات: استعادة فقط إذا تغيّر الاسم + التعديل أحدث
+      if (deletedIsLocal) {
+        // المحلي محذوف نهائياً، السحابة نشطة
+        if (nameChanged && isActiveNewer) {
+          await db.restoreCustomerWithCloudFields(
+            localId: localId,
+            cloudRow: cloudRow,
+            by: 'المزامنة',
+          );
+          await _notifyRestoration(
+            type: 'customer',
+            name: name,
+            reason: 'تعديل أحدث لاسم الحساب',
+          );
+          return _ResolutionResult('restored');
+        }
+        // تعديل غير الاسم، أو الحذف أحدث → لا استعادة
+        return _ResolutionResult('no_change');
+      } else {
+        // السحابة محذوفة نهائياً، المحلي نشط
+        if (nameChanged && isActiveNewer) {
+          // تعديل الاسم أحدث → استعادة
+          await _notifyRestoration(
+            type: 'customer',
+            name: name,
+            reason: 'تعديل أحدث لاسم الحساب',
+          );
+          return _ResolutionResult('no_change');
+        }
+        // الحذف السحابي أحدث أو التعديل ليس على الاسم → نطبق الحذف
+        final now = DateTime.now().toIso8601String();
+        await db.updateCustomerFields(localId, {
+          'is_deleted': 1,
+          'is_permanently_deleted': 1,
+          'deleted_at': cloudRow['deleted_at'] ?? now,
+          'deleted_by': cloudRow['deleted_by'] ?? 'المزامنة',
+          'updated_at': now,
+        });
+        await _logDeletionConflict(
+          item: 'حساب "$name"',
+          deletedBy: cloudRow['deleted_by'] as String?,
+          deletedAt: cloudRow['deleted_at'] as String?,
+          restoredBy: 'لا — الحذف النهائي يفوز',
+          reason: nameChanged
+              ? 'الحذف السحابي أحدث من تعديل الاسم'
+              : 'تعديل حديث لكنه ليس على الاسم',
+        );
+        return _ResolutionResult('conflict');
+      }
     }
 
+    // ═══════════════════════════════════════════════════
+    // لا حذف نهائي (تعديل عادي أو حذف ناعم)
+    // ═══════════════════════════════════════════════════
     final localDeleted = localRow['is_deleted'] == 1;
     final cloudDeleted = cloudRow['is_deleted'] == 1;
 
@@ -894,27 +1081,26 @@ class SyncService {
         final localDelTime =
             DateTime.tryParse(localRow['deleted_at'] as String? ?? '') ??
                 localTime;
-
         if (cloudTime.isAfter(localDelTime)) {
-          await db.restoreCustomer(localId, by: 'المزامنة');
-          await _logDeletionConflict(
-            item: 'حساب "$name"',
-            deletedBy: localRow['deleted_by'] as String?,
-            deletedAt: localRow['deleted_at'] as String?,
-            restoredBy: 'المزامنة',
-            reason: 'آخر تعديل سحابي أحدث من وقت الحذف المحلي',
+          await db.restoreCustomerWithCloudFields(
+            localId: localId,
+            cloudRow: cloudRow,
+            by: 'المزامنة',
+          );
+          await _notifyRestoration(
+            type: 'customer',
+            name: name,
+            reason: 'تعديل سحابي أحدث من الحذف الناعم',
           );
           return _ResolutionResult('restored');
-        } else {
-          return _ResolutionResult('no_change');
         }
+        return _ResolutionResult('no_change');
       }
 
       if (!localDeleted && cloudDeleted) {
         final cloudDelTime =
             DateTime.tryParse(cloudRow['deleted_at'] as String? ?? '') ??
                 cloudTime;
-
         if (cloudDelTime.isAfter(localTime)) {
           await db.softDeleteCustomer(localId, by: 'المزامنة');
           await _logDeletionConflict(
@@ -922,18 +1108,16 @@ class SyncService {
             deletedBy: cloudRow['deleted_by'] as String?,
             deletedAt: cloudRow['deleted_at'] as String?,
             restoredBy: 'المزامنة',
-            reason: 'حذف سحابي أحدث من آخر تعديل محلي',
+            reason: 'حذف ناعم سحابي أحدث من آخر تعديل محلي',
           );
           return _ResolutionResult('conflict');
-        } else {
-          return _ResolutionResult('no_change');
         }
+        return _ResolutionResult('no_change');
       }
     }
 
     if (localUpdatedAt != cloudUpdatedAt) {
       final localIsNewer = localTime.isAfter(cloudTime);
-
       if (localIsNewer) return _ResolutionResult('no_change');
 
       final changedFields = <String>[];
@@ -951,10 +1135,8 @@ class SyncService {
       ];
 
       for (final f in fields) {
-        final localVal = localRow[f];
-        final cloudVal = cloudRow[f];
-        if (localVal != cloudVal) {
-          updateData[f] = cloudVal;
+        if (localRow[f] != cloudRow[f]) {
+          updateData[f] = cloudRow[f];
           changedFields.add(f);
         }
       }
@@ -962,9 +1144,7 @@ class SyncService {
       if (updateData.isNotEmpty) {
         updateData['updated_at'] = cloudUpdatedAt;
         updateData['updated_by'] = cloudRow['updated_by'];
-
         await db.updateCustomerFields(localId, updateData);
-
         await _logFieldConflict(
           item: 'حساب "$name"',
           fields: changedFields,
@@ -972,7 +1152,6 @@ class SyncService {
           cloudUpdatedAt: cloudUpdatedAt,
           by: cloudRow['updated_by'] as String?,
         );
-
         return _ResolutionResult('conflict');
       }
     }
@@ -1002,93 +1181,167 @@ class SyncService {
 
     final code = localRow['code'] as String? ?? '';
     final amount = (localRow['amount'] as num?)?.toDouble() ?? 0;
+    final customerName = cloudRow['customer_name'] as String? ??
+        localRow['customer_name'] as String?;
 
-    if (localUpdatedAt == cloudUpdatedAt && localDeleted == cloudDeleted) {
-      return _ResolutionResult('no_change');
-    }
+    final mode = _resolveConflictMode(
+      SettingsService.getBool(AppSettings.modificationAlwaysWins,
+          defaultValue: false),
+      SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
+          defaultValue: true),
+    );
 
+    // ═══════════════════════════════════════════════════
+    // حالة اختلاف حالة الحذف
+    // ═══════════════════════════════════════════════════
     if (localDeleted != cloudDeleted) {
-      if (localDeleted && !cloudDeleted) {
-        final localDelTime =
-            DateTime.tryParse(localRow['deleted_at'] as String? ?? '') ??
-                localTime;
+      final deletedRow = localDeleted ? localRow : cloudRow;
+      final activeRow = localDeleted ? cloudRow : localRow;
+      final deletedIsLocal = localDeleted;
 
-        if (cloudTime.isAfter(localDelTime)) {
-          await db.restoreTransaction(localId, by: 'المزامنة');
-          await _logDeletionConflict(
-            item:
-                'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
-            deletedBy: localRow['deleted_by'] as String?,
-            deletedAt: localRow['deleted_at'] as String?,
-            restoredBy: 'المزامنة',
-            reason: 'آخر تعديل سحابي أحدث من وقت الحذف المحلي',
+      final activeTime = DateTime.tryParse(
+            activeRow['updated_at'] as String? ??
+                activeRow['created_at'] as String? ??
+                '',
+          ) ??
+          DateTime(2000);
+      final deletedTime = DateTime.tryParse(
+            deletedRow['deleted_at'] as String? ??
+                deletedRow['updated_at'] as String? ??
+                '',
+          ) ??
+          DateTime(2000);
+
+      final isActiveNewer = activeTime.isAfter(deletedTime);
+
+      // ①: نمط "التعديل يفوز دائماً"
+      if (mode == 'modification') {
+        if (deletedIsLocal) {
+          await db.restoreTransactionWithCloudFields(
+            localId: localId,
+            cloudRow: cloudRow,
+            by: 'المزامنة (التعديل يفوز دائماً)',
+          );
+          await _notifyRestoration(
+            type: 'transaction',
+            name: code,
+            code: code,
+            amount: amount,
+            customerName: customerName,
+            reason: 'إعداد "التعديل يفوز دائماً" مفعّل',
           );
           return _ResolutionResult('restored');
         } else {
+          await _notifyRestoration(
+            type: 'transaction',
+            name: code,
+            code: code,
+            amount: amount,
+            customerName: customerName,
+            reason: 'إعداد "التعديل يفوز دائماً" مفعّل',
+          );
           return _ResolutionResult('no_change');
         }
       }
 
-      if (!localDeleted && cloudDeleted) {
-        final cloudDelTime =
-            DateTime.tryParse(cloudRow['deleted_at'] as String? ?? '') ??
-                cloudTime;
-
-        if (cloudDelTime.isAfter(localTime)) {
+      // ②: نمط "الحذف النهائي يفوز دائماً"
+      if (mode == 'permanent_delete') {
+        if (deletedIsLocal) {
+          return _ResolutionResult('no_change');
+        } else {
           await db.softDeleteTransaction(localId, by: 'المزامنة');
           await _logDeletionConflict(
             item:
                 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
             deletedBy: cloudRow['deleted_by'] as String?,
             deletedAt: cloudRow['deleted_at'] as String?,
-            restoredBy: 'المزامنة',
-            reason: 'حذف سحابي أحدث من آخر تعديل محلي',
+            restoredBy: 'لا — الحذف النهائي نهائي',
+            reason: 'حذف سحابي يفوز دائماً',
           );
           return _ResolutionResult('conflict');
-        } else {
+        }
+      }
+
+      // ③: الوضع الافتراضي — للعمليات: استعادة فقط إذا التعديل أحدث
+      if (deletedIsLocal) {
+        if (isActiveNewer) {
+          await db.restoreTransactionWithCloudFields(
+            localId: localId,
+            cloudRow: cloudRow,
+            by: 'المزامنة',
+          );
+          await _notifyRestoration(
+            type: 'transaction',
+            name: code,
+            code: code,
+            amount: amount,
+            customerName: customerName,
+            reason: 'تعديل أحدث على العملية',
+          );
+          return _ResolutionResult('restored');
+        }
+        return _ResolutionResult('no_change');
+      } else {
+        if (isActiveNewer) {
+          await _notifyRestoration(
+            type: 'transaction',
+            name: code,
+            code: code,
+            amount: amount,
+            customerName: customerName,
+            reason: 'تعديل أحدث على العملية',
+          );
           return _ResolutionResult('no_change');
         }
+        await db.softDeleteTransaction(localId, by: 'المزامنة');
+        await _logDeletionConflict(
+          item:
+              'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
+          deletedBy: cloudRow['deleted_by'] as String?,
+          deletedAt: cloudRow['deleted_at'] as String?,
+          restoredBy: 'لا — الحذف أحدث',
+          reason: 'الحذف السحابي أحدث من التعديل المحلي',
+        );
+        return _ResolutionResult('conflict');
       }
     }
 
-    if (localUpdatedAt != cloudUpdatedAt) {
-      final localIsNewer = localTime.isAfter(cloudTime);
+    // ═══════════════════════════════════════════════════
+    // لا حذف (تعديل عادي)
+    // ═══════════════════════════════════════════════════
+    if (localUpdatedAt == cloudUpdatedAt) {
+      return _ResolutionResult('no_change');
+    }
 
-      if (localIsNewer) return _ResolutionResult('no_change');
+    final localIsNewer = localTime.isAfter(cloudTime);
+    if (localIsNewer) return _ResolutionResult('no_change');
 
-      final changedFields = <String>[];
-      final updateData = <String, dynamic>{};
+    final changedFields = <String>[];
+    final updateData = <String, dynamic>{};
 
-      final fields = ['amount', 'items', 'type', 'currency'];
-
-      for (final f in fields) {
-        final localVal = localRow[f];
-        final cloudVal = cloudRow[f];
-        if (localVal != cloudVal) {
-          updateData[f] = cloudVal;
-          changedFields.add(f);
-        }
+    final fields = ['amount', 'items', 'type', 'currency'];
+    for (final f in fields) {
+      if (localRow[f] != cloudRow[f]) {
+        updateData[f] = cloudRow[f];
+        changedFields.add(f);
       }
+    }
 
-      if (updateData.isNotEmpty) {
-        updateData['updated_at'] = cloudUpdatedAt;
-        updateData['updated_by'] = cloudRow['updated_by'];
-        updateData['last_modified_by'] = cloudRow['last_modified_by'];
-        updateData['last_modified_from'] = cloudRow['last_modified_from'];
-
-        await db.updateTransactionFields(localId, updateData);
-
-        await _logFieldConflict(
-          item: 'عملية ${code.isNotEmpty ? "($code)" : ""}',
-          fields: changedFields,
-          localUpdatedAt: localUpdatedAt,
-          cloudUpdatedAt: cloudUpdatedAt,
-          by: cloudRow['last_modified_by'] as String? ??
-              cloudRow['updated_by'] as String?,
-        );
-
-        return _ResolutionResult('conflict');
-      }
+    if (updateData.isNotEmpty) {
+      updateData['updated_at'] = cloudUpdatedAt;
+      updateData['updated_by'] = cloudRow['updated_by'];
+      updateData['last_modified_by'] = cloudRow['last_modified_by'];
+      updateData['last_modified_from'] = cloudRow['last_modified_from'];
+      await db.updateTransactionFields(localId, updateData);
+      await _logFieldConflict(
+        item: 'عملية ${code.isNotEmpty ? "($code)" : ""}',
+        fields: changedFields,
+        localUpdatedAt: localUpdatedAt,
+        cloudUpdatedAt: cloudUpdatedAt,
+        by: cloudRow['last_modified_by'] as String? ??
+            cloudRow['updated_by'] as String?,
+      );
+      return _ResolutionResult('conflict');
     }
 
     return _ResolutionResult('no_change');
@@ -1364,4 +1617,7 @@ class _ResolutionResult {
   _ResolutionResult(this.action);
 }
 
-// المزامنة v2.1: منع الرفع بعد فشل الدمج (P0-X) + احترام خيار "الحذف النهائي يفوز دائماً" في التعارضات (P0-Y)
+// المزامنة v2: منع الرفع بعد فشل الدمج (P0-X) + احترام الحذف النهائي في التعارضات (P0-Y)
+// المزامنة v2.1: احترام خيار "الحذف النهائي يفوز دائماً" في التعارضات
+// المزامنة v2.2: مزامنة تغييرات الإعدادات المشتركة تلقائياً + حماية من حلقة الاستيراد
+// المزامنة v2.5: نمطان حصريان (permanent_delete/modification/default) + إشعارات استعادة + معالجة صحيحة لعمليات العمليات
