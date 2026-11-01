@@ -242,7 +242,8 @@ class DatabaseHelper {
               "UPDATE transactions SET updated_at = created_at WHERE updated_at IS NULL");
         } catch (_) {}
 
-        debugPrint('✅ [DB] Upgraded to v10 (tracking + soft delete + cloudId)');
+        debugPrint(
+            '✅ [DB] Upgraded to v10 (tracking + soft delete + cloudId)');
       } catch (e) {
         debugPrint('⚠️ [DB v10] $e');
       }
@@ -280,7 +281,10 @@ class DatabaseHelper {
     if (oldV < 13) {
       try {
         await _addColumnIfMissing(
-          db, 'customers', 'is_permanently_deleted', 'INTEGER DEFAULT 0',
+          db,
+          'customers',
+          'is_permanently_deleted',
+          'INTEGER DEFAULT 0',
         );
         try {
           await db.execute(
@@ -583,6 +587,61 @@ class DatabaseHelper {
       debugPrint('❌ restoreCustomer: $e');
       return 0;
     }
+  }
+
+  /// 🆕 استعادة عميل + نسخ كل حقول السحابة دفعة واحدة
+  Future<void> restoreCustomerWithCloudFields({
+    required int localId,
+    required Map<String, dynamic> cloudRow,
+    String? by,
+  }) async {
+    final db = await database;
+    final now = _now();
+
+    final data = <String, dynamic>{
+      'is_deleted': 0,
+      'is_permanently_deleted': 0,
+      'deleted_at': null,
+      'deleted_by': null,
+      'updated_at': now,
+      if (by != null && by.isNotEmpty) 'updated_by': by,
+    };
+
+    const fields = [
+      'name',
+      'phone',
+      'account_type',
+      'note',
+      'photo_path',
+      'category',
+      'max_balance',
+      'is_active',
+    ];
+
+    for (final f in fields) {
+      if (cloudRow.containsKey(f)) {
+        data[f] = cloudRow[f];
+      }
+    }
+
+    final sanitized = await _sanitizeForTable('customers', data);
+    await db.update('customers', sanitized,
+        where: 'id = ?', whereArgs: [localId]);
+
+    await db.update(
+      'transactions',
+      {
+        'is_deleted': 0,
+        'deleted_at': null,
+        'deleted_by': null,
+        'updated_at': now,
+        if (by != null && by.isNotEmpty) 'updated_by': by,
+      },
+      where: 'customer_id = ?',
+      whereArgs: [localId],
+    );
+
+    _notifyChanged();
   }
 
   Future<int> hardDeleteCustomer(int id) async {
@@ -916,6 +975,38 @@ class DatabaseHelper {
       debugPrint('❌ restoreTransaction: $e');
       return 0;
     }
+  }
+
+  /// 🆕 استعادة معاملة + نسخ كل حقول السحابة
+  Future<void> restoreTransactionWithCloudFields({
+    required int localId,
+    required Map<String, dynamic> cloudRow,
+    String? by,
+  }) async {
+    final db = await database;
+    final now = _now();
+
+    final data = <String, dynamic>{
+      'is_deleted': 0,
+      'deleted_at': null,
+      'deleted_by': null,
+      'updated_at': now,
+      if (by != null && by.isNotEmpty) 'updated_by': by,
+    };
+
+    const fields = ['amount', 'items', 'type', 'currency'];
+
+    for (final f in fields) {
+      if (cloudRow.containsKey(f)) {
+        data[f] = cloudRow[f];
+      }
+    }
+
+    final sanitized = await _sanitizeForTable('transactions', data);
+    await db.update('transactions', sanitized,
+        where: 'id = ?', whereArgs: [localId]);
+
+    _notifyChanged();
   }
 
   Future<int> hardDeleteTransaction(int id) async {
@@ -1420,7 +1511,10 @@ class DatabaseHelper {
     final today = await db.rawQuery(
         "SELECT COUNT(*) AS c FROM log_events WHERE created_at >= ?",
         [
-          DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+          DateTime(
+                  DateTime.now().year,
+                  DateTime.now().month,
+                  DateTime.now().day)
               .toIso8601String()
         ]);
     final pending = await db.rawQuery('''
@@ -1587,3 +1681,5 @@ class DatabaseHelper {
     ''');
   }
 }
+
+// قاعدة البيانات v13.1: v13 + دالتا استعادة بنسخ حقول السحابة (restore*WithCloudFields)
