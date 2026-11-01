@@ -1,6 +1,3 @@
-/// ═══════════════════════════════════════════════════════════
-/// مفاتيح الإعدادات الموحّدة
-/// ═══════════════════════════════════════════════════════════
 class AppSettings {
   // ═══════════════════════════════════════════════════════════
   // 🗑️ مجموعة الحذف
@@ -18,9 +15,11 @@ class AppSettings {
   static const String blockTransactionDeletion =
       'block_transaction_deletion';
 
-  // 🆕 الحذف النهائي
+  // 🆕 إعدادات التعارض (حصريان - لا يُفعّلان معاً)
   static const String permanentDeleteAlwaysWins =
       'permanent_delete_always_wins';
+  static const String modificationAlwaysWins =
+      'modification_always_wins';
 
   // ═══════════════════════════════════════════════════════════
   // ✏️ مجموعة التعديل
@@ -127,8 +126,11 @@ class AppSettings {
     blockCustomerDeletion: false,
     blockTransactionDeletion: false,
 
-    // 🆕 الحذف النهائي
+    // 🆕 إعدادات التعارض (حصريان)
+    // - default: permanentDeleteAlwaysWins = true (الأكثر أماناً)
+    // - تفعيل أحدهما في الواجهة يُعطّل الآخر تلقائياً
     permanentDeleteAlwaysWins: true,
+    modificationAlwaysWins: false,
 
     // ✏️ التعديل
     allowEditTransactions: true,
@@ -203,7 +205,8 @@ class AppSettings {
     deletionConflictRestore,
     blockCustomerDeletion,
     blockTransactionDeletion,
-    permanentDeleteAlwaysWins, // 🆕
+    permanentDeleteAlwaysWins,
+    modificationAlwaysWins,
   };
 
   static const Set<String> sharedSettings = {
@@ -214,7 +217,8 @@ class AppSettings {
     autoCleanupDeleted,
     blockCustomerDeletion,
     blockTransactionDeletion,
-    permanentDeleteAlwaysWins, // 🆕
+    permanentDeleteAlwaysWins,
+    modificationAlwaysWins,
     allowEditTransactions,
     allowEditCustomerBalance,
     trackEdits,
@@ -267,4 +271,5 @@ class AppSettings {
   static bool isDangerous(String key) => dangerousSettings.contains(key);
 }
 
-// الإعدادات v2: إضافة permanentDeleteAlwaysWins للتحكم في سلوك الحذف النهائي عند التعارض
+// الإعدادات v2: إضافة permanentDeleteAlwaysWins (خيار الحذف النهائي يفوز دائماً)
+// الإعدادات v2.2: إضافة modificationAlwaysWins (حصري مع permanentDeleteAlwaysWins — لا يُفعّلان معاً)
