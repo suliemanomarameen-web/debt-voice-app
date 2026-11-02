@@ -15,7 +15,7 @@ class AppSettings {
   static const String blockTransactionDeletion =
       'block_transaction_deletion';
 
-  // 🆕 إعدادات التعارض (حصريان - لا يُفعّلان معاً)
+  // إعدادات التعارض (حصريان)
   static const String permanentDeleteAlwaysWins =
       'permanent_delete_always_wins';
   static const String modificationAlwaysWins =
@@ -45,6 +45,47 @@ class AppSettings {
       'deletion_conflict_restore';
   static const String syncLogs = 'sync_logs';
   static const String syncDeletedBin = 'sync_deleted_bin';
+
+  // ═══════════════════════════════════════════════════════════
+  // 🔀 مجموعة كشف التكرار (v2.4)
+  // ═══════════════════════════════════════════════════════════
+
+  // تشغيل/إيقاف
+  static const String duplicateDetectionEnabled =
+      'duplicate_detection_enabled';
+
+  // مستوى الكشف العام
+  static const String duplicateDetectionLevel =
+      'duplicate_detection_level';
+
+  // تطبيع الأسماء
+  static const String compoundNameHandling = 'compound_name_handling';
+  static const String detectHighSimilarity = 'detect_high_similarity';
+  static const String normalizeHamza = 'normalize_hamza';
+  static const String normalizeTaaMarbuta = 'normalize_taa_marbuta';
+
+  // أي مستوى يوقف المزامنة؟
+  static const String blockSyncOnConfirmed = 'block_sync_on_confirmed';
+  static const String blockSyncOnLikely = 'block_sync_on_likely';
+  static const String blockSyncOnWeak = 'block_sync_on_weak';
+  static const String blockSyncOnSimilar = 'block_sync_on_similar';
+
+  // كشف تكرار العمليات
+  static const String transactionDuplicateMode =
+      'transaction_duplicate_mode';
+  static const String transactionWindowMinutes =
+      'transaction_window_minutes';
+
+  // السلوك التلقائي
+  static const String autoRenameFormat = 'auto_rename_format';
+  static const String maxDuplicatesPerSync = 'max_duplicates_per_sync';
+
+  // الإشعارات
+  static const String notifyOnMerge = 'notify_on_merge';
+  static const String notifyOnRename = 'notify_on_rename';
+  static const String notifyOnSkip = 'notify_on_skip';
+  static const String notifyOnDuplicateDetected =
+      'notify_on_duplicate_detected';
 
   // ═══════════════════════════════════════════════════════════
   // 📜 مجموعة السجل
@@ -105,7 +146,7 @@ class AppSettings {
   static const String compactMode = 'compact_mode';
 
   // ═══════════════════════════════════════════════════════════
-  // رمز المحاسب في العمليات
+  // رمز المحاسب
   // ═══════════════════════════════════════════════════════════
 
   static const String codeIncludeAccountant = 'code_include_accountant';
@@ -126,9 +167,7 @@ class AppSettings {
     blockCustomerDeletion: false,
     blockTransactionDeletion: false,
 
-    // 🆕 إعدادات التعارض (حصريان)
-    // - default: permanentDeleteAlwaysWins = true (الأكثر أماناً)
-    // - تفعيل أحدهما في الواجهة يُعطّل الآخر تلقائياً
+    // إعدادات التعارض (حصريان)
     permanentDeleteAlwaysWins: true,
     modificationAlwaysWins: false,
 
@@ -148,6 +187,26 @@ class AppSettings {
     deletionConflictRestore: true,
     syncLogs: true,
     syncDeletedBin: true,
+
+    // 🔀 كشف التكرار (v2.4)
+    duplicateDetectionEnabled: true,
+    duplicateDetectionLevel: 'balanced',
+    compoundNameHandling: 'auto',
+    detectHighSimilarity: true,
+    normalizeHamza: true,
+    normalizeTaaMarbuta: true,
+    blockSyncOnConfirmed: true,
+    blockSyncOnLikely: false,
+    blockSyncOnWeak: false,
+    blockSyncOnSimilar: false,
+    transactionDuplicateMode: 'code',
+    transactionWindowMinutes: 30,
+    autoRenameFormat: '(2)',
+    maxDuplicatesPerSync: 50,
+    notifyOnMerge: true,
+    notifyOnRename: true,
+    notifyOnSkip: false,
+    notifyOnDuplicateDetected: true,
 
     // 📜 السجل
     logEnabled: true,
@@ -219,10 +278,31 @@ class AppSettings {
     blockTransactionDeletion,
     permanentDeleteAlwaysWins,
     modificationAlwaysWins,
+    // 🔀 كشف التكرار — مُزامَن
+    duplicateDetectionEnabled,
+    duplicateDetectionLevel,
+    compoundNameHandling,
+    detectHighSimilarity,
+    normalizeHamza,
+    normalizeTaaMarbuta,
+    blockSyncOnConfirmed,
+    blockSyncOnLikely,
+    blockSyncOnWeak,
+    blockSyncOnSimilar,
+    transactionDuplicateMode,
+    transactionWindowMinutes,
+    autoRenameFormat,
+    maxDuplicatesPerSync,
+    notifyOnMerge,
+    notifyOnRename,
+    notifyOnSkip,
+    notifyOnDuplicateDetected,
+    // ✏️ التعديل
     allowEditTransactions,
     allowEditCustomerBalance,
     trackEdits,
     requireEditReason,
+    // المزامنة والسجل
     syncDeletedBin,
     logEnabled,
     logRetentionDays,
@@ -273,3 +353,4 @@ class AppSettings {
 
 // الإعدادات v2: إضافة permanentDeleteAlwaysWins (خيار الحذف النهائي يفوز دائماً)
 // الإعدادات v2.2: إضافة modificationAlwaysWins (حصري مع permanentDeleteAlwaysWins — لا يُفعّلان معاً)
+// الإعدادات v2.4: إضافة 18 إعداداً شاملاً لنظام التكرار (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
