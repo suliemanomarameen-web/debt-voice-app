@@ -22,7 +22,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   }
 
   Future<void> _changeBool(String key, bool value) async {
-    // 🆕 فحص خاص لإعداد القفل
     if (key == AppSettings.lockEnabled && value == true) {
       final hasPwd = await AuthService.hasPassword();
       if (!hasPwd) {
@@ -47,7 +46,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       if (!ok) return;
     }
 
-    // 🆕 حصرية الإعدادين: لا يمكن تفعيلهما معاً
+    // حصرية الإعدادين: لا يمكن تفعيلهما معاً
     if (value == true) {
       if (key == AppSettings.permanentDeleteAlwaysWins) {
         final wasOn =
@@ -99,6 +98,25 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       settingName: _labelFor(key),
       oldValue: oldValue.toString(),
       newValue: value.toString(),
+    );
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _changeString(String key, String value) async {
+    if (AppSettings.isDangerous(key) &&
+        SettingsService.getBool(
+            AppSettings.requirePasswordForDangerousSettings,
+            defaultValue: true)) {
+      final ok = await _askForPassword();
+      if (!ok) return;
+    }
+    final oldValue = SettingsService.getString(key);
+    await SettingsService.setString(key, value);
+    await LoggerService.logSettingChanged(
+      settingName: _labelFor(key),
+      oldValue: oldValue,
+      newValue: value,
     );
     if (!mounted) return;
     setState(() {});
@@ -277,6 +295,26 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
       AppSettings.permanentDeleteAlwaysWins: '🪦 الحذف النهائي يفوز دائماً',
       AppSettings.modificationAlwaysWins: '✏️ التعديل يفوز دائماً',
+      // 🔀 كشف التكرار
+      AppSettings.duplicateDetectionEnabled: 'تفعيل كشف التكرار',
+      AppSettings.duplicateDetectionLevel: 'مستوى الكشف',
+      AppSettings.compoundNameHandling: 'الأسماء المركبة (عبدالله/عبد الله)',
+      AppSettings.detectHighSimilarity: 'كشف التشابه العالي',
+      AppSettings.normalizeHamza: 'توحيد الهمزات (أ/إ/آ = ا)',
+      AppSettings.normalizeTaaMarbuta: 'توحيد التاء المربوطة (ة = ه)',
+      AppSettings.blockSyncOnConfirmed: 'إيقاف المزامنة عند تكرار مؤكد',
+      AppSettings.blockSyncOnLikely: 'إيقاف المزامنة عند تشابه محتمل',
+      AppSettings.blockSyncOnWeak: 'إيقاف المزامنة عند تشابه ضعيف',
+      AppSettings.blockSyncOnSimilar: 'إيقاف المزامنة عند تشابه حرفي',
+      AppSettings.transactionDuplicateMode: 'طريقة كشف تكرار العمليات',
+      AppSettings.transactionWindowMinutes: 'النافذة الزمنية للعمليات',
+      AppSettings.autoRenameFormat: 'صيغة إعادة التسمية التلقائية',
+      AppSettings.maxDuplicatesPerSync: 'الحد الأقصى للتكرارات في المزامنة',
+      AppSettings.notifyOnMerge: 'إشعار عند الدمج',
+      AppSettings.notifyOnRename: 'إشعار عند إعادة التسمية',
+      AppSettings.notifyOnSkip: 'إشعار عند التخطي',
+      AppSettings.notifyOnDuplicateDetected: 'إشعار عند اكتشاف تكرار',
+      // باقي الإعدادات
       AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
       AppSettings.allowEditCustomerBalance: 'السماح بتعديل الرصيد مباشرة',
       AppSettings.trackEdits: 'تسجيل كل تعديل في السجل',
@@ -333,11 +371,46 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.blockTransactionDeletion:
           'منع حذف أي عملية نهائياً حتى من السلة',
       AppSettings.permanentDeleteAlwaysWins:
-          'مفعّل: لا استعادة أبداً (آمن). يتعارض مع "التعديل يفوز دائماً" — تفعيل أحدهما يُعطّل الآخر تلقائياً.',
+          'مفعّل: لا استعادة أبداً. يتعارض مع "التعديل يفوز" — تفعيل أحدهما يُعطّل الآخر.',
       AppSettings.modificationAlwaysWins:
-          'مفعّل: أي تعديل يستعيد السجل المحذوف نهائياً، حتى لو الحذف أحدث. يتعارض مع "الحذف النهائي يفوز دائماً".',
+          'مفعّل: أي تعديل يستعيد السجل المحذوف، حتى لو الحذف أحدث. يتعارض مع "الحذف النهائي يفوز".',
+      // 🔀 كشف التكرار
+      AppSettings.duplicateDetectionEnabled:
+          'إيقاف = لا كشف للتكرارات (المزامنة تكمل مباشرة)',
+      AppSettings.duplicateDetectionLevel:
+          'صارم = تطابق تام فقط. متوازن = + تشابه محتمل. مرن = + كل التحذيرات.',
+      AppSettings.compoundNameHandling:
+          'تلقائي: عبدالله = عبد الله. اسألني: يُعرض كتحذير. معطّل: شخصان مختلفان.',
+      AppSettings.detectHighSimilarity:
+          '"محمد" و "محمود" (حرف واحد مختلف) يُعرضان كتحذير',
+      AppSettings.normalizeHamza:
+          'أحمد، إحمد، آحمد → كلها تُعتبر "احمد"',
+      AppSettings.normalizeTaaMarbuta:
+          'فاطمة، فاطمه → كلاهما "فاطمه"',
+      AppSettings.blockSyncOnConfirmed:
+          'منع المزامنة عند تكرار مؤكد (تطابق تام) حتى يحلّه المستخدم',
+      AppSettings.blockSyncOnLikely:
+          'منع المزامنة عند تشابه محتمل (بادئة 2+ كلمات)',
+      AppSettings.blockSyncOnWeak:
+          'منع المزامنة عند تشابه ضعيف (بادئة كلمة واحدة)',
+      AppSettings.blockSyncOnSimilar:
+          'منع المزامنة عند تشابه حرفي (Levenshtein = 1)',
+      AppSettings.transactionDuplicateMode:
+          'code = رقم العملية. basic = عميل+مبلغ+نوع. window = + نافذة زمنية',
+      AppSettings.transactionWindowMinutes:
+          'مدة البحث عن تكرار في العمليات (بالدقائق)',
+      AppSettings.autoRenameFormat:
+          'صيغة الاسم الجديد عند إعادة التسمية: "أحمد (2)" أو "أحمد-2" أو "أحمد_2"',
+      AppSettings.maxDuplicatesPerSync:
+          'أقصى عدد تكرارات تُعالج في مزامنة واحدة',
+      AppSettings.notifyOnMerge: 'إشعار عند دمج حسابين/عمليتين',
+      AppSettings.notifyOnRename: 'إشعار عند إعادة تسمية حساب',
+      AppSettings.notifyOnSkip: 'إشعار عند تخطي تكرار',
+      AppSettings.notifyOnDuplicateDetected:
+          'إشعار عند اكتشاف تكرار جديد (قبل الحل)',
+      // باقي الإعدادات
       AppSettings.allowEditTransactions:
-          'التحكم الكامل: إذا مُعطّل، لا يمكن تعديل أي عملية (المبلغ، الأصناف، النوع)',
+          'التحكم الكامل: إذا مُعطّل، لا يمكن تعديل أي عملية',
       AppSettings.allowEditCustomerBalance: 'تعديل الرصيد بدون معاملة',
       AppSettings.trackEdits: 'كل تعديل يُسجَّل في سجل الأحداث',
       AppSettings.requireEditReason: 'يُطلب من المستخدم كتابة السبب',
@@ -443,6 +516,120 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   const Divider(height: 1),
                   _buildBoolTile(AppSettings.permanentDeleteAlwaysWins),
                   _buildBoolTile(AppSettings.modificationAlwaysWins),
+                ]),
+            // 🔀 كشف التكرار
+            _buildGroup(
+                title: '🔀 نظام التكرار',
+                groupName: 'التكرار',
+                keys: const [
+                  AppSettings.duplicateDetectionEnabled,
+                  AppSettings.duplicateDetectionLevel,
+                  AppSettings.compoundNameHandling,
+                  AppSettings.detectHighSimilarity,
+                  AppSettings.normalizeHamza,
+                  AppSettings.normalizeTaaMarbuta,
+                  AppSettings.blockSyncOnConfirmed,
+                  AppSettings.blockSyncOnLikely,
+                  AppSettings.blockSyncOnWeak,
+                  AppSettings.blockSyncOnSimilar,
+                  AppSettings.transactionDuplicateMode,
+                  AppSettings.transactionWindowMinutes,
+                  AppSettings.autoRenameFormat,
+                  AppSettings.maxDuplicatesPerSync,
+                  AppSettings.notifyOnMerge,
+                  AppSettings.notifyOnRename,
+                  AppSettings.notifyOnSkip,
+                  AppSettings.notifyOnDuplicateDetected,
+                ],
+                children: [
+                  _buildSubHeader('⚡ تشغيل/إيقاف'),
+                  _buildBoolTile(AppSettings.duplicateDetectionEnabled),
+                  _buildSubHeader('📊 مستوى الكشف'),
+                  _buildChoiceTile<String>(
+                    key: AppSettings.duplicateDetectionLevel,
+                    currentValue: SettingsService.getString(
+                        AppSettings.duplicateDetectionLevel,
+                        defaultValue: 'balanced'),
+                    options: const [
+                      MapEntry('strict', 'صارم'),
+                      MapEntry('balanced', 'متوازن'),
+                      MapEntry('flexible', 'مرن'),
+                      MapEntry('custom', 'مخصص'),
+                    ],
+                    onChanged: (v) => _changeString(
+                        AppSettings.duplicateDetectionLevel, v),
+                  ),
+                  _buildSubHeader('🔤 تطبيع الأسماء'),
+                  _buildChoiceTile<String>(
+                    key: AppSettings.compoundNameHandling,
+                    currentValue: SettingsService.getString(
+                        AppSettings.compoundNameHandling,
+                        defaultValue: 'auto'),
+                    options: const [
+                      MapEntry('auto', 'تلقائي'),
+                      MapEntry('ask', 'اسألني'),
+                      MapEntry('off', 'معطّل'),
+                    ],
+                    onChanged: (v) => _changeString(
+                        AppSettings.compoundNameHandling, v),
+                  ),
+                  _buildBoolTile(AppSettings.detectHighSimilarity),
+                  _buildBoolTile(AppSettings.normalizeHamza),
+                  _buildBoolTile(AppSettings.normalizeTaaMarbuta),
+                  _buildSubHeader('⏸️ متى توقف المزامنة؟'),
+                  _buildBoolTile(AppSettings.blockSyncOnConfirmed),
+                  _buildBoolTile(AppSettings.blockSyncOnLikely),
+                  _buildBoolTile(AppSettings.blockSyncOnWeak),
+                  _buildBoolTile(AppSettings.blockSyncOnSimilar),
+                  _buildSubHeader('💼 كشف تكرار العمليات'),
+                  _buildChoiceTile<String>(
+                    key: AppSettings.transactionDuplicateMode,
+                    currentValue: SettingsService.getString(
+                        AppSettings.transactionDuplicateMode,
+                        defaultValue: 'code'),
+                    options: const [
+                      MapEntry('code', 'رقم العملية'),
+                      MapEntry('basic', 'أساسي'),
+                      MapEntry('window', 'زمني'),
+                    ],
+                    onChanged: (v) => _changeString(
+                        AppSettings.transactionDuplicateMode, v),
+                  ),
+                  _buildIntTile(AppSettings.transactionWindowMinutes,
+                      min: 5, max: 120, suffix: 'دقيقة'),
+                  _buildSubHeader('🔧 السلوك التلقائي'),
+                  _buildChoiceTile<String>(
+                    key: AppSettings.autoRenameFormat,
+                    currentValue: SettingsService.getString(
+                        AppSettings.autoRenameFormat,
+                        defaultValue: '(2)'),
+                    options: const [
+                      MapEntry('(2)', 'أحمد (2)'),
+                      MapEntry('-2', 'أحمد-2'),
+                      MapEntry('_2', 'أحمد_2'),
+                    ],
+                    onChanged: (v) =>
+                        _changeString(AppSettings.autoRenameFormat, v),
+                  ),
+                  _buildChoiceTile<int>(
+                    key: AppSettings.maxDuplicatesPerSync,
+                    currentValue: SettingsService.getInt(
+                        AppSettings.maxDuplicatesPerSync,
+                        defaultValue: 50),
+                    options: const [
+                      MapEntry(10, '10'),
+                      MapEntry(50, '50'),
+                      MapEntry(100, '100'),
+                      MapEntry(999999, 'لا نهائي'),
+                    ],
+                    onChanged: (v) =>
+                        _changeInt(AppSettings.maxDuplicatesPerSync, v),
+                  ),
+                  _buildSubHeader('🔔 الإشعارات'),
+                  _buildBoolTile(AppSettings.notifyOnMerge),
+                  _buildBoolTile(AppSettings.notifyOnRename),
+                  _buildBoolTile(AppSettings.notifyOnSkip),
+                  _buildBoolTile(AppSettings.notifyOnDuplicateDetected),
                 ]),
             _buildGroup(
                 title: '✏️ التعديل',
@@ -608,6 +795,17 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
+  Widget _buildSubHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(title,
+          style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey)),
+    );
+  }
+
   Widget _buildBoolTile(String key) {
     final value = SettingsService.getBool(key);
     final isDangerous = AppSettings.isDangerous(key);
@@ -668,31 +866,97 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         if (isModified)
           const Icon(Icons.edit, size: 12, color: Colors.orange),
       ]),
-      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(_descriptionFor(key),
-            style: const TextStyle(fontSize: 11, color: Colors.grey)),
-        const SizedBox(height: 6),
-        Row(children: [
-          IconButton(
-              icon: const Icon(Icons.remove_circle_outline, size: 20),
-              onPressed: value > min ? () => _changeInt(key, value - 1) : null),
-          Expanded(
-              child: Center(
-                  child: Text('$value $suffix',
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold)))),
-          IconButton(
-              icon: const Icon(Icons.add_circle_outline, size: 20),
-              onPressed: value < max ? () => _changeInt(key, value + 1) : null),
-        ]),
-      ]),
+      subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_descriptionFor(key),
+                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            const SizedBox(height: 6),
+            Row(children: [
+              IconButton(
+                  icon: const Icon(Icons.remove_circle_outline, size: 20),
+                  onPressed:
+                      value > min ? () => _changeInt(key, value - 1) : null),
+              Expanded(
+                  child: Center(
+                      child: Text('$value $suffix',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold)))),
+              IconButton(
+                  icon: const Icon(Icons.add_circle_outline, size: 20),
+                  onPressed: value < max
+                      ? () => _changeInt(key, value + 1)
+                      : null),
+            ]),
+          ]),
       trailing: IconButton(
           icon: const Icon(Icons.restore, size: 16),
           tooltip: 'استعادة',
           onPressed: () => _resetSetting(key)),
     );
   }
+
+  Widget _buildChoiceTile<T>({
+    required String key,
+    required T currentValue,
+    required List<MapEntry<T, String>> options,
+    required Function(T) onChanged,
+  }) {
+    final isModified = SettingsService.isModified(key);
+    // تأكد من وجود القيمة الحالية في الخيارات
+    final validValue = options.any((o) => o.key == currentValue)
+        ? currentValue
+        : options.first.key;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+                child: Text(_labelFor(key),
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isModified
+                            ? FontWeight.bold
+                            : FontWeight.normal))),
+            if (isModified)
+              const Icon(Icons.edit, size: 12, color: Colors.orange),
+            IconButton(
+                icon: const Icon(Icons.restore, size: 16),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: 'استعادة',
+                onPressed: () => _resetSetting(key)),
+          ]),
+          Text(_descriptionFor(key),
+              style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<T>(
+              segments: options
+                  .map((o) => ButtonSegment<T>(
+                        value: o.key,
+                        label: Text(o.value,
+                            style: const TextStyle(fontSize: 11)),
+                      ))
+                  .toList(),
+              selected: {validValue},
+              onSelectionChanged: (v) => onChanged(v.first),
+              style: ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // الإعدادات المتقدمة v2: إضافة خيار "الحذف النهائي يفوز دائماً" في قسم 🗑️ الحذف
 // الإعدادات المتقدمة v2.3: حصرية الإعدادين "الحذف النهائي" و"التعديل يفوز" + إضافة خيار "التعديل يفوز دائماً"
+// الإعدادات المتقدمة v2.4: إضافة قسم كامل "🔀 نظام التكرار" بـ 18 إعداداً (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
