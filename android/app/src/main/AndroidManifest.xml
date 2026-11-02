@@ -60,7 +60,7 @@
     <!-- ═══════════════════════════════════════════════════════════ -->
     <!-- 📞 الهاتف (WhatsApp)                                         -->
     <!-- ═══════════════════════════════════════════════════════════ -->
-    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- 🆕 حُذفت CALL_PHONE (غير مستخدمة — WhatsApp يعمل عبر wa.me URL) -->
 
     <application
         android:label="دفتر الديون"
