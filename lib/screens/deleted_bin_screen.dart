@@ -3,6 +3,7 @@ import '../models/log_event.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../services/accountant_service.dart'; // 🆕
 import '../services/logger_service.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
@@ -175,13 +176,11 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     final accountant = await _getAccountantName();
     int deleted = 0;
 
-    // حذف كل المعاملات نهائيًا
     for (final t in _deletedTransactions) {
       await db.hardDeleteTransaction(t.id!);
       deleted++;
     }
 
-    // حذف كل العملاء نهائيًا
     for (final c in _deletedCustomers) {
       await db.hardDeleteCustomer(c.id!);
       deleted++;
@@ -204,14 +203,15 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
   // ═══════════════════════════════════════════════════════════
   // أدوات
   // ═══════════════════════════════════════════════════════════
+
+  /// 🆕 إصلاح: يستخدم AccountantService (SharedPreferences)
+  /// بدلاً من جدول settings (الذي لا يحتوي على accountant_name)
   Future<String?> _getAccountantName() async {
     try {
-      final db2 = DatabaseHelper.instance;
-      final r = await db2.database.then((d) => d.query('settings',
-          where: 'key = ?', whereArgs: ['accountant_name'], limit: 1));
-      if (r.isNotEmpty) return r.first['value'] as String?;
-    } catch (_) {}
-    return null;
+      return await AccountantService.getAccountantName();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool?> _confirmRestore({
@@ -750,3 +750,5 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
   }
 }
+
+// Deleted Bin Screen v2: إصلاح _getAccountantName — استخدام AccountantService بدل DB settings
