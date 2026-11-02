@@ -28,10 +28,12 @@ import '../services/recovery_service.dart';
 import '../services/reminder_service.dart';
 import '../services/settings_service.dart';
 import '../services/speech_service.dart';
+import '../services/sync_service.dart'; // 🆕
 import '../services/theme_service.dart';
 import '../screens/accountants_screen.dart';
 import '../screens/advanced_settings_screen.dart';
 import '../screens/deleted_bin_screen.dart';
+import '../screens/duplicates_screen.dart'; // 🆕
 import '../screens/gdrive_screen.dart';
 import '../screens/keywords_screen.dart';
 import '../screens/logs_screen.dart';
@@ -1372,6 +1374,40 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _backupBusy = false);
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 إعادة فحص التكرارات يدوياً
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _recheckDuplicates() async {
+    setState(() => _backupBusy = true);
+    try {
+      final found = await SyncService.recheckDuplicates();
+      if (!mounted) return;
+      setState(() => _backupBusy = false);
+      if (found > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🔀 اكتُشفت $found تكرارات جديدة'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ لا توجد تكرارات جديدة'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _backupBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Future<void> _toggleCodeEnabled(bool v) async {
     await CodeService.setEnabled(v);
     await LoggerService.logSettingChanged(
@@ -2398,6 +2434,94 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
+          // ========== 🆕 التكرارات ==========
+          const _SectionHeader('🔀 التكرارات'),
+          FutureBuilder<Map<String, int>>(
+            future: DatabaseHelper.instance.getDuplicatesStats(),
+            builder: (_, snap) {
+              final stats = snap.data ?? {};
+              final pending = (stats['pending'] ?? 0);
+              final skipped = (stats['skipped'] ?? 0);
+              final unresolved = pending + skipped;
+
+              return Column(
+                children: [
+                  ListTile(
+                    leading: Icon(
+                      Icons.compare_arrows,
+                      color: unresolved > 0
+                          ? Colors.orange
+                          : Colors.grey,
+                    ),
+                    title: const Text('إدارة التكرارات'),
+                    subtitle: Text(
+                      unresolved > 0
+                          ? '$unresolved تكرار بحاجة للمراجعة'
+                          : 'لا توجد تكرارات',
+                      style: TextStyle(
+                        color: unresolved > 0
+                            ? Colors.orange
+                            : Colors.grey,
+                        fontWeight: unresolved > 0
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (unresolved > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$unresolved',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward_ios, size: 16),
+                      ],
+                    ),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              const DuplicatesScreen(forceBlock: false),
+                        ),
+                      );
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  ListTile(
+                    leading: _backupBusy
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2),
+                          )
+                        : const Icon(Icons.search, color: Colors.blue),
+                    title: const Text('إعادة فحص الآن'),
+                    subtitle:
+                        const Text('يبحث عن تكرارات جديدة في السحابة'),
+                    trailing: const Icon(Icons.refresh, size: 18),
+                    onTap: _backupBusy ? null : _recheckDuplicates,
+                  ),
+                ],
+              );
+            },
+          ),
+
           // ========== سلة المحذوفات ==========
           FutureBuilder<Map<String, int>>(
             future: DatabaseHelper.instance.getDeletedCount(),
@@ -2745,3 +2869,5 @@ class _SectionHeader extends StatelessWidget {
                 fontSize: 14)),
       );
 }
+
+// Settings Tab v2: إضافة قسم 🔀 التكرارات + زر إعادة فحص (المرحلة 5)
