@@ -5,6 +5,7 @@ import 'tabs/tabs_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
+import 'screens/duplicates_screen.dart';
 import 'handlers/overlay_handler.dart';
 import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
@@ -18,9 +19,9 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/tts_service.dart';
 import 'services/settings_service.dart';
-// 🆕 استيرادات جديدة
 import 'services/device_service.dart';
 import 'services/accountants_service.dart';
+import 'services/duplicate_detector.dart';
 import 'db/database_helper.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -28,20 +29,9 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ═══════════════════════════════════════════════════════
-  // 0. 🆕 تهيئة الهوية والمحاسبين (قبل أي شيء)
-  // ═══════════════════════════════════════════════════════
-  await DeviceService.getDeviceId(); // يضمن وجود device_id
-  await AccountantsService.init();   // يحمّل المحاسبين المحليين
-
-  // ═══════════════════════════════════════════════════════
-  // 1. تحميل الإعدادات أولاً (قبل أي شيء آخر)
-  // ═══════════════════════════════════════════════════════
+  await DeviceService.getDeviceId();
+  await AccountantsService.init();
   await SettingsService.init();
-
-  // ═══════════════════════════════════════════════════════
-  // 2. تهيئة الخدمات الأساسية
-  // ═══════════════════════════════════════════════════════
   await NotificationService.init();
   await ReminderService.init();
   await PermissionService.requestAll();
@@ -55,9 +45,6 @@ void main() async {
   final theme = ThemeService();
   await theme.load();
 
-  // ═══════════════════════════════════════════════════════
-  // 3. تهيئة قاعدة البيانات + تنظيف المحذوفات القديمة
-  // ═══════════════════════════════════════════════════════
   try {
     await DatabaseHelper.instance.database;
 
@@ -87,41 +74,24 @@ void main() async {
     debugPrint('⚠️ DB cleanup error: $e');
   }
 
-  // ═══════════════════════════════════════════════════════
-  // 4. تهيئة خدمات المزامنة والنسخ
-  // ═══════════════════════════════════════════════════════
   await AutoBackupService.init();
   await SyncService.init();
   await CloudBackupService.init();
   await AudioRecorderService.init();
 
-  // ═══════════════════════════════════════════════════════
-  // 5. إشعار الزر العائم بأن الصوت جاهز
-  // ═══════════════════════════════════════════════════════
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
-  // ═══════════════════════════════════════════════════════
-  // 6. إعداد رد نداء الإشعارات
-  // ═══════════════════════════════════════════════════════
   NotificationService.onTap = _onNotificationTap;
-
-  // ═══════════════════════════════════════════════════════
-  // 7. بدء مستمع الزر العائم
-  // ═══════════════════════════════════════════════════════
   OverlayHandler.listen();
 
-  // ═══════════════════════════════════════════════════════
-  // 8. تشغيل التطبيق
-  // ═══════════════════════════════════════════════════════
   runApp(MultiProvider(
     providers: [ChangeNotifierProvider.value(value: theme)],
     child: const DebtApp(),
   ));
 }
 
-/// عند الضغط على إشعار "اختر العميل"
 void _onNotificationTap(String? payload) {
   if (payload != 'choose_customer') return;
 
@@ -142,10 +112,14 @@ class DebtApp extends StatefulWidget {
 }
 
 class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
+  bool _duplicatesScreenOpen = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // فحص التكرارات بعد بدء التطبيق
+    Future.delayed(const Duration(milliseconds: 700), _checkDuplicates);
   }
 
   @override
@@ -162,7 +136,34 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
       debugPrint('📱 App resumed - checking sync status');
       Future.delayed(const Duration(seconds: 2), () {
         SyncService.checkAndSyncIfNeeded();
+        _checkDuplicates();
       });
+    }
+  }
+
+  /// 🆕 يفتح شاشة التكرارات إذا وُجدت تكرارات معلّقة
+  Future<void> _checkDuplicates() async {
+    if (_duplicatesScreenOpen) return;
+
+    try {
+      final hasDuplicates = await DuplicateDetector.shouldBlockSync();
+      if (!hasDuplicates || !mounted) return;
+
+      final state = navigatorKey.currentState;
+      if (state == null) return;
+
+      _duplicatesScreenOpen = true;
+
+      final route = MaterialPageRoute(
+        builder: (_) => const DuplicatesScreen(forceBlock: true),
+      );
+
+      await state.push(route);
+
+      _duplicatesScreenOpen = false;
+    } catch (e) {
+      debugPrint('❌ [App] _checkDuplicates error: $e');
+      _duplicatesScreenOpen = false;
     }
   }
 
@@ -189,3 +190,6 @@ void overlayMain() {
     home: OverlayWidget(),
   ));
 }
+
+// main: تنظيف شواهد القبور القديمة (>90 يوماً) عند بدء التطبيق
+// main: فحص التكرارات عند البدء والاستئناف + فتح شاشة التكرارات الإلزامية (المرحلة 5)
