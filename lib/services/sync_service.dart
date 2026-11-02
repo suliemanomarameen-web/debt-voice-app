@@ -11,6 +11,7 @@ import 'accountants_service.dart';
 import 'device_service.dart';
 import 'code_service.dart';
 import 'notification_service.dart';
+import 'duplicate_detector.dart';
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
@@ -90,8 +91,6 @@ class SyncService {
 
   static bool get isSyncAvailable => GDriveService.isSignedIn;
 
-  /// يمنع إطلاق onChanged أثناء استيراد الإعدادات من السحابة
-  /// (لتجنب حلقة لا نهائية: استيراد → تغيير → جدولة مزامنة → استيراد...)
   static bool _isImportingSettings = false;
 
   static Future<void> init() async {
@@ -282,6 +281,25 @@ class SyncService {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
+      // 🆕 التحقق من وجود تكرارات معلّقة سابقة
+      final existingBlocked = await DuplicateDetector.shouldBlockSync();
+      if (existingBlocked) {
+        if (!silent) _setStatus(SyncStatus.error);
+        debugPrint('🚫 [Sync] Blocked by existing duplicates');
+        if (!silent) {
+          try {
+            await NotificationService.show(
+              '🔀 تكرارات تحتاج مراجعة',
+              'لا يمكن المزامنة حتى تحلّها',
+            );
+          } catch (_) {}
+        }
+        return SyncResult(
+          success: false,
+          message: 'توجد تكرارات لم تُحل — افتح شاشة التكرارات',
+        );
+      }
+
       if (!await AccountantsService.hasAnyAccountants()) {
         final deviceId = await DeviceService.getDeviceId();
         final primaryId = await DeviceService.getPrimaryDeviceId();
@@ -347,6 +365,27 @@ class SyncService {
 
       if (hasCloudChanges && cloudData != null) {
         if (!silent) _setStatus(SyncStatus.downloading);
+
+        // 🆕 المرحلة 2: اكتشاف التكرارات قبل الدمج
+        final detected = await DuplicateDetector.detect(cloudData);
+        if (detected > 0) {
+          final blocked = await DuplicateDetector.shouldBlockSync();
+          if (blocked) {
+            if (!silent) _setStatus(SyncStatus.error);
+            final msg = 'اكتُشفت $detected تكرارات — افتح شاشة التكرارات';
+            debugPrint('🚫 [Sync] Blocked by $detected new duplicates');
+            if (!silent) {
+              try {
+                await NotificationService.show(
+                  '🔀 تكرارات تحتاج مراجعة',
+                  'اكتُشفت $detected تكرارات — افتح شاشة التكرارات لحلّها',
+                );
+              } catch (_) {}
+            }
+            return SyncResult(success: false, message: msg);
+          }
+        }
+
         final result = await _mergeCloudData(cloudData);
 
         // P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
@@ -473,8 +512,6 @@ class SyncService {
       await db.addTombstone(cloudId: cloudId, type: type);
       applied++;
 
-      // في نمط "التعديل يفوز" أو "الافتراضي" → لا نحذف السجل، نترك _resolve...
-      // في نمط "الحذف يفوز" → نحذف فوراً
       if (mode != 'permanent_delete') {
         debugPrint(
             '⏸️ [Sync] Deferring tombstone deletion for $cloudId (mode=$mode)');
@@ -580,14 +617,10 @@ class SyncService {
 
       final Map<int, int> cloudIdToLocalId = {};
 
-      // ═══════════════════════════════════════════════════
-      // 1) معالجة العملاء
-      // ═══════════════════════════════════════════════════
       for (final cc in cloudCustomers) {
         final cloudId = cc['cloud_id'] as String?;
         final cloudName = cc['name'] as String? ?? '';
 
-        // في نمط "الحذف يفوز" فقط نتخطى الـ tombstones
         if (cloudId != null && cloudId.isNotEmpty) {
           if (mode == 'permanent_delete' &&
               await db.hasTombstone(cloudId)) {
@@ -612,8 +645,6 @@ class SyncService {
         final oldCloudId = cc['id'] as int?;
 
         if (localRows.isEmpty) {
-          // إذا كان السجل محذوفاً محلياً بـ tombstone، والسحابة تحمل حذفاً نهائياً
-          // وفي نمط modification/default → نتجاهله إذا كان محذوفاً نهائياً
           if (mode != 'permanent_delete' &&
               await db.hasTombstone(cloudId)) {
             final cloudPerm = cc['is_permanently_deleted'] == 1;
@@ -654,9 +685,6 @@ class SyncService {
         }
       }
 
-      // ═══════════════════════════════════════════════════
-      // 2) معالجة المعاملات
-      // ═══════════════════════════════════════════════════
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
         final cloudCustomerId = ct['customer_id'] as int?;
@@ -845,10 +873,6 @@ class SyncService {
     }
   }
 
-  /// يحدّد نمط حل التعارض (حصري)
-  /// - return 'permanent_delete' إذا كان الحذف النهائي يفوز
-  /// - return 'modification' إذا كان التعديل يفوز
-  /// - return 'default' إذا كانا معطّلين (الوضع الافتراضي)
   static String _resolveConflictMode(
       bool modificationAlwaysWins, bool permanentDeleteAlwaysWins) {
     if (permanentDeleteAlwaysWins && modificationAlwaysWins) {
@@ -861,9 +885,8 @@ class SyncService {
     return 'default';
   }
 
-  /// إشعار محلي + سجل عند استعادة سجل محذوف نهائياً
   static Future<void> _notifyRestoration({
-    required String type, // 'customer' أو 'transaction'
+    required String type,
     required String name,
     String? code,
     double? amount,
@@ -889,10 +912,8 @@ class SyncService {
         body = 'تم استعادة عملية$codeStr$amtStr$custStr\nالسبب: $reason';
       }
 
-      // 1) إشعار محلي على الجوال
       await NotificationService.show(title, body);
 
-      // 2) سجل الأحداث (يُزامَن مع الأجهزة الأخرى)
       await LoggerService.log(
         action: title,
         description: body,
@@ -931,9 +952,6 @@ class SyncService {
           defaultValue: true),
     );
 
-    // ═══════════════════════════════════════════════════
-    // حالة: أحد الجانبين محذوف نهائياً
-    // ═══════════════════════════════════════════════════
     if (localPerm != cloudPerm) {
       final deletedRow = localPerm ? localRow : cloudRow;
       final activeRow = localPerm ? cloudRow : localRow;
@@ -957,7 +975,6 @@ class SyncService {
       final deletedName = deletedRow['name'] as String? ?? '';
       final nameChanged = activeName != deletedName;
 
-      // ①: نمط "التعديل يفوز دائماً" — استعادة دائماً
       if (mode == 'modification') {
         if (deletedIsLocal) {
           await db.restoreCustomerWithCloudFields(
@@ -981,7 +998,6 @@ class SyncService {
         }
       }
 
-      // ②: نمط "الحذف النهائي يفوز دائماً"
       if (mode == 'permanent_delete') {
         if (deletedIsLocal) {
           return _ResolutionResult('no_change');
@@ -1005,9 +1021,7 @@ class SyncService {
         }
       }
 
-      // ③: الوضع الافتراضي — للحسابات: استعادة فقط إذا تغيّر الاسم + التعديل أحدث
       if (deletedIsLocal) {
-        // المحلي محذوف نهائياً، السحابة نشطة
         if (nameChanged && isActiveNewer) {
           await db.restoreCustomerWithCloudFields(
             localId: localId,
@@ -1021,12 +1035,9 @@ class SyncService {
           );
           return _ResolutionResult('restored');
         }
-        // تعديل غير الاسم، أو الحذف أحدث → لا استعادة
         return _ResolutionResult('no_change');
       } else {
-        // السحابة محذوفة نهائياً، المحلي نشط
         if (nameChanged && isActiveNewer) {
-          // تعديل الاسم أحدث → استعادة
           await _notifyRestoration(
             type: 'customer',
             name: name,
@@ -1034,7 +1045,6 @@ class SyncService {
           );
           return _ResolutionResult('no_change');
         }
-        // الحذف السحابي أحدث أو التعديل ليس على الاسم → نطبق الحذف
         final now = DateTime.now().toIso8601String();
         await db.updateCustomerFields(localId, {
           'is_deleted': 1,
@@ -1056,9 +1066,6 @@ class SyncService {
       }
     }
 
-    // ═══════════════════════════════════════════════════
-    // لا حذف نهائي (تعديل عادي أو حذف ناعم)
-    // ═══════════════════════════════════════════════════
     final localDeleted = localRow['is_deleted'] == 1;
     final cloudDeleted = cloudRow['is_deleted'] == 1;
 
@@ -1191,9 +1198,6 @@ class SyncService {
           defaultValue: true),
     );
 
-    // ═══════════════════════════════════════════════════
-    // حالة اختلاف حالة الحذف
-    // ═══════════════════════════════════════════════════
     if (localDeleted != cloudDeleted) {
       final deletedRow = localDeleted ? localRow : cloudRow;
       final activeRow = localDeleted ? cloudRow : localRow;
@@ -1214,7 +1218,6 @@ class SyncService {
 
       final isActiveNewer = activeTime.isAfter(deletedTime);
 
-      // ①: نمط "التعديل يفوز دائماً"
       if (mode == 'modification') {
         if (deletedIsLocal) {
           await db.restoreTransactionWithCloudFields(
@@ -1244,7 +1247,6 @@ class SyncService {
         }
       }
 
-      // ②: نمط "الحذف النهائي يفوز دائماً"
       if (mode == 'permanent_delete') {
         if (deletedIsLocal) {
           return _ResolutionResult('no_change');
@@ -1262,7 +1264,6 @@ class SyncService {
         }
       }
 
-      // ③: الوضع الافتراضي — للعمليات: استعادة فقط إذا التعديل أحدث
       if (deletedIsLocal) {
         if (isActiveNewer) {
           await db.restoreTransactionWithCloudFields(
@@ -1306,9 +1307,6 @@ class SyncService {
       }
     }
 
-    // ═══════════════════════════════════════════════════
-    // لا حذف (تعديل عادي)
-    // ═══════════════════════════════════════════════════
     if (localUpdatedAt == cloudUpdatedAt) {
       return _ResolutionResult('no_change');
     }
@@ -1610,6 +1608,39 @@ class SyncService {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyHasPendingChanges) ?? false;
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 دوال عامة للتكرارات
+  // ═══════════════════════════════════════════════════════════
+
+  /// هل توجد تكرارات تحظر المزامنة؟
+  static Future<bool> checkPendingDuplicates() async {
+    return DuplicateDetector.shouldBlockSync();
+  }
+
+  /// عدد كل التكرارات المعلّقة (pending + skipped)
+  static Future<int> getPendingDuplicatesCount() async {
+    return DatabaseHelper.instance.countPendingDuplicates();
+  }
+
+  /// عدد التكرارات التي تحظر المزامنة حالياً
+  static Future<int> getBlockingDuplicatesCount() async {
+    return DuplicateDetector.getBlockingCount();
+  }
+
+  /// 🆕 إعادة فحص التكرارات يدوياً (من الإعدادات)
+  /// يحمّل السحابة، يكتشف التكرارات، ويعيد النتيجة
+  static Future<int> recheckDuplicates() async {
+    if (!GDriveService.isSignedIn) {
+      await GDriveService.trySilentSignIn();
+    }
+    if (!GDriveService.isSignedIn) return 0;
+
+    final cloudData = await GDriveService.downloadSyncFile();
+    if (cloudData == null) return 0;
+
+    return DuplicateDetector.detect(cloudData);
+  }
 }
 
 class _ResolutionResult {
@@ -1620,4 +1651,5 @@ class _ResolutionResult {
 // المزامنة v2: منع الرفع بعد فشل الدمج (P0-X) + احترام الحذف النهائي في التعارضات (P0-Y)
 // المزامنة v2.1: احترام خيار "الحذف النهائي يفوز دائماً" في التعارضات
 // المزامنة v2.2: مزامنة تغييرات الإعدادات المشتركة تلقائياً + حماية من حلقة الاستيراد
-// المزامنة v2.5: نمطان حصريان (permanent_delete/modification/default) + إشعارات استعادة + معالجة صحيحة لعمليات العمليات
+// المزامنة v2.5: نمطان حصريان (permanent_delete/modification/default) + إشعارات استعادة + معالجة صحيحة للعمليات
+// المزامنة v2.6: اكتشاف التكرارات قبل الدمج + حظر المزامنة + دوال عامة (المرحلة 2)
