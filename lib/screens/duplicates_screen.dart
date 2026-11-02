@@ -7,13 +7,17 @@ import '../services/duplicate_resolver.dart';
 
 /// الشاشة الإلزامية لحل التكرارات
 ///
-/// لا يمكن إغلاقها إلا بعد حل/تأجيل كل التكرارات.
 /// - 🟢 مؤكد: تطابق تام
 /// - 🟡 محتمل: بادئة 2+ كلمات
 /// - 🟠 تشابه حرفي: Levenshtein=1
 /// - ⚪ ضعيف: بادئة كلمة واحدة
+///
+/// [forceBlock] = true  → لا يمكن الإغلاق إلا بعد حلّ كل التكرارات
+///                         (يُستخدم عند الفتح التلقائي من main.dart)
+/// [forceBlock] = false → يمكن الإغلاق (يُستخدم عند الفتح من الإعدادات)
 class DuplicatesScreen extends StatefulWidget {
-  const DuplicatesScreen({super.key});
+  final bool forceBlock;
+  const DuplicatesScreen({super.key, this.forceBlock = true});
 
   @override
   State<DuplicatesScreen> createState() => _DuplicatesScreenState();
@@ -27,6 +31,10 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   bool _resolving = false;
   int? _resolvingId;
 
+  // ═══════════════════════════════════════════════════════════
+  // التحميل
+  // ═══════════════════════════════════════════════════════════
+
   @override
   void initState() {
     super.initState();
@@ -36,9 +44,12 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => _loading = true);
+
     try {
       final rows = await _db.getUnresolvedDuplicatesRaw();
       final list = rows.map((r) => DuplicatePair.fromMap(r)).toList();
+
+      // ترتيب: مؤكد → محتمل → تشابه → ضعيف، ثم بحسب درجة التشابه
       list.sort((a, b) {
         final levelOrder = {
           'confirmed': 0,
@@ -51,6 +62,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
         if (aOrder != bOrder) return aOrder.compareTo(bOrder);
         return b.similarityScore.compareTo(a.similarityScore);
       });
+
       if (!mounted) return;
       setState(() {
         _duplicates = list;
@@ -64,7 +76,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // حلّ واحد
+  // حلّ تكرار واحد
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _resolveMerge(DuplicatePair dup) async {
@@ -73,17 +85,20 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
 
     await _runResolve(
       dup: dup,
-      action: () => dup.isCustomer
-          ? DuplicateResolver.mergeCustomer(
-              duplicateId: dup.id!,
-              keepWhich: keepWhich,
-              by: await _getAccountant(),
-            )
-          : DuplicateResolver.mergeTransaction(
-              duplicateId: dup.id!,
-              keepWhich: keepWhich,
-              by: await _getAccountant(),
-            ),
+      action: () async {
+        final by = await _getAccountant();
+        return dup.isCustomer
+            ? DuplicateResolver.mergeCustomer(
+                duplicateId: dup.id!,
+                keepWhich: keepWhich,
+                by: by,
+              )
+            : DuplicateResolver.mergeTransaction(
+                duplicateId: dup.id!,
+                keepWhich: keepWhich,
+                by: by,
+              );
+      },
     );
   }
 
@@ -104,23 +119,27 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
 
     await _runResolve(
       dup: dup,
-      action: () => DuplicateResolver.renameCustomer(
-        duplicateId: dup.id!,
-        newName: newName,
-        by: null,
-      ).then((r) async {
-        return r;
-      }),
+      action: () async {
+        final by = await _getAccountant();
+        return DuplicateResolver.renameCustomer(
+          duplicateId: dup.id!,
+          newName: newName,
+          by: by,
+        );
+      },
     );
   }
 
   Future<void> _resolveSkip(DuplicatePair dup) async {
     await _runResolve(
       dup: dup,
-      action: () => DuplicateResolver.skip(
-        duplicateId: dup.id!,
-        by: null,
-      ),
+      action: () async {
+        final by = await _getAccountant();
+        return DuplicateResolver.skip(
+          duplicateId: dup.id!,
+          by: by,
+        );
+      },
     );
   }
 
@@ -187,10 +206,11 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
     if (_resolving) return;
     setState(() => _resolving = true);
     try {
+      final by = await _getAccountant();
       final result = await DuplicateResolver.resolveAll(
         action: action,
         keepWhich: keepWhich,
-        by: null,
+        by: by,
       );
       if (!mounted) return;
       if (result['success'] == true) {
@@ -207,7 +227,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // حوارات
+  // الحوارات
   // ═══════════════════════════════════════════════════════════
 
   Future<String?> _askKeepWhich(DuplicatePair? dup) async {
@@ -223,11 +243,9 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
               Text('أي نسخة تبقى؟'),
             ],
           ),
-          content: Text(
-            dup == null
-                ? 'سيتم الاحتفاظ بنسخة واحدة ودمج الأخرى.'
-                : 'سيتم الاحتفاظ بنسخة واحدة ودمج الأخرى.',
-            style: const TextStyle(fontSize: 13),
+          content: const Text(
+            'سيتم الاحتفاظ بنسخة واحدة ودمج الأخرى.',
+            style: TextStyle(fontSize: 13),
           ),
           actions: [
             TextButton(
@@ -354,8 +372,18 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
     ));
   }
 
+  /// هل يمكن إغلاق الشاشة؟
+  ///
+  /// - إذا [forceBlock] = false → نعم (فتح يدوي من الإعدادات)
+  /// - إذا [forceBlock] = true  → فقط عندما لا توجد تكرارات
+  bool get _canPop {
+    if (!widget.forceBlock) return true;
+    if (_loading) return true;
+    return _duplicates.isEmpty;
+  }
+
   // ═══════════════════════════════════════════════════════════
-  // بناء الواجهة
+  // البناء
   // ═══════════════════════════════════════════════════════════
 
   @override
@@ -378,7 +406,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
     final total = _duplicates.length;
 
     return PopScope(
-      canPop: _loading || _duplicates.isEmpty,
+      canPop: _canPop,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _duplicates.isNotEmpty) {
           _snack('يجب حل التكرارات أولاً', Colors.orange);
@@ -391,7 +419,8 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
             title: const Text('🔀 تكرارات تحتاج مراجعة'),
             automaticallyImplyLeading: false,
             actions: [
-              if (_duplicates.isEmpty)
+              // زر الإغلاق يظهر فقط عندما لا يوجد إلزام أو لا توجد تكرارات
+              if (!widget.forceBlock || _duplicates.isEmpty)
                 IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: () => Navigator.pop(context, true),
@@ -421,13 +450,11 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.check_circle,
-                size: 80, color: Colors.green),
+            const Icon(Icons.check_circle, size: 80, color: Colors.green),
             const SizedBox(height: 16),
             const Text(
               '✅ لا توجد تكرارات',
-              style: TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -524,12 +551,11 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.warning_amber,
-                  color: Colors.orange, size: 22),
-              const SizedBox(width: 8),
-              const Expanded(
+              Icon(Icons.warning_amber, color: Colors.orange, size: 22),
+              SizedBox(width: 8),
+              Expanded(
                 child: Text(
                   'لا يمكن المزامنة حتى تحلّها',
                   style: TextStyle(
@@ -691,14 +717,11 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
             // الرأس
             Row(
               children: [
-                Text(dup.typeEmoji,
-                    style: const TextStyle(fontSize: 20)),
+                Text(dup.typeEmoji, style: const TextStyle(fontSize: 20)),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    dup.isCustomer
-                        ? 'حساب: $cloudName'
-                        : 'عملية: $code',
+                    dup.isCustomer ? 'حساب: $cloudName' : 'عملية: $code',
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -726,7 +749,7 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
             ),
             const SizedBox(height: 8),
 
-            // المقارنة
+            // المقارنة (جانب إلى جانب)
             Container(
               decoration: BoxDecoration(
                 color: theme.colorScheme.surface,
@@ -894,3 +917,4 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
 }
 
 // Duplicates Screen v1: الشاشة الإلزامية لحل التكرارات (المرحلة 3)
+// Duplicates Screen v1.1: إضافة forceBlock للسماح بالإغلاق عند الفتح اليدوي من الإعدادات (المرحلة 5)
