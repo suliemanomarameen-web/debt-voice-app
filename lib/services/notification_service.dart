@@ -6,18 +6,22 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 class NotificationAction {
   final String id;
   final String title;
+  final bool showsUserInterface;
+  final bool cancelNotification;
 
-  const NotificationAction({required this.id, required this.title});
+  const NotificationAction({
+    required this.id,
+    required this.title,
+    this.showsUserInterface = true,
+    this.cancelNotification = true,
+  });
 }
 
 class NotificationService {
   static final _notif = FlutterLocalNotificationsPlugin();
   static int _idCounter = 100000;
 
-  /// رد نداء عند الضغط على أي إشعار (فتح التطبيق)
   static void Function(String? payload)? onTap;
-
-  /// 🆕 رد نداء عند الضغط على زر في الإشعار (بدون فتح التطبيق)
   static void Function(String actionId, String? payload)? onAction;
 
   static const String channelId = 'debt_channel';
@@ -66,7 +70,6 @@ class NotificationService {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
 
-    // إذا ضغط زر (actionId != null وليس default)
     if (actionId != null &&
         actionId.isNotEmpty &&
         actionId != 'default_action') {
@@ -75,14 +78,9 @@ class NotificationService {
       return;
     }
 
-    // إذا فتح التطبيق من الإشعار
     debugPrint('🔔 [Notif] Tap: $payload (id=${resp.id})');
     onTap?.call(payload);
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // إشعارات عادية (بدون أزرار)
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> show(
     String title,
@@ -110,10 +108,6 @@ class NotificationService {
       payload: payload,
     );
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // إشعارات بأزرار
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> showWithActions({
     required String title,
@@ -143,8 +137,8 @@ class NotificationService {
               .map((a) => AndroidNotificationAction(
                     a.id,
                     a.title,
-                    showsUserInterface: false,
-                    cancelNotification: false,
+                    showsUserInterface: a.showsUserInterface,
+                    cancelNotification: a.cancelNotification,
                   ))
               .toList(),
         ),
@@ -152,10 +146,6 @@ class NotificationService {
       payload: payload,
     );
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // ملخص مجموعة
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> showGroupSummary({
     required String groupKey,
@@ -184,10 +174,6 @@ class NotificationService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // الإشعار الدائم (الزر العائم)
-  // ═══════════════════════════════════════════════════════════
-
   static Future<void> showPersistent({
     required int id,
     required String title,
@@ -212,10 +198,6 @@ class NotificationService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إلغاء
-  // ═══════════════════════════════════════════════════════════
-
   static Future<void> cancel(int id) async {
     await _notif.cancel(id);
   }
@@ -225,19 +207,12 @@ class NotificationService {
   }
 }
 
-/// Top-level function للـ background actions
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  final payload = response.payload ?? '';
-  final actionId = response.actionId;
-
-  debugPrint('🔔 [Notif BG] Action: $actionId, payload: $payload');
-
-  // في الـ background، لا يمكن استدعاء onAction مباشرة.
-  // الحل: الإجراءات تُنفّذ هنا (في المرحلة 3 سيُضاف منطق الحفظ مباشرة).
-  // مؤقتاً: لا شيء — الإجراء سيُنفّذ عند فتح التطبيق عبر onAction
+  debugPrint('🔔 [Notif BG] Action: ${response.actionId}');
 }
 
-// Notification Service v2: دعم أزرار تفاعلية + Group Summary + payloads متعددة
+// Notification Service v1: الخدمة الأساسية (show, showPersistent, cancel)
+// Notification Service v2: دعم أزرار تفاعلية + Group Summary + payloads متعددة + onAction
+// Notification Service v2.1: إضافة showsUserInterface + cancelNotification في NotificationAction
