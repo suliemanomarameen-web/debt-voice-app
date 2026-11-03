@@ -34,6 +34,9 @@ class DatabaseHelper {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // إنشاء الجداول (v15)
+  // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
       CREATE TABLE customers(
@@ -123,7 +126,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // v14: جدول التكرارات
     await db.execute('''
       CREATE TABLE pending_duplicates(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,7 +154,6 @@ class DatabaseHelper {
           "CREATE INDEX IF NOT EXISTS idx_pending_duplicates_cloud ON pending_duplicates(cloud_cloud_id)");
     } catch (_) {}
 
-    // 🆕 v15: إشعارات الصوت المعلّقة
     await db.execute('''
       CREATE TABLE pending_notifications(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,6 +184,9 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // ترقية قاعدة البيانات
+  // ═══════════════════════════════════════════════════════════
   Future _upgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       try {
@@ -518,6 +522,201 @@ class DatabaseHelper {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 التكرارات (pending_duplicates) — من المرحلة 1
+  // ═══════════════════════════════════════════════════════════
+
+  Future<int> insertPendingDuplicate(Map<String, dynamic> data) async {
+    final db = await database;
+    final now = _now();
+    data['detected_at'] = data['detected_at'] ?? now;
+    data['status'] = data['status'] ?? 'pending';
+    data['similarity_score'] = data['similarity_score'] ?? 1.0;
+    data['similarity_level'] = data['similarity_level'] ?? 'confirmed';
+
+    final sanitized = await _sanitizeForTable('pending_duplicates', data);
+    final id = await db.insert('pending_duplicates', sanitized);
+    _notifyChanged();
+    return id;
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingDuplicatesRaw({
+    String? status,
+    String? type,
+  }) async {
+    final db = await database;
+    final where = <String>[];
+    final args = <dynamic>[];
+
+    if (status != null) {
+      where.add('status = ?');
+      args.add(status);
+    }
+    if (type != null) {
+      where.add('type = ?');
+      args.add(type);
+    }
+
+    return db.query(
+      'pending_duplicates',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'similarity_score DESC, detected_at DESC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getUnresolvedDuplicatesRaw() async {
+    final db = await database;
+    return db.query(
+      'pending_duplicates',
+      where: "status IN ('pending', 'skipped')",
+      orderBy: 'similarity_score DESC, detected_at DESC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getResolvedDuplicatesRaw() async {
+    final db = await database;
+    return db.query(
+      'pending_duplicates',
+      where: "status = 'resolved'",
+      orderBy: 'resolved_at DESC',
+    );
+  }
+
+  Future<Map<String, dynamic>?> getDuplicateByIdRaw(int id) async {
+    final db = await database;
+    final r = await db.query('pending_duplicates',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    if (r.isEmpty) return null;
+    return r.first;
+  }
+
+  Future<bool> duplicateExists({
+    required String localCloudId,
+    required String cloudCloudId,
+    required String type,
+  }) async {
+    final db = await database;
+    final r = await db.query(
+      'pending_duplicates',
+      where: 'local_cloud_id = ? AND cloud_cloud_id = ? AND type = ?',
+      whereArgs: [localCloudId, cloudCloudId, type],
+      limit: 1,
+    );
+    return r.isNotEmpty;
+  }
+
+  Future<int> updateDuplicateStatus(
+    int id,
+    String status, {
+    String? resolution,
+    String? resolvedBy,
+  }) async {
+    try {
+      final db = await database;
+      final now = _now();
+      final data = <String, dynamic>{
+        'status': status,
+      };
+      if (status == 'resolved') {
+        data['resolved_at'] = now;
+        data['resolved_by'] = resolvedBy;
+        if (resolution != null) data['resolution'] = resolution;
+      }
+      final r = await db.update('pending_duplicates', data,
+          where: 'id = ?', whereArgs: [id]);
+      if (r > 0) _notifyChanged();
+      return r;
+    } catch (e) {
+      debugPrint('❌ updateDuplicateStatus: $e');
+      return 0;
+    }
+  }
+
+  Future<int> markDuplicateResolved(
+    int id,
+    String resolution, {
+    String? by,
+  }) async {
+    return updateDuplicateStatus(id, 'resolved',
+        resolution: resolution, resolvedBy: by);
+  }
+
+  Future<int> markDuplicateSkipped(int id, {String? by}) async {
+    return updateDuplicateStatus(id, 'skipped', resolvedBy: by);
+  }
+
+  Future<int> deleteDuplicate(int id) async {
+    final db = await database;
+    final r =
+        await db.delete('pending_duplicates', where: 'id = ?', whereArgs: [id]);
+    if (r > 0) _notifyChanged();
+    return r;
+  }
+
+  Future<int> clearResolvedDuplicates() async {
+    final db = await database;
+    final r = await db
+        .delete('pending_duplicates', where: "status = 'resolved'");
+    if (r > 0) _notifyChanged();
+    return r;
+  }
+
+  Future<int> clearAllDuplicates() async {
+    final db = await database;
+    final r = await db.delete('pending_duplicates');
+    if (r > 0) _notifyChanged();
+    return r;
+  }
+
+  Future<int> countPendingDuplicates() async {
+    try {
+      final db = await database;
+      final r = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status IN ('pending', 'skipped')");
+      return (r.first['c'] as int?) ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<Map<String, int>> getDuplicatesStats() async {
+    try {
+      final db = await database;
+      final total = await db
+          .rawQuery('SELECT COUNT(*) AS c FROM pending_duplicates');
+      final pending = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'pending'");
+      final skipped = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'skipped'");
+      final resolved = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'resolved'");
+      final customers = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE type = 'customer'");
+      final transactions = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE type = 'transaction'");
+
+      return {
+        'total': (total.first['c'] as int?) ?? 0,
+        'pending': (pending.first['c'] as int?) ?? 0,
+        'skipped': (skipped.first['c'] as int?) ?? 0,
+        'resolved': (resolved.first['c'] as int?) ?? 0,
+        'customers': (customers.first['c'] as int?) ?? 0,
+        'transactions': (transactions.first['c'] as int?) ?? 0,
+      };
+    } catch (e) {
+      debugPrint('❌ getDuplicatesStats: $e');
+      return {
+        'total': 0,
+        'pending': 0,
+        'skipped': 0,
+        'resolved': 0,
+        'customers': 0,
+        'transactions': 0,
+      };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // 🆕 إشعارات الصوت المعلّقة (pending_notifications)
   // ═══════════════════════════════════════════════════════════
 
@@ -746,7 +945,6 @@ class DatabaseHelper {
     }
   }
 
-  /// 🆕 يطبّق سياسة الاحتفاظ على الإشعارات المحلولة
   Future<int> applyNotificationsRetention() async {
     try {
       final db = await database;
@@ -2106,6 +2304,7 @@ class DatabaseHelper {
 }
 
 // قاعدة البيانات v13: إصلاح فشل المزامنة بإضافة عمود is_permanently_deleted
-// قاعدة البيانات v13.1: إضافة دالتي استعادة بنسخ حقول السحابة (restoreCustomerWithCloudFields + restoreTransactionWithCloudFields)
-// قاعدة البيانات v14: إضافة جدول pending_duplicates + 11 دالة لإدارة التكرارات (المرحلة 1)
-// قاعدة البيانات v15: إضافة جدول pending_notifications + 14 دالة CRUD + applyNotificationsRetention (نظام الإشعارات)
+// قاعدة البيانات v13.1: إضافة دالتي استعادة بنسخ حقول السحابة (restore*WithCloudFields)
+// قاعدة البيانات v14: إضافة جدول pending_duplicates + 14 دالة لإدارة التكرارات
+// قاعدة البيانات v15: إضافة جدول pending_notifications + 14 دالة CRUD
+// قاعدة البيانات v15.1: إعادة إدراج دوال pending_duplicates (كانت مفقودة من إصدار v15 الأصلي) + applyNotificationsRetention
