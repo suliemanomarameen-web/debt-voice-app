@@ -5,13 +5,6 @@ import '../models/pending_notification.dart';
 import 'logger_service.dart';
 import 'notification_service.dart';
 
-/// خدمة إدارة الإشعارات المعلّقة
-///
-/// - إنشاء إشعارات في DB + شريط Android
-/// - عرض الإشعارات بأزرار تفاعلية
-/// - معالجة الإجراءات (حفظ/إلغاء/تمييز)
-/// - إدارة المجموعات
-/// - تطبيق الاحتفاظ
 class PendingNotificationService {
   static final _db = DatabaseHelper.instance;
 
@@ -21,37 +14,20 @@ class PendingNotificationService {
   static final _pendingCountController = StreamController<int>.broadcast();
   static Stream<int> get pendingCountStream => _pendingCountController.stream;
 
-  // ═══════════════════════════════════════════════════════════
-  // إنشاء إشعار
-  // ═══════════════════════════════════════════════════════════
-
   static Future<int> create(PendingNotification notif) async {
     final id = await _db.insertPendingNotification(notif.toMap());
-
     if (id <= 0) {
       debugPrint('❌ [PendingNotif] Failed to create');
       return 0;
     }
 
     final saved = notif.copyWith(id: id);
-
-    await LoggerService.logVoiceNotificationCreated(
-      notificationId: id,
-      text: notif.text ?? '',
-      matchType: notif.matchType,
-      audioPath: notif.audioPath,
-    );
-
     await _showAndroidNotification(saved);
-
     await _notifyPendingCount();
+    await updateGroupSummaries();
 
     return id;
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // عرض إشعار على شريط Android
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> _showAndroidNotification(
       PendingNotification n) async {
@@ -127,7 +103,10 @@ class PendingNotificationService {
         ];
       case 'multiple':
         return const [
-          NotificationAction(id: 'choose', title: 'حدد الحساب'),
+          NotificationAction(
+              id: 'choose',
+              title: 'حدد الحساب',
+              cancelNotification: false),
           NotificationAction(id: 'cancel', title: '✗ إلغاء'),
         ];
       case 'unclear':
@@ -136,7 +115,10 @@ class PendingNotificationService {
         ];
       case 'no_account':
         return const [
-          NotificationAction(id: 'create_account', title: 'إنشاء حساب'),
+          NotificationAction(
+              id: 'create_account',
+              title: 'إنشاء حساب',
+              cancelNotification: false),
           NotificationAction(id: 'dismiss', title: 'تمييز كمقروءة'),
         ];
       default:
@@ -152,10 +134,6 @@ class PendingNotificationService {
   }
 
   static String _buildPayload(int id) => 'voice_notif:$id';
-
-  // ═══════════════════════════════════════════════════════════
-  // الحصول على إشعار
-  // ═══════════════════════════════════════════════════════════
 
   static Future<PendingNotification?> getById(int id) async {
     final row = await _db.getPendingNotification(id);
@@ -189,10 +167,6 @@ class PendingNotificationService {
     return _db.getNotificationsStats();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إعادة العرض
-  // ═══════════════════════════════════════════════════════════
-
   static Future<int> replayPending() async {
     try {
       final pending = await getPending();
@@ -214,14 +188,11 @@ class PendingNotificationService {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حل إشعار
-  // ═══════════════════════════════════════════════════════════
-
   static Future<bool> markSaved(int id) async {
     await _db.markNotificationSaved(id);
     await _cancelNotification(id);
     await _notifyPendingCount();
+    await updateGroupSummaries();
     return true;
   }
 
@@ -234,6 +205,7 @@ class PendingNotificationService {
       text: n?.text ?? '',
     );
     await _notifyPendingCount();
+    await updateGroupSummaries();
     return true;
   }
 
@@ -246,6 +218,7 @@ class PendingNotificationService {
       text: n?.text ?? '',
     );
     await _notifyPendingCount();
+    await updateGroupSummaries();
     return true;
   }
 
@@ -258,6 +231,7 @@ class PendingNotificationService {
       text: n?.text ?? '',
     );
     await _notifyPendingCount();
+    await updateGroupSummaries();
     return true;
   }
 
@@ -266,10 +240,6 @@ class PendingNotificationService {
       await NotificationService.cancel(id);
     } catch (_) {}
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // حذف يدوي
-  // ═══════════════════════════════════════════════════════════
 
   static Future<bool> delete(int id) async {
     final n = await getById(id);
@@ -285,33 +255,24 @@ class PendingNotificationService {
     );
 
     await _notifyPendingCount();
+    await updateGroupSummaries();
     return true;
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // الانتهاء التلقائي
-  // ═══════════════════════════════════════════════════════════
 
   static Future<int> expireOldNotifications() async {
     try {
       final expired = await _db.getExpiredUnclear();
-
       for (final row in expired) {
         final id = row['id'] as int?;
         if (id == null) continue;
         await markExpired(id);
       }
-
       return expired.length;
     } catch (e) {
       debugPrint('❌ [PendingNotif] expireOld: $e');
       return 0;
     }
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // الاحتفاظ
-  // ═══════════════════════════════════════════════════════════
 
   static Future<int> applyRetention() async {
     final deleted = await _db.applyNotificationsRetention();
@@ -320,10 +281,6 @@ class PendingNotificationService {
     }
     return deleted;
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // ملخص المجموعة
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> updateGroupSummaries() async {
     try {
@@ -340,9 +297,8 @@ class PendingNotificationService {
         );
       }
 
-      final unclearPending = pending
-          .where((n) => n.isUnclear || n.isNoAccount)
-          .toList();
+      final unclearPending =
+          pending.where((n) => n.isUnclear || n.isNoAccount).toList();
       if (unclearPending.isNotEmpty) {
         await NotificationService.showGroupSummary(
           groupKey: groupUnclearKey,
@@ -355,10 +311,6 @@ class PendingNotificationService {
       debugPrint('❌ [PendingNotif] updateGroupSummaries: $e');
     }
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // عدّاد pending
-  // ═══════════════════════════════════════════════════════════
 
   static Future<void> _notifyPendingCount() async {
     try {
@@ -374,4 +326,5 @@ class PendingNotificationService {
   }
 }
 
-// Pending Notification Service v1: إدارة كاملة لدورة حياة إشعارات الصوت
+// Pending Notification Service v1: إدارة كاملة لدورة حياة إشعارات الصوت (إنشاء + عرض + حل + حذف + إعادة عرض)
+// Pending Notification Service v1.1: تمرير showsUserInterface + cancelNotification + تحديث المجموعات بعد كل تغيير
