@@ -25,6 +25,7 @@ import 'services/settings_service.dart';
 // 🆕 استيرادات جديدة
 import 'services/device_service.dart';
 import 'services/accountants_service.dart';
+import 'services/code_service.dart';  // 🆕
 import 'services/duplicate_detector.dart';
 import 'db/database_helper.dart';
 
@@ -56,6 +57,7 @@ void main() async {
 
   await TtsService.init();
   await KeywordsService.init();
+  await CodeService.migrateCountersIfNeeded();  // 🆕
 
   final theme = ThemeService();
   await theme.load();
