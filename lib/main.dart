@@ -11,7 +11,9 @@ import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
 import 'services/cloud_backup_service.dart';
 import 'services/keywords_service.dart';
+import 'services/notification_action_handler.dart';
 import 'services/notification_service.dart';
+import 'services/pending_notification_service.dart';
 import 'services/permission_service.dart';
 import 'services/reminder_service.dart';
 import 'services/speech_service.dart';
@@ -19,6 +21,7 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/tts_service.dart';
 import 'services/settings_service.dart';
+// 🆕 استيرادات جديدة
 import 'services/device_service.dart';
 import 'services/accountants_service.dart';
 import 'services/duplicate_detector.dart';
@@ -29,9 +32,20 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await DeviceService.getDeviceId();
-  await AccountantsService.init();
+  // ═══════════════════════════════════════════════════════
+  // 0. 🆕 تهيئة الهوية والمحاسبين (قبل أي شيء)
+  // ═══════════════════════════════════════════════════════
+  await DeviceService.getDeviceId(); // يضمن وجود device_id
+  await AccountantsService.init();   // يحمّل المحاسبين المحليين
+
+  // ═══════════════════════════════════════════════════════
+  // 1. تحميل الإعدادات أولاً (قبل أي شيء آخر)
+  // ═══════════════════════════════════════════════════════
   await SettingsService.init();
+
+  // ═══════════════════════════════════════════════════════
+  // 2. تهيئة الخدمات الأساسية
+  // ═══════════════════════════════════════════════════════
   await NotificationService.init();
   await ReminderService.init();
   await PermissionService.requestAll();
@@ -45,6 +59,9 @@ void main() async {
   final theme = ThemeService();
   await theme.load();
 
+  // ═══════════════════════════════════════════════════════
+  // 3. تهيئة قاعدة البيانات + تنظيف المحذوفات القديمة
+  // ═══════════════════════════════════════════════════════
   try {
     await DatabaseHelper.instance.database;
 
@@ -74,35 +91,68 @@ void main() async {
     debugPrint('⚠️ DB cleanup error: $e');
   }
 
+  // ═══════════════════════════════════════════════════════
+  // 4. تهيئة خدمات المزامنة والنسخ
+  // ═══════════════════════════════════════════════════════
   await AutoBackupService.init();
   await SyncService.init();
   await CloudBackupService.init();
   await AudioRecorderService.init();
 
+  // ═══════════════════════════════════════════════════════
+  // 5. إشعار الزر العائم بأن الصوت جاهز
+  // ═══════════════════════════════════════════════════════
   try {
     await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
   } catch (_) {}
 
+  // ═══════════════════════════════════════════════════════
+  // 6. إعداد رد نداء الإشعارات (Ações + Tap)
+  // ═══════════════════════════════════════════════════════
+  // 🆕 زر في الإشعار → handleAction (حفظ/إلغاء/حدد/تمييز)
+  NotificationService.onAction = (actionId, payload) {
+    NotificationActionHandler.handleAction(actionId, payload);
+  };
+
+  // 🆕 فتح الإشعار → handleTap (فتح شاشة/تعامل مع payload)
   NotificationService.onTap = _onNotificationTap;
+
+  // ═══════════════════════════════════════════════════════
+  // 7. بدء مستمع الزر العائم
+  // ═══════════════════════════════════════════════════════
   OverlayHandler.listen();
 
+  // ═══════════════════════════════════════════════════════
+  // 8. تشغيل التطبيق
+  // ═══════════════════════════════════════════════════════
   runApp(MultiProvider(
     providers: [ChangeNotifierProvider.value(value: theme)],
     child: const DebtApp(),
   ));
 }
 
+/// عند الضغط على إشعار
+///
+/// - "open_notifications" → الشاشة ستُفتح من NotificationActionHandler
+/// - "voice_notif:X" → فتح تفاصيل الإشعار
+/// - أي شيء آخر → لا يفعل شيئاً
 void _onNotificationTap(String? payload) {
-  if (payload != 'choose_customer') return;
+  if (payload == null || payload.isEmpty) return;
 
-  final text = OverlayHandler.consumePendingVoiceText();
-  if (text == null) return;
+  // ===== فتح سجل الإشعارات =====
+  if (payload == 'open_notifications') {
+    // سيُفتح في المرحلة 4 (شاشة الإشعارات)
+    return;
+  }
 
-  navigatorKey.currentState?.push(
-    MaterialPageRoute(
-      builder: (_) => VoiceScreen(initialText: text),
-    ),
-  );
+  // ===== إشعار صوتي =====
+  if (payload.startsWith('voice_notif:')) {
+    final idStr = payload.substring('voice_notif:'.length);
+    final id = int.tryParse(idStr);
+    if (id == null) return;
+    // في المرحلة 4، سنفتح شاشة الإشعارات على هذا العنصر
+    return;
+  }
 }
 
 class DebtApp extends StatefulWidget {
@@ -112,14 +162,19 @@ class DebtApp extends StatefulWidget {
 }
 
 class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
+  // 🆕 يمنع فتح شاشة التكرارات مرتين في نفس الوقت
   bool _duplicatesScreenOpen = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // فحص التكرارات بعد بدء التطبيق
+
+    // 🆕 فحص التكرارات بعد بدء التطبيق
     Future.delayed(const Duration(milliseconds: 700), _checkDuplicates);
+
+    // 🆕 تهيئة إشعارات الصوت (احتفاظ + انتهاء + إعادة عرض)
+    Future.delayed(const Duration(seconds: 2), _initVoiceNotifications);
   }
 
   @override
@@ -137,6 +192,7 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
       Future.delayed(const Duration(seconds: 2), () {
         SyncService.checkAndSyncIfNeeded();
         _checkDuplicates();
+        _initVoiceNotifications();
       });
     }
   }
@@ -167,6 +223,28 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
     }
   }
 
+  /// 🆕 تهيئة إشعارات الصوت
+  /// - تطبيق سياسة الاحتفاظ
+  /// - انتهاء الإشعارات القديمة
+  /// - إعادة عرض المعلّقة في شريط Android
+  Future<void> _initVoiceNotifications() async {
+    try {
+      // 1. تطبيق الاحتفاظ (حذف القديمة)
+      await PendingNotificationService.applyRetention();
+
+      // 2. انتهاء غير المفهومة
+      await PendingNotificationService.expireOldNotifications();
+
+      // 3. إعادة عرض المعلّقة في الشريط
+      await PendingNotificationService.replayPending();
+
+      // 4. تحديث المجموعات
+      await PendingNotificationService.updateGroupSummaries();
+    } catch (e) {
+      debugPrint('❌ [_initVoiceNotifications] error: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeService>();
@@ -191,5 +269,6 @@ void overlayMain() {
   ));
 }
 
-// main: تنظيف شواهد القبور القديمة (>90 يوماً) عند بدء التطبيق
-// main: فحص التكرارات عند البدء والاستئناف + فتح شاشة التكرارات الإلزامية (المرحلة 5)
+// main v1: الأساسية (تهيئة الخدمات + التطبيق)
+// main v2: فحص التكرارات عند البدء والاستئناف + فتح شاشة التكرارات الإلزامية (المرحلة 5)
+// main v3: تهيئة PendingNotificationService (احتفاظ + انتهاء + إعادة عرض) + ربط onAction و onTap
