@@ -1,10 +1,13 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' hide Transaction;
 import 'package:uuid/uuid.dart';
+import '../config/app_settings.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../models/log_event.dart';
+import '../services/settings_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -25,15 +28,12 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // إنشاء الجداول (v14)
-  // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
       CREATE TABLE customers(
@@ -123,7 +123,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // 🆕 v14: جدول التكرارات
+    // v14: جدول التكرارات
     await db.execute('''
       CREATE TABLE pending_duplicates(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,11 +151,38 @@ class DatabaseHelper {
       await db.execute(
           "CREATE INDEX IF NOT EXISTS idx_pending_duplicates_cloud ON pending_duplicates(cloud_cloud_id)");
     } catch (_) {}
+
+    // 🆕 v15: إشعارات الصوت المعلّقة
+    await db.execute('''
+      CREATE TABLE pending_notifications(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        text TEXT,
+        audio_path TEXT,
+        intent TEXT,
+        customer_name TEXT,
+        amount REAL,
+        currency TEXT DEFAULT 'YER',
+        items TEXT,
+        account_type TEXT,
+        match_type TEXT,
+        matched_customer_id INTEGER,
+        matched_customer_name TEXT,
+        candidates TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        expires_at TEXT
+      )
+    ''');
+
+    try {
+      await db.execute(
+          "CREATE INDEX IF NOT EXISTS idx_pending_notifications_status ON pending_notifications(status)");
+      await db.execute(
+          "CREATE INDEX IF NOT EXISTS idx_pending_notifications_expires ON pending_notifications(expires_at)");
+    } catch (_) {}
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ترقية قاعدة البيانات
-  // ═══════════════════════════════════════════════════════════
   Future _upgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       try {
@@ -359,6 +386,41 @@ class DatabaseHelper {
         debugPrint('⚠️ [DB v14] $e');
       }
     }
+
+    if (oldV < 15) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS pending_notifications(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            text TEXT,
+            audio_path TEXT,
+            intent TEXT,
+            customer_name TEXT,
+            amount REAL,
+            currency TEXT DEFAULT 'YER',
+            items TEXT,
+            account_type TEXT,
+            match_type TEXT,
+            matched_customer_id INTEGER,
+            matched_customer_name TEXT,
+            candidates TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            expires_at TEXT
+          )
+        ''');
+        try {
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_pending_notifications_status ON pending_notifications(status)");
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_pending_notifications_expires ON pending_notifications(expires_at)");
+        } catch (_) {}
+        debugPrint('✅ [DB] Upgraded to v15 (pending_notifications)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v15] $e');
+      }
+    }
   }
 
   Future<void> _addColumnIfMissing(
@@ -456,28 +518,30 @@ class DatabaseHelper {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🆕 التكرارات (pending_duplicates)
+  // 🆕 إشعارات الصوت المعلّقة (pending_notifications)
   // ═══════════════════════════════════════════════════════════
 
-  /// إدخال تكرار جديد (pending)
-  Future<int> insertPendingDuplicate(Map<String, dynamic> data) async {
+  Future<int> insertPendingNotification(Map<String, dynamic> data) async {
     final db = await database;
-    final now = _now();
-    data['detected_at'] = data['detected_at'] ?? now;
+    data['created_at'] = data['created_at'] ?? _now();
     data['status'] = data['status'] ?? 'pending';
-    data['similarity_score'] = data['similarity_score'] ?? 1.0;
-    data['similarity_level'] = data['similarity_level'] ?? 'confirmed';
-
-    final sanitized = await _sanitizeForTable('pending_duplicates', data);
-    final id = await db.insert('pending_duplicates', sanitized);
+    final id = await db.insert('pending_notifications', data);
     _notifyChanged();
     return id;
   }
 
-  /// جلب كل التكرارات بحسب الحالة
-  Future<List<Map<String, dynamic>>> getPendingDuplicatesRaw({
+  Future<Map<String, dynamic>?> getPendingNotification(int id) async {
+    final db = await database;
+    final r = await db.query('pending_notifications',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    if (r.isEmpty) return null;
+    return r.first;
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingNotifications({
     String? status,
-    String? type,
+    String? matchType,
+    int? limit,
   }) async {
     final db = await database;
     final where = <String>[];
@@ -487,179 +551,294 @@ class DatabaseHelper {
       where.add('status = ?');
       args.add(status);
     }
-    if (type != null) {
-      where.add('type = ?');
-      args.add(type);
+    if (matchType != null) {
+      where.add('match_type = ?');
+      args.add(matchType);
     }
 
     return db.query(
-      'pending_duplicates',
+      'pending_notifications',
       where: where.isEmpty ? null : where.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
-      orderBy: 'similarity_score DESC, detected_at DESC',
+      orderBy: 'created_at DESC',
+      limit: limit,
     );
   }
 
-  /// التكرارات المعلّقة فقط (pending أو skipped)
-  Future<List<Map<String, dynamic>>> getUnresolvedDuplicatesRaw() async {
+  Future<List<Map<String, dynamic>>> getReplayableNotifications() async {
     final db = await database;
+    final now = _now();
     return db.query(
-      'pending_duplicates',
-      where: "status IN ('pending', 'skipped')",
-      orderBy: 'similarity_score DESC, detected_at DESC',
+      'pending_notifications',
+      where: "status = 'pending' "
+          "AND (expires_at IS NULL OR expires_at > ?)",
+      whereArgs: [now],
+      orderBy: 'created_at DESC',
     );
   }
 
-  /// التكرارات المحلولة فقط
-  Future<List<Map<String, dynamic>>> getResolvedDuplicatesRaw() async {
+  Future<List<Map<String, dynamic>>> getExpiredUnclear() async {
     final db = await database;
+    final now = _now();
     return db.query(
-      'pending_duplicates',
-      where: "status = 'resolved'",
-      orderBy: 'resolved_at DESC',
+      'pending_notifications',
+      where: "status = 'pending' "
+          "AND match_type IN ('unclear', 'no_account') "
+          "AND expires_at IS NOT NULL "
+          "AND expires_at <= ?",
+      whereArgs: [now],
     );
   }
 
-  Future<Map<String, dynamic>?> getDuplicateByIdRaw(int id) async {
-    final db = await database;
-    final r = await db.query('pending_duplicates',
-        where: 'id = ?', whereArgs: [id], limit: 1);
-    if (r.isEmpty) return null;
-    return r.first;
-  }
-
-  /// هل يوجد تكرار مطابق (نفس local + cloud)؟
-  Future<bool> duplicateExists({
-    required String localCloudId,
-    required String cloudCloudId,
-    required String type,
-  }) async {
-    final db = await database;
-    final r = await db.query(
-      'pending_duplicates',
-      where: 'local_cloud_id = ? AND cloud_cloud_id = ? AND type = ?',
-      whereArgs: [localCloudId, cloudCloudId, type],
-      limit: 1,
-    );
-    return r.isNotEmpty;
-  }
-
-  /// تحديث حالة تكرار
-  Future<int> updateDuplicateStatus(
+  Future<int> updatePendingNotificationStatus(
     int id,
     String status, {
-    String? resolution,
-    String? resolvedBy,
+    String? by,
   }) async {
     try {
       final db = await database;
-      final now = _now();
-      final data = <String, dynamic>{
-        'status': status,
-      };
-      if (status == 'resolved') {
-        data['resolved_at'] = now;
-        data['resolved_by'] = resolvedBy;
-        if (resolution != null) data['resolution'] = resolution;
-      }
-      final r = await db.update('pending_duplicates', data,
-          where: 'id = ?', whereArgs: [id]);
+      final r = await db.update(
+        'pending_notifications',
+        {'status': status},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
       if (r > 0) _notifyChanged();
       return r;
     } catch (e) {
-      debugPrint('❌ updateDuplicateStatus: $e');
+      debugPrint('❌ updatePendingNotificationStatus: $e');
       return 0;
     }
   }
 
-  /// وسم تكرار كمحلول (نهائي)
-  Future<int> markDuplicateResolved(
-    int id,
-    String resolution, {
-    String? by,
-  }) async {
-    return updateDuplicateStatus(id, 'resolved',
-        resolution: resolution, resolvedBy: by);
+  Future<int> markNotificationSaved(int id, {String? by}) async {
+    return updatePendingNotificationStatus(id, 'saved', by: by);
   }
 
-  /// وسم تكرار كمتخطى (مؤجل)
-  Future<int> markDuplicateSkipped(int id, {String? by}) async {
-    return updateDuplicateStatus(id, 'skipped', resolvedBy: by);
+  Future<int> markNotificationCancelled(int id, {String? by}) async {
+    return updatePendingNotificationStatus(id, 'cancelled', by: by);
   }
 
-  /// حذف تكرار واحد
-  Future<int> deleteDuplicate(int id) async {
-    final db = await database;
-    final r =
-        await db.delete('pending_duplicates', where: 'id = ?', whereArgs: [id]);
-    if (r > 0) _notifyChanged();
-    return r;
+  Future<int> markNotificationDismissed(int id, {String? by}) async {
+    return updatePendingNotificationStatus(id, 'dismissed', by: by);
   }
 
-  /// حذف كل التكرارات المحلولة
-  Future<int> clearResolvedDuplicates() async {
-    final db = await database;
-    final r = await db
-        .delete('pending_duplicates', where: "status = 'resolved'");
-    if (r > 0) _notifyChanged();
-    return r;
+  Future<int> markNotificationExpired(int id) async {
+    return updatePendingNotificationStatus(id, 'expired');
   }
 
-  /// حذف كل التكرارات (بما فيها المعلّقة)
-  Future<int> clearAllDuplicates() async {
-    final db = await database;
-    final r = await db.delete('pending_duplicates');
-    if (r > 0) _notifyChanged();
-    return r;
-  }
-
-  /// عدد التكرارات المعلّقة (pending + skipped)
-  Future<int> countPendingDuplicates() async {
+  Future<int> expireUnclearNotifications() async {
     try {
       final db = await database;
-      final r = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status IN ('pending', 'skipped')");
-      return (r.first['c'] as int?) ?? 0;
-    } catch (_) {
+      final now = _now();
+      final r = await db.update(
+        'pending_notifications',
+        {'status': 'expired'},
+        where: "status = 'pending' "
+            "AND match_type IN ('unclear', 'no_account') "
+            "AND expires_at IS NOT NULL "
+            "AND expires_at <= ?",
+        whereArgs: [now],
+      );
+      if (r > 0) {
+        _notifyChanged();
+        debugPrint('⏰ [DB] Expired $r unclear notifications');
+      }
+      return r;
+    } catch (e) {
+      debugPrint('❌ expireUnclearNotifications: $e');
       return 0;
     }
   }
 
-  /// إحصائيات التكرارات
-  Future<Map<String, int>> getDuplicatesStats() async {
+  Future<int> deletePendingNotification(int id) async {
+    final db = await database;
+    final r = await db.delete('pending_notifications',
+        where: 'id = ?', whereArgs: [id]);
+    if (r > 0) _notifyChanged();
+    return r;
+  }
+
+  Future<int> deleteOldNotifications({int days = 7}) async {
+    try {
+      final db = await database;
+      final cutoff =
+          DateTime.now().subtract(Duration(days: days)).toIso8601String();
+      final r = await db.delete(
+        'pending_notifications',
+        where: "status IN ('saved', 'cancelled', 'dismissed', 'expired') "
+            "AND created_at < ?",
+        whereArgs: [cutoff],
+      );
+      if (r > 0) {
+        _notifyChanged();
+        debugPrint('🧹 [DB] Deleted $r old notifications');
+      }
+      return r;
+    } catch (e) {
+      debugPrint('❌ deleteOldNotifications: $e');
+      return 0;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAllNotifications({
+    int limit = 200,
+    int offset = 0,
+    String? status,
+    String? matchType,
+  }) async {
+    final db = await database;
+    final where = <String>[];
+    final args = <dynamic>[];
+
+    if (status != null) {
+      where.add('status = ?');
+      args.add(status);
+    }
+    if (matchType != null) {
+      where.add('match_type = ?');
+      args.add(matchType);
+    }
+
+    return db.query(
+      'pending_notifications',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'created_at DESC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  Future<Map<String, int>> getNotificationsStats() async {
     try {
       final db = await database;
       final total = await db
-          .rawQuery('SELECT COUNT(*) AS c FROM pending_duplicates');
+          .rawQuery('SELECT COUNT(*) AS c FROM pending_notifications');
       final pending = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'pending'");
-      final skipped = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'skipped'");
-      final resolved = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE status = 'resolved'");
-      final customers = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE type = 'customer'");
-      final transactions = await db.rawQuery(
-          "SELECT COUNT(*) AS c FROM pending_duplicates WHERE type = 'transaction'");
+          "SELECT COUNT(*) AS c FROM pending_notifications WHERE status = 'pending'");
+      final saved = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_notifications WHERE status = 'saved'");
+      final cancelled = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_notifications WHERE status = 'cancelled'");
+      final dismissed = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_notifications WHERE status = 'dismissed'");
+      final expired = await db.rawQuery(
+          "SELECT COUNT(*) AS c FROM pending_notifications WHERE status = 'expired'");
 
       return {
         'total': (total.first['c'] as int?) ?? 0,
         'pending': (pending.first['c'] as int?) ?? 0,
-        'skipped': (skipped.first['c'] as int?) ?? 0,
-        'resolved': (resolved.first['c'] as int?) ?? 0,
-        'customers': (customers.first['c'] as int?) ?? 0,
-        'transactions': (transactions.first['c'] as int?) ?? 0,
+        'saved': (saved.first['c'] as int?) ?? 0,
+        'cancelled': (cancelled.first['c'] as int?) ?? 0,
+        'dismissed': (dismissed.first['c'] as int?) ?? 0,
+        'expired': (expired.first['c'] as int?) ?? 0,
       };
     } catch (e) {
-      debugPrint('❌ getDuplicatesStats: $e');
       return {
         'total': 0,
         'pending': 0,
-        'skipped': 0,
-        'resolved': 0,
-        'customers': 0,
-        'transactions': 0,
+        'saved': 0,
+        'cancelled': 0,
+        'dismissed': 0,
+        'expired': 0,
       };
+    }
+  }
+
+  /// 🆕 يطبّق سياسة الاحتفاظ على الإشعارات المحلولة
+  Future<int> applyNotificationsRetention() async {
+    try {
+      final db = await database;
+      int deleted = 0;
+
+      final mode = SettingsService.getString(
+        AppSettings.notificationsRetentionMode,
+        defaultValue: 'days',
+      );
+      final keepPending = SettingsService.getBool(
+        AppSettings.notificationsKeepPending,
+        defaultValue: true,
+      );
+      final deleteAudio = SettingsService.getBool(
+        AppSettings.notificationsDeleteAudio,
+        defaultValue: true,
+      );
+
+      List<Map<String, dynamic>> toDelete = [];
+
+      if (mode == 'days') {
+        final days = SettingsService.getInt(
+          AppSettings.notificationsRetentionDays,
+          defaultValue: 30,
+        );
+        final cutoff = DateTime.now()
+            .subtract(Duration(days: days))
+            .toIso8601String();
+        final where = keepPending
+            ? "status IN ('saved', 'cancelled', 'dismissed', 'expired') AND created_at < ?"
+            : "status != 'pending' AND created_at < ?";
+
+        toDelete = await db.query(
+          'pending_notifications',
+          columns: ['id', 'audio_path'],
+          where: where,
+          whereArgs: [cutoff],
+        );
+      } else if (mode == 'count') {
+        final maxCount = SettingsService.getInt(
+          AppSettings.notificationsRetentionCount,
+          defaultValue: 100,
+        );
+
+        final whereStatus = keepPending
+            ? "status IN ('saved', 'cancelled', 'dismissed', 'expired')"
+            : "status != 'pending'";
+
+        toDelete = await db.rawQuery('''
+          SELECT id, audio_path FROM pending_notifications
+          WHERE $whereStatus
+          ORDER BY created_at ASC
+          LIMIT -1 OFFSET ?
+        ''', [maxCount]);
+      }
+
+      if (toDelete.isEmpty) return 0;
+
+      if (deleteAudio) {
+        for (final row in toDelete) {
+          final audioPath = row['audio_path'] as String?;
+          if (audioPath != null && audioPath.isNotEmpty) {
+            try {
+              final f = File(audioPath);
+              if (await f.exists()) await f.delete();
+            } catch (e) {
+              debugPrint('⚠️ [DB] Delete audio: $e');
+            }
+          }
+        }
+      }
+
+      final ids = toDelete.map((r) => r['id']).whereType<int>().toList();
+      if (ids.isEmpty) return 0;
+
+      final placeholders = List.filled(ids.length, '?').join(',');
+      deleted = await db.delete(
+        'pending_notifications',
+        where: 'id IN ($placeholders)',
+        whereArgs: ids,
+      );
+
+      if (deleted > 0) {
+        _notifyChanged();
+        debugPrint(
+            '🧹 [DB] Retention: deleted $deleted notifications (mode=$mode)');
+      }
+
+      return deleted;
+    } catch (e) {
+      debugPrint('❌ applyNotificationsRetention: $e');
+      return 0;
     }
   }
 
@@ -857,7 +1036,6 @@ class DatabaseHelper {
     }
   }
 
-  /// استعادة عميل + نسخ كل حقول السحابة
   Future<void> restoreCustomerWithCloudFields({
     required int localId,
     required Map<String, dynamic> cloudRow,
@@ -1245,7 +1423,6 @@ class DatabaseHelper {
     }
   }
 
-  /// استعادة معاملة + نسخ كل حقول السحابة
   Future<void> restoreTransactionWithCloudFields({
     required int localId,
     required Map<String, dynamic> cloudRow,
@@ -1895,6 +2072,7 @@ class DatabaseHelper {
     await db.delete('customers');
     await db.delete('used_codes');
     await db.delete('pending_duplicates');
+    await db.delete('pending_notifications');
     _notifyChanged();
   }
 
@@ -1929,4 +2107,5 @@ class DatabaseHelper {
 
 // قاعدة البيانات v13: إصلاح فشل المزامنة بإضافة عمود is_permanently_deleted
 // قاعدة البيانات v13.1: إضافة دالتي استعادة بنسخ حقول السحابة (restoreCustomerWithCloudFields + restoreTransactionWithCloudFields)
-// قاعدة البيانات v14: إضافة جدول pending_duplicates + 11 دالة لإدارة التكرارات (المرحلة 1 من نظام التكرار)
+// قاعدة البيانات v14: إضافة جدول pending_duplicates + 11 دالة لإدارة التكرارات (المرحلة 1)
+// قاعدة البيانات v15: إضافة جدول pending_notifications + 14 دالة CRUD + applyNotificationsRetention (نظام الإشعارات)
