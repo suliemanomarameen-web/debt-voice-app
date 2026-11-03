@@ -10,7 +10,7 @@ import 'pending_notification_service.dart';
 /// معالج الإجراءات على الإشعارات
 ///
 /// - يُستدعى من `NotificationService.onAction` عند الضغط على زر
-/// - يُستدعى من `NotificationService.onTap` عند فتح الإشعار
+/// - يُستدعى من `NotificationsScreen` عند الإجراء داخل الشاشة
 class NotificationActionHandler {
   static final _db = DatabaseHelper.instance;
 
@@ -72,13 +72,37 @@ class NotificationActionHandler {
         debugPrint('⚠️ Cannot save: not single');
         return;
       }
-      if (n.matchedCustomerId == null || n.intent == null) return;
+      if (n.matchedCustomerId == null) return;
 
-      final customer = await _db.getCustomer(n.matchedCustomerId!);
+      await saveToCustomer(
+        notificationId: notificationId,
+        customerId: n.matchedCustomerId!,
+      );
+    } catch (e) {
+      debugPrint('❌ [ActionHandler] save: $e');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 حفظ إلى عميل محدد (يُستخدم من _handleSave ومن الشاشة)
+  // ═══════════════════════════════════════════════════════════
+
+  static Future<Map<String, dynamic>> saveToCustomer({
+    required int notificationId,
+    required int customerId,
+  }) async {
+    try {
+      final n = await PendingNotificationService.getById(notificationId);
+      if (n == null) {
+        return {'success': false, 'message': 'الإشعار غير موجود'};
+      }
+      if (n.intent == null) {
+        return {'success': false, 'message': 'نوع العملية غير معروف'};
+      }
+
+      final customer = await _db.getCustomer(customerId);
       if (customer == null) {
-        debugPrint('⚠️ Customer not found');
-        await PendingNotificationService.markCancelled(notificationId);
-        return;
+        return {'success': false, 'message': 'العميل غير موجود'};
       }
 
       final accountant = await AccountantService.getAccountantName();
@@ -138,9 +162,16 @@ class NotificationActionHandler {
         '$typeLabel ${(n.amount ?? 0).toStringAsFixed(0)} ${n.currency} — ${customer.name}',
       );
 
-      await PendingNotificationService.updateGroupSummaries();
+      return {
+        'success': true,
+        'message': 'تم الحفظ بنجاح',
+        'transaction_id': txId,
+        'customer_name': customer.name,
+        'code': code,
+      };
     } catch (e) {
-      debugPrint('❌ [ActionHandler] save: $e');
+      debugPrint('❌ [ActionHandler] saveToCustomer: $e');
+      return {'success': false, 'message': 'خطأ: $e'};
     }
   }
 
@@ -150,7 +181,6 @@ class NotificationActionHandler {
 
   static Future<void> _handleCancel(int notificationId) async {
     await PendingNotificationService.markCancelled(notificationId);
-    await PendingNotificationService.updateGroupSummaries();
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -168,7 +198,6 @@ class NotificationActionHandler {
 
   static Future<void> _handleDismiss(int notificationId) async {
     await PendingNotificationService.markDismissed(notificationId);
-    await PendingNotificationService.updateGroupSummaries();
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -197,3 +226,4 @@ class NotificationActionHandler {
 }
 
 // Notification Action Handler v1: معالجة أزرار الإشعارات (save/cancel/choose/dismiss/create_account)
+// Notification Action Handler v2: إضافة saveToCustomer (public) لاستخدامه من NotificationsScreen
