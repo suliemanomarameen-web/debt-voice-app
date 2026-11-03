@@ -6,6 +6,7 @@ import 'screens/overlay_widget.dart';
 import 'screens/voice_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/duplicates_screen.dart';
+import 'screens/notifications_screen.dart';
 import 'handlers/overlay_handler.dart';
 import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
@@ -107,14 +108,14 @@ void main() async {
   } catch (_) {}
 
   // ═══════════════════════════════════════════════════════
-  // 6. إعداد رد نداء الإشعارات (Ações + Tap)
+  // 6. إعداد رد نداء الإشعارات (Actions + Tap)
   // ═══════════════════════════════════════════════════════
   // 🆕 زر في الإشعار → handleAction (حفظ/إلغاء/حدد/تمييز)
   NotificationService.onAction = (actionId, payload) {
     NotificationActionHandler.handleAction(actionId, payload);
   };
 
-  // 🆕 فتح الإشعار → handleTap (فتح شاشة/تعامل مع payload)
+  // 🆕 فتح الإشعار → _onNotificationTap (فتح شاشة الإشعارات)
   NotificationService.onTap = _onNotificationTap;
 
   // ═══════════════════════════════════════════════════════
@@ -133,24 +134,31 @@ void main() async {
 
 /// عند الضغط على إشعار
 ///
-/// - "open_notifications" → الشاشة ستُفتح من NotificationActionHandler
-/// - "voice_notif:X" → فتح تفاصيل الإشعار
-/// - أي شيء آخر → لا يفعل شيئاً
+/// - "open_notifications" → فتح شاشة الإشعارات (كل الإشعارات)
+/// - "voice_notif:X"      → فتح شاشة الإشعارات (مع إبراز X)
+/// - أي شيء آخر           → لا يفعل شيئاً
 void _onNotificationTap(String? payload) {
   if (payload == null || payload.isEmpty) return;
 
   // ===== فتح سجل الإشعارات =====
   if (payload == 'open_notifications') {
-    // سيُفتح في المرحلة 4 (شاشة الإشعارات)
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => const NotificationsScreen(),
+      ),
+    );
     return;
   }
 
-  // ===== إشعار صوتي =====
+  // ===== فتح إشعار محدد =====
   if (payload.startsWith('voice_notif:')) {
     final idStr = payload.substring('voice_notif:'.length);
     final id = int.tryParse(idStr);
-    if (id == null) return;
-    // في المرحلة 4، سنفتح شاشة الإشعارات على هذا العنصر
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => NotificationsScreen(highlightId: id),
+      ),
+    );
     return;
   }
 }
@@ -272,3 +280,4 @@ void overlayMain() {
 // main v1: الأساسية (تهيئة الخدمات + التطبيق)
 // main v2: فحص التكرارات عند البدء والاستئناف + فتح شاشة التكرارات الإلزامية (المرحلة 5)
 // main v3: تهيئة PendingNotificationService (احتفاظ + انتهاء + إعادة عرض) + ربط onAction و onTap
+// main v3.2: _onNotificationTap يفتح شاشة الإشعارات (open_notifications / voice_notif:X) + استيراد notifications_screen
