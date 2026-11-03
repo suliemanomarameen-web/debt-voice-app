@@ -1,23 +1,20 @@
 import 'package:flutter/foundation.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
+import '../models/pending_notification.dart';
 import '../services/audio_recorder_service.dart';
-import '../services/logger_service.dart';
 import '../services/notification_service.dart';
 import '../services/overlay_service.dart';
 import '../services/parser_service.dart';
+import '../services/pending_notification_service.dart';
 import '../services/query_service.dart';
 import '../services/tts_service.dart';
-import 'transaction_handler.dart';
 
 /// معالج أوامر الزر العائم
+///
+/// ينشئ PendingNotification تلقائياً في DB + شريط Android
+/// الأزرار تظهر في الإشعار، المستخدم يتخذ الإجراء من هناك
 class OverlayHandler {
-  /// النص المعلّق (بانتظار اختيار العميل)
-  static String? pendingVoiceText;
-
-  /// رد نداء عند الضغط على إشعار "اختر العميل"
-  static void Function(String text)? onChooseCustomer;
-
   /// تهيئة المستمع للزر العائم
   static void listen() {
     OverlayService.listen((data) async {
@@ -53,20 +50,13 @@ class OverlayHandler {
 
     // ===== نص فارغ =====
     if (text == '__EMPTY__') {
-      await LoggerService.logVoicePending(
-        rawText: '',
-        audioPath: audioPath,
+      await PendingNotificationService.create(
+        PendingNotification.unclear(text: '', audioPath: audioPath),
       );
       await TtsService.speakDidNotHear();
-      await NotificationService.show(
-        'لم أسمع شيئا',
-        'اضغط مطولا على الزر وتحدث بوضوح',
-      );
       return;
     }
     if (text.isEmpty) return;
-
-    final db = DatabaseHelper.instance;
 
     // ===== استعلام؟ =====
     if (QueryService.isQuery(text)) {
@@ -82,75 +72,59 @@ class OverlayHandler {
     // ===== تحليل النص =====
     final parsed = ParserService.parse(text);
     if (parsed == null) {
-      await LoggerService.logVoicePending(
-        rawText: text,
-        audioPath: audioPath,
+      await PendingNotificationService.create(
+        PendingNotification.unclear(text: text, audioPath: audioPath),
       );
       await TtsService.speakDidNotUnderstand();
-      await NotificationService.show(
-        '🔴 تسجيل معلّق',
-        'لم أفهم: "$text"\nافتح السجل → المعلقات للمراجعة',
-      );
       return;
     }
 
     // ===== إنشاء حساب؟ =====
     if (parsed.intent == 'add_account') {
-      await _handleAddAccount(parsed, text, audioPath, db);
+      await _handleAddAccount(parsed, text, audioPath);
       return;
     }
 
     // ===== عملية مالية =====
-    await _handleTransaction(parsed, text, audioPath, db);
+    await _handleTransaction(parsed, text, audioPath);
   }
 
   // ═══════════════════════════════════════════════════════════
-  // إنشاء حساب جديد
+  // إنشاء حساب جديد — مباشرة (بدون إشعار)
   // ═══════════════════════════════════════════════════════════
   static Future<void> _handleAddAccount(
     dynamic parsed,
     String text,
     String? audioPath,
-    DatabaseHelper db,
   ) async {
     if (parsed.customerName.isEmpty) {
-      await LoggerService.logVoicePending(
-        rawText: text,
-        audioPath: audioPath,
-        partialParse: {
-          'intent': 'add_account',
-          'customerName': '',
-        },
+      await PendingNotificationService.create(
+        PendingNotification.unclear(text: text, audioPath: audioPath),
       );
       await TtsService.speak('لم أفهم الاسم');
-      await NotificationService.show('لم أفهم الاسم', '');
       return;
     }
 
+    final db = DatabaseHelper.instance;
     final existing = await db.findExactCustomer(parsed.customerName);
+
+    // ===== الحساب موجود مسبقاً =====
     if (existing != null) {
-      await LoggerService.logVoiceFail(
-        reason: 'الحساب موجود مسبقاً',
-        text: text,
-        audioPath: audioPath,
-      );
       await TtsService.speakExistsBefore(parsed.customerName);
-      await NotificationService.show('موجود مسبقا', parsed.customerName);
+      await NotificationService.show(
+        'موجود مسبقا',
+        parsed.customerName,
+      );
       return;
     }
 
+    // ===== إنشاء الحساب =====
     final id = await db.insertCustomer(Customer(
       name: parsed.customerName,
       accountType: parsed.accountType,
       createdAt: DateTime.now().toIso8601String(),
     ));
 
-    await LoggerService.logCustomerAdded(parsed.customerName);
-    await LoggerService.logVoiceSuccess(
-      text: text,
-      audioPath: audioPath,
-      parsedAction: 'إنشاء حساب',
-    );
     await TtsService.speakAccountCreated(parsed.customerName);
 
     final typeAr = {
@@ -166,24 +140,20 @@ class OverlayHandler {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // عملية مالية
+  // عملية مالية — إنشاء إشعار
   // ═══════════════════════════════════════════════════════════
   static Future<void> _handleTransaction(
     dynamic parsed,
     String text,
     String? audioPath,
-    DatabaseHelper db,
   ) async {
+    final db = DatabaseHelper.instance;
+
     // بحث عن عميل مطابق تماماً
-    final customer = await db.findExactCustomer(parsed.customerName);
-    if (customer != null) {
-      await TransactionHandler.save(
-        customer: customer,
-        parsed: parsed,
-        db: db,
-        source: 'overlay',
-        audioPath: audioPath,
-      );
+    final exact = await db.findExactCustomer(parsed.customerName);
+
+    if (exact != null) {
+      await _createSingleNotification(parsed, text, audioPath, exact);
       return;
     }
 
@@ -191,52 +161,87 @@ class OverlayHandler {
     final partial = await db.findCustomersContaining(parsed.customerName);
 
     if (partial.isEmpty) {
-      await LoggerService.logVoicePending(
-        rawText: text,
-        audioPath: audioPath,
-        partialParse: {
-          'intent': parsed.intent,
-          'amount': parsed.amount,
-          'customerName': parsed.customerName,
-          'items': parsed.items,
-        },
+      // ===== لا يوجد حساب =====
+      await PendingNotificationService.create(
+        PendingNotification.noAccount(
+          text: text,
+          customerName: parsed.customerName,
+          intent: parsed.intent,
+          amount: parsed.amount,
+          currency: parsed.currency,
+          items: parsed.items,
+          audioPath: audioPath,
+        ),
       );
       await TtsService.speakNoAccount(parsed.customerName);
-      await NotificationService.show(
-        '🔴 تسجيل معلّق',
-        'لا يوجد حساب باسم "${parsed.customerName}"\nافتح السجل → المعلقات',
-      );
       return;
     }
 
-    // أكثر من عميل مطابق
-    if (partial.length > 1) {
-      pendingVoiceText = text;
-      await TtsService.speakMultipleAccounts();
-      await NotificationService.show(
-        'يوجد أكثر من حساب',
-        'اضغط هنا لاختيار الحساب',
-        payload: 'choose_customer',
-      );
+    if (partial.length == 1) {
+      await _createSingleNotification(parsed, text, audioPath, partial.first);
       return;
     }
 
-    // عميل واحد مطابق
-    await TransactionHandler.save(
-      customer: partial.first,
-      parsed: parsed,
-      db: db,
-      source: 'overlay',
-      audioPath: audioPath,
+    // ===== أكثر من حساب =====
+    final candidates = partial.map((c) => {
+          'id': c.id,
+          'name': c.name,
+          'phone': c.phone,
+          'account_type': c.accountType,
+        }).toList();
+
+    await PendingNotificationService.create(
+      PendingNotification.multiple(
+        text: text,
+        customerName: parsed.customerName,
+        intent: parsed.intent,
+        amount: parsed.amount,
+        currency: parsed.currency,
+        items: parsed.items,
+        candidates: candidates,
+        audioPath: audioPath,
+      ),
+    );
+    await TtsService.speakMultipleAccounts();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // إنشاء إشعار "حساب واحد"
+  // ═══════════════════════════════════════════════════════════
+  static Future<void> _createSingleNotification(
+    dynamic parsed,
+    String text,
+    String? audioPath,
+    Customer customer,
+  ) async {
+    await PendingNotificationService.create(
+      PendingNotification.single(
+        text: text,
+        customerName: customer.name,
+        intent: parsed.intent,
+        amount: parsed.amount,
+        currency: parsed.currency,
+        items: parsed.items,
+        matchedCustomerId: customer.id!,
+        matchedCustomerName: customer.name,
+        audioPath: audioPath,
+        accountType: customer.accountType,
+      ),
+    );
+
+    final typeLabel = {
+      'debt': 'دين',
+      'payment': 'سداد',
+      'return': 'مرتجع',
+    }[parsed.intent] ?? 'عملية';
+
+    await TtsService.speak(
+      'سُجّل $typeLabel بمبلغ ${parsed.amount.toStringAsFixed(0)} '
+      '${parsed.currency} على ${customer.name}. '
+      'اضغط [حفظ] في الإشعار للتأكيد',
     );
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // عند الضغط على إشعار "اختر العميل"
-  // ═══════════════════════════════════════════════════════════
-  static String? consumePendingVoiceText() {
-    final text = pendingVoiceText;
-    pendingVoiceText = null;
-    return text;
-  }
 }
+
+// Overlay Handler v1: النسخة الأساسية (pendingVoiceText static — يتسرب بين الجلسات)
+// Overlay Handler v2: إنشاء PendingNotification لكل تسجيل + إشعارات تفاعلية بأزرار + إزالة static (بدون تسرب)
