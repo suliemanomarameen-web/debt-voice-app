@@ -54,6 +54,8 @@ class LoggerService {
         return '➕ إضافة يدوية';
       case 'voice+manual':
         return '🎤✏️ صوتي + مراجَع';
+      case 'notification':
+        return '🔔 إشعار';
       default:
         return '';
     }
@@ -562,7 +564,6 @@ class LoggerService {
     );
   }
 
-  // 🆕 دالة الحذف مع التفاصيل الكاملة
   static Future<void> logTransactionDeleted({
     required String customerName,
     required double amount,
@@ -606,7 +607,6 @@ class LoggerService {
     );
   }
 
-  // 🆕 دالة حذف العميل مع التفاصيل الكاملة
   static Future<void> logCustomerDeleted(
     String name, {
     String? phone,
@@ -778,7 +778,8 @@ class LoggerService {
         accountant: accountant,
       );
 
-  static Future<void> logSyncDownload(String fileName, {String? accountant}) =>
+  static Future<void> logSyncDownload(String fileName,
+          {String? accountant}) =>
       info(
         'تنزيل مزامنة',
         'تم تنزيل ملف المزامنة: $fileName',
@@ -912,4 +913,123 @@ class LoggerService {
         category: LogCategory.code,
         accountant: accountant,
       );
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 أحداث الإشعارات
+  // ═══════════════════════════════════════════════════════════
+
+  static Future<void> logVoiceNotificationCreated({
+    required int notificationId,
+    required String text,
+    required String matchType,
+    String? audioPath,
+    String? accountant,
+  }) =>
+      info(
+        '🎤 استُقبل تسجيل صوتي',
+        'النوع: $matchType\nالنص: "$text"\nإشعار #$notificationId',
+        category: LogCategory.voice,
+        audioPath: audioPath,
+        accountant: accountant,
+        metadata: {
+          'notification_id': notificationId,
+          'match_type': matchType,
+          'raw_text': text,
+        },
+      );
+
+  static Future<void> logVoiceNotificationSaved({
+    required int notificationId,
+    required String typeLabel,
+    required String customerName,
+    required double amount,
+    required String currency,
+    int? transactionId,
+    String? accountant,
+  }) =>
+      success(
+        '✅ تم حفظ عملية من إشعار',
+        'إشعار #$notificationId → $typeLabel ${amount.toStringAsFixed(0)} $currency على "$customerName"'
+            '${transactionId != null ? "\nعملية #$transactionId" : ""}',
+        category: LogCategory.voice,
+        accountant: accountant,
+        metadata: {
+          'notification_id': notificationId,
+          'transaction_id': transactionId,
+          'type': typeLabel,
+          'amount': amount,
+          'customer_name': customerName,
+        },
+      );
+
+  static Future<void> logVoiceNotificationCancelled({
+    required int notificationId,
+    required String text,
+    String? accountant,
+  }) =>
+      warning(
+        '❌ أُلغي إشعار',
+        'إشعار #$notificationId\nالنص: "$text"',
+        category: LogCategory.voice,
+        accountant: accountant,
+        needsAck: false,
+        metadata: {
+          'notification_id': notificationId,
+          'raw_text': text,
+        },
+      );
+
+  static Future<void> logVoiceNotificationDismissed({
+    required int notificationId,
+    required String text,
+    String? accountant,
+  }) =>
+      info(
+        '🔇 تمييز إشعار كمقروء',
+        'إشعار #$notificationId\nالنص: "$text"',
+        category: LogCategory.voice,
+        accountant: accountant,
+        metadata: {
+          'notification_id': notificationId,
+          'raw_text': text,
+        },
+      );
+
+  static Future<void> logVoiceNotificationExpired({
+    required int notificationId,
+    required String text,
+    String? accountant,
+  }) =>
+      warning(
+        '⏰ انتهت صلاحية إشعار',
+        'إشعار #$notificationId (غير مفهوم)\nالنص: "$text"',
+        category: LogCategory.voice,
+        accountant: accountant,
+        needsAck: false,
+        metadata: {
+          'notification_id': notificationId,
+          'raw_text': text,
+        },
+      );
+
+  static Future<void> logVoiceNotificationDeleted({
+    required int notificationId,
+    required String text,
+    required String previousStatus,
+    String? accountant,
+  }) =>
+      info(
+        '🗑️ حُذف إشعار يدوياً',
+        'إشعار #$notificationId (كان: $previousStatus)\nالنص: "$text"',
+        category: LogCategory.voice,
+        accountant: accountant,
+        metadata: {
+          'notification_id': notificationId,
+          'previous_status': previousStatus,
+          'raw_text': text,
+        },
+      );
 }
+
+// Logger v1: خدمة السجل الأساسية
+// Logger v1.1: إضافة 6 دوال لأحداث الإشعارات (إنشاء، حفظ، إلغاء، تمييز، انتهاء، حذف)
