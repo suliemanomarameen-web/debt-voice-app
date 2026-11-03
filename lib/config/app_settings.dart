@@ -50,42 +50,44 @@ class AppSettings {
   // 🔀 مجموعة كشف التكرار (v2.4)
   // ═══════════════════════════════════════════════════════════
 
-  // تشغيل/إيقاف
   static const String duplicateDetectionEnabled =
       'duplicate_detection_enabled';
-
-  // مستوى الكشف العام
   static const String duplicateDetectionLevel =
       'duplicate_detection_level';
-
-  // تطبيع الأسماء
   static const String compoundNameHandling = 'compound_name_handling';
   static const String detectHighSimilarity = 'detect_high_similarity';
   static const String normalizeHamza = 'normalize_hamza';
   static const String normalizeTaaMarbuta = 'normalize_taa_marbuta';
-
-  // أي مستوى يوقف المزامنة؟
   static const String blockSyncOnConfirmed = 'block_sync_on_confirmed';
   static const String blockSyncOnLikely = 'block_sync_on_likely';
   static const String blockSyncOnWeak = 'block_sync_on_weak';
   static const String blockSyncOnSimilar = 'block_sync_on_similar';
-
-  // كشف تكرار العمليات
   static const String transactionDuplicateMode =
       'transaction_duplicate_mode';
   static const String transactionWindowMinutes =
       'transaction_window_minutes';
-
-  // السلوك التلقائي
   static const String autoRenameFormat = 'auto_rename_format';
   static const String maxDuplicatesPerSync = 'max_duplicates_per_sync';
-
-  // الإشعارات
   static const String notifyOnMerge = 'notify_on_merge';
   static const String notifyOnRename = 'notify_on_rename';
   static const String notifyOnSkip = 'notify_on_skip';
   static const String notifyOnDuplicateDetected =
       'notify_on_duplicate_detected';
+
+  // ═══════════════════════════════════════════════════════════
+  // 🔔 مجموعة الإشعارات (v2.5)
+  // ═══════════════════════════════════════════════════════════
+
+  static const String notificationsRetentionMode =
+      'notifications_retention_mode'; // 'days' | 'count'
+  static const String notificationsRetentionDays =
+      'notifications_retention_days';
+  static const String notificationsRetentionCount =
+      'notifications_retention_count';
+  static const String notificationsKeepPending =
+      'notifications_keep_pending';
+  static const String notificationsDeleteAudio =
+      'notifications_delete_audio';
 
   // ═══════════════════════════════════════════════════════════
   // 📜 مجموعة السجل
@@ -146,7 +148,7 @@ class AppSettings {
   static const String compactMode = 'compact_mode';
 
   // ═══════════════════════════════════════════════════════════
-  // رمز المحاسب
+  // رمز المحاسب في العمليات
   // ═══════════════════════════════════════════════════════════
 
   static const String codeIncludeAccountant = 'code_include_accountant';
@@ -167,7 +169,7 @@ class AppSettings {
     blockCustomerDeletion: false,
     blockTransactionDeletion: false,
 
-    // إعدادات التعارض (حصريان)
+    // إعدادات التعارض
     permanentDeleteAlwaysWins: true,
     modificationAlwaysWins: false,
 
@@ -188,7 +190,7 @@ class AppSettings {
     syncLogs: true,
     syncDeletedBin: true,
 
-    // 🔀 كشف التكرار (v2.4)
+    // 🔀 كشف التكرار
     duplicateDetectionEnabled: true,
     duplicateDetectionLevel: 'balanced',
     compoundNameHandling: 'auto',
@@ -207,6 +209,13 @@ class AppSettings {
     notifyOnRename: true,
     notifyOnSkip: false,
     notifyOnDuplicateDetected: true,
+
+    // 🔔 الإشعارات
+    notificationsRetentionMode: 'days',
+    notificationsRetentionDays: 30,
+    notificationsRetentionCount: 100,
+    notificationsKeepPending: true,
+    notificationsDeleteAudio: true,
 
     // 📜 السجل
     logEnabled: true,
@@ -344,6 +353,12 @@ class AppSettings {
     codeIncludeAccountant,
     codeAccountantPosition,
     codeAccountantSeparator,
+    // 🔔 الإشعارات (محلية — كل جهاز له احتياجاته)
+    notificationsRetentionMode,
+    notificationsRetentionDays,
+    notificationsRetentionCount,
+    notificationsKeepPending,
+    notificationsDeleteAudio,
   };
 
   static bool isShared(String key) => sharedSettings.contains(key);
@@ -354,3 +369,4 @@ class AppSettings {
 // الإعدادات v2: إضافة permanentDeleteAlwaysWins (خيار الحذف النهائي يفوز دائماً)
 // الإعدادات v2.2: إضافة modificationAlwaysWins (حصري مع permanentDeleteAlwaysWins — لا يُفعّلان معاً)
 // الإعدادات v2.4: إضافة 18 إعداداً شاملاً لنظام التكرار (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
+// الإعدادات v2.5: إضافة 5 إعدادات للإشعارات (وضع الاحتفاظ، المدة، العدد، احتفظ بالمعلقة، احذف الصوت)
