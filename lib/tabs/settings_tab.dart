@@ -1862,7 +1862,8 @@ class _SettingsTabState extends State<SettingsTab> {
                                 color: Colors.red,
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: theme.colorScheme.surface,
+                                  color:
+                                      Theme.of(context).colorScheme.surface,
                                   width: 1.5,
                                 ),
                               ),
@@ -3042,3 +3043,4 @@ class _SectionHeader extends StatelessWidget {
 // Settings Tab v1: الشاشة الأساسية للإعدادات
 // Settings Tab v2: إضافة قسم 🔀 التكرارات + زر إعادة فحص (المرحلة 5 من نظام التكرار)
 // Settings Tab v3: إضافة قسم 🔔 الإشعارات (مع عدّاد معلّق + رابط لشاشة الإشعارات)
+// Settings Tab v3.1: إصلاح theme.colorScheme → Theme.of(context).colorScheme (السطر 1865)
