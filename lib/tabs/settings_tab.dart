@@ -23,21 +23,23 @@ import '../services/keywords_service.dart';
 import '../services/link_code_service.dart';
 import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
+import '../services/pending_notification_service.dart';
 import '../services/permission_service.dart';
 import '../services/recovery_service.dart';
 import '../services/reminder_service.dart';
 import '../services/settings_service.dart';
 import '../services/speech_service.dart';
-import '../services/sync_service.dart'; // 🆕
+import '../services/sync_service.dart';
 import '../services/theme_service.dart';
 import '../screens/accountants_screen.dart';
 import '../screens/advanced_settings_screen.dart';
 import '../screens/deleted_bin_screen.dart';
-import '../screens/duplicates_screen.dart'; // 🆕
+import '../screens/duplicates_screen.dart';
 import '../screens/gdrive_screen.dart';
 import '../screens/keywords_screen.dart';
 import '../screens/logs_screen.dart';
 import '../screens/master_password_screen.dart';
+import '../screens/notifications_screen.dart';
 import '../screens/stats_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -86,7 +88,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _hasRecoveryCode = false;
   bool _hasSecurityQuestion = false;
 
-  bool _isPrimary = true; // 🆕
+  bool _isPrimary = true;
 
   @override
   void initState() {
@@ -102,7 +104,7 @@ class _SettingsTabState extends State<SettingsTab> {
     _loadAccountantName();
     _loadPendingFilters();
     _loadRecoveryInfo();
-    _loadPrimaryStatus(); // 🆕
+    _loadPrimaryStatus();
   }
 
   Future<void> _loadPrimaryStatus() async {
@@ -423,7 +425,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 decoration: BoxDecoration(
                   color: Colors.deepPurple.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.deepPurple.withOpacity(0.4)),
+                  border: Border.all(
+                      color: Colors.deepPurple.withOpacity(0.4)),
                 ),
                 child: SelectableText(
                   code,
@@ -696,7 +699,8 @@ class _SettingsTabState extends State<SettingsTab> {
 
     await LoggerService.logSecurityEvent(
       action: 'تغيير سؤال الأمان',
-      description: result['isCustom'] == true ? 'سؤال مخصص' : 'سؤال جاهز',
+      description:
+          result['isCustom'] == true ? 'سؤال مخصص' : 'سؤال جاهز',
     );
 
     await _loadRecoveryInfo();
@@ -818,9 +822,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 توليد رمز الربط وعرضه
-  // ═══════════════════════════════════════════════════════════
   Future<void> _showLinkCodeDialog() async {
     String? code;
     String? error;
@@ -851,12 +852,13 @@ class _SettingsTabState extends State<SettingsTab> {
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border:
-                        Border.all(color: Colors.orange.withOpacity(0.4)),
+                    border: Border.all(
+                        color: Colors.orange.withOpacity(0.4)),
                   ),
                   child: Text(
                     error,
-                    style: const TextStyle(fontSize: 12, height: 1.5),
+                    style:
+                        const TextStyle(fontSize: 12, height: 1.5),
                   ),
                 )
               : Column(
@@ -868,8 +870,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       decoration: BoxDecoration(
                         color: Colors.teal.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(10),
-                        border:
-                            Border.all(color: Colors.teal.withOpacity(0.4)),
+                        border: Border.all(
+                            color: Colors.teal.withOpacity(0.4)),
                       ),
                       child: SelectableText(
                         code ?? '',
@@ -1111,7 +1113,8 @@ class _SettingsTabState extends State<SettingsTab> {
               child: const Text('إلغاء'),
             ),
             OutlinedButton(
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red),
               onPressed: () => Navigator.pop(ctx, 'replace'),
               child: const Text('استبدال كامل'),
             ),
@@ -1127,7 +1130,8 @@ class _SettingsTabState extends State<SettingsTab> {
     if (mode == null) return;
 
     setState(() => _backupBusy = true);
-    final result = await BackupService.restoreFromFile(filePath, mode: mode);
+    final result =
+        await BackupService.restoreFromFile(filePath, mode: mode);
     if (!mounted) return;
     setState(() => _backupBusy = false);
 
@@ -1234,7 +1238,11 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   String _freqLabel(String f) {
-    return {'daily': 'يومياً', 'weekly': 'أسبوعياً', 'monthly': 'شهرياً'}[f] ??
+    return {
+          'daily': 'يومياً',
+          'weekly': 'أسبوعياً',
+          'monthly': 'شهرياً'
+        }[f] ??
         f;
   }
 
@@ -1374,9 +1382,6 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() => _backupBusy = false);
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 إعادة فحص التكرارات يدوياً
-  // ═══════════════════════════════════════════════════════════
   Future<void> _recheckDuplicates() async {
     setState(() => _backupBusy = true);
     try {
@@ -1403,7 +1408,8 @@ class _SettingsTabState extends State<SettingsTab> {
       if (!mounted) return;
       setState(() => _backupBusy = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        SnackBar(
+            content: Text('خطأ: $e'), backgroundColor: Colors.red),
       );
     }
   }
@@ -1583,8 +1589,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('$d أرقام',
-                            style:
-                                const TextStyle(fontWeight: FontWeight.bold)),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold)),
                         Text(
                           'يسمح بـ ${_formatNumber(max)} عملية',
                           style: const TextStyle(
@@ -1629,7 +1635,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('مرتب (تسلسلي)',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold)),
                         Text('D-0001, D-0002, D-0003...',
                             style: TextStyle(
                                 fontSize: 11, color: Colors.grey)),
@@ -1653,7 +1660,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('عشوائي',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold)),
                         Text('D-4821, D-1938, D-7305...',
                             style: TextStyle(
                                 fontSize: 11, color: Colors.grey)),
@@ -1707,13 +1715,17 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               leading: Icon(
                 Icons.person,
-                color: _accountantName != null ? Colors.teal : Colors.grey,
+                color: _accountantName != null
+                    ? Colors.teal
+                    : Colors.grey,
               ),
               title: const Text('اسم المحاسب'),
               subtitle: Text(
                 _accountantName ?? 'لم يتم ضبطه - اضغط للإضافة',
                 style: TextStyle(
-                  color: _accountantName != null ? Colors.teal : Colors.grey,
+                  color: _accountantName != null
+                      ? Colors.teal
+                      : Colors.grey,
                   fontWeight: _accountantName != null
                       ? FontWeight.bold
                       : FontWeight.normal,
@@ -1756,7 +1768,8 @@ class _SettingsTabState extends State<SettingsTab> {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const KeywordsScreen()),
+                MaterialPageRoute(
+                    builder: (_) => const KeywordsScreen()),
               ).then((_) {
                 if (mounted) setState(() {});
               });
@@ -1772,7 +1785,8 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('تسجيلات صوتية فارغة',
                 style: TextStyle(fontSize: 13)),
             value: _filterEmptyVoice,
-            onChanged: (v) => _togglePendingFilter('pending_filter_empty', v),
+            onChanged: (v) =>
+                _togglePendingFilter('pending_filter_empty', v),
             dense: true,
           ),
           SwitchListTile(
@@ -1781,7 +1795,8 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('نصوص غير مفهومة',
                 style: TextStyle(fontSize: 13)),
             value: _filterUnclearText,
-            onChanged: (v) => _togglePendingFilter('pending_filter_unclear', v),
+            onChanged: (v) =>
+                _togglePendingFilter('pending_filter_unclear', v),
             dense: true,
           ),
           SwitchListTile(
@@ -1790,7 +1805,8 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('أخطاء أخرى',
                 style: TextStyle(fontSize: 13)),
             value: _filterOtherErrors,
-            onChanged: (v) => _togglePendingFilter('pending_filter_errors', v),
+            onChanged: (v) =>
+                _togglePendingFilter('pending_filter_errors', v),
             dense: true,
           ),
           SwitchListTile(
@@ -1799,10 +1815,123 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('تحذيرات أخرى',
                 style: TextStyle(fontSize: 13)),
             value: _filterOtherWarnings,
-            onChanged: (v) => _togglePendingFilter('pending_filter_warnings', v),
+            onChanged: (v) =>
+                _togglePendingFilter('pending_filter_warnings', v),
             dense: true,
           ),
           const SizedBox(height: 8),
+
+          // ========== 🆕 الإشعارات ==========
+          const _SectionHeader('🔔 الإشعارات'),
+          StreamBuilder<int>(
+            stream: PendingNotificationService.pendingCountStream,
+            initialData: null,
+            builder: (_, snap) {
+              return FutureBuilder<Map<String, int>>(
+                future: PendingNotificationService.getStats(),
+                builder: (_, statsSnap) {
+                  final stats = statsSnap.data ?? {};
+                  final pending =
+                      snap.data ?? (stats['pending'] ?? 0);
+                  final total = stats['total'] ?? 0;
+                  final saved = stats['saved'] ?? 0;
+                  final cancelled = (stats['cancelled'] ?? 0) +
+                      (stats['dismissed'] ?? 0) +
+                      (stats['expired'] ?? 0);
+
+                  return ListTile(
+                    leading: Stack(
+                      children: [
+                        Icon(
+                          pending > 0
+                              ? Icons.notifications_active
+                              : Icons.notifications_none,
+                          color: pending > 0
+                              ? Colors.orange
+                              : Colors.grey,
+                        ),
+                        if (pending > 0)
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              constraints: const BoxConstraints(
+                                  minWidth: 14, minHeight: 14),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: theme.colorScheme.surface,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
+                                pending > 99 ? '99+' : '$pending',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    title: const Text('الإشعارات'),
+                    subtitle: Text(
+                      pending > 0
+                          ? '$pending معلّقة • $saved محفوظة • $cancelled ملغية\nإجمالي: $total'
+                          : 'لا توجد إشعارات معلّقة',
+                      style: TextStyle(
+                        color: pending > 0
+                            ? Colors.orange
+                            : Colors.grey,
+                        fontSize: 11,
+                        fontWeight: pending > 0
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (pending > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$pending',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward_ios, size: 16),
+                      ],
+                    ),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const NotificationsScreen(),
+                        ),
+                      );
+                      if (mounted) setState(() {});
+                    },
+                  );
+                },
+              );
+            },
+          ),
 
           // ========== السجل ==========
           const _SectionHeader('سجل الأحداث'),
@@ -1864,7 +1993,8 @@ class _SettingsTabState extends State<SettingsTab> {
           if (_isPrimary) ...[
             const _SectionHeader('رموز العمليات'),
             SwitchListTile(
-              secondary: const Icon(Icons.qr_code, color: Colors.blue),
+              secondary:
+                  const Icon(Icons.qr_code, color: Colors.blue),
               title: const Text('تفعيل رموز العمليات'),
               value: _codeEnabled,
               onChanged: _toggleCodeEnabled,
@@ -1872,11 +2002,12 @@ class _SettingsTabState extends State<SettingsTab> {
             if (_codeEnabled) ...[
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.arrow_upward, color: Colors.red),
+                leading:
+                    const Icon(Icons.arrow_upward, color: Colors.red),
                 title: const Text('رمز الدين'),
                 trailing: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.red.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -1890,11 +2021,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 onTap: () => _editPrefix('debt'),
               ),
               ListTile(
-                leading: const Icon(Icons.payments, color: Colors.green),
+                leading:
+                    const Icon(Icons.payments, color: Colors.green),
                 title: const Text('رمز السداد'),
                 trailing: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.green.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -1908,12 +2040,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 onTap: () => _editPrefix('payment'),
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.keyboard_return, color: Colors.orange),
+                leading: const Icon(Icons.keyboard_return,
+                    color: Colors.orange),
                 title: const Text('رمز المرتجع'),
                 trailing: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.orange.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -1928,7 +2060,8 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.numbers, color: Colors.purple),
+                leading:
+                    const Icon(Icons.numbers, color: Colors.purple),
                 title: const Text('عدد الأرقام'),
                 subtitle: Text(
                     'يسمح بـ ${_formatNumber(CodeService.getMaxPossible(_codeDigits))} عملية'),
@@ -1937,29 +2070,35 @@ class _SettingsTabState extends State<SettingsTab> {
                   children: [
                     Text('$_codeDigits',
                         style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16)),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16)),
                     const Icon(Icons.arrow_forward_ios, size: 16),
                   ],
                 ),
                 onTap: _changeDigits,
               ),
               ListTile(
-                leading: const Icon(Icons.shuffle, color: Colors.indigo),
+                leading:
+                    const Icon(Icons.shuffle, color: Colors.indigo),
                 title: const Text('طريقة التوليد'),
                 subtitle: Text(CodeService.describeMode(_codeMode)),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                trailing:
+                    const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: _changeCodeMode,
               ),
               const Divider(height: 1),
               SwitchListTile(
-                secondary: const Icon(Icons.person_pin, color: Colors.teal),
+                secondary:
+                    const Icon(Icons.person_pin, color: Colors.teal),
                 title: const Text('إضافة رمز المحاسب للعملية'),
                 subtitle: const Text('مثال: D-0001-S أو S-D-0001'),
                 value: _includeAccountant,
                 onChanged: (v) async {
                   await SettingsService.setBool(
                       AppSettings.codeIncludeAccountant, v);
-                  if (mounted) setState(() => _includeAccountant = v);
+                  if (mounted) {
+                    setState(() => _includeAccountant = v);
+                  }
                 },
               ),
               if (_includeAccountant) ...[
@@ -1973,7 +2112,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       if (v == null) return;
                       await SettingsService.setString(
                           AppSettings.codeAccountantPosition, v);
-                      if (mounted) setState(() => _accountantPosition = v);
+                      if (mounted) {
+                        setState(() => _accountantPosition = v);
+                      }
                     },
                     items: const [
                       DropdownMenuItem(
@@ -1986,8 +2127,8 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ),
                 ListTile(
-                  leading:
-                      const Icon(Icons.horizontal_rule, color: Colors.teal),
+                  leading: const Icon(Icons.horizontal_rule,
+                      color: Colors.teal),
                   title: const Text('الفاصل'),
                   trailing: DropdownButton<String>(
                     value: _accountantSeparator,
@@ -1995,13 +2136,18 @@ class _SettingsTabState extends State<SettingsTab> {
                       if (v == null) return;
                       await SettingsService.setString(
                           AppSettings.codeAccountantSeparator, v);
-                      if (mounted) setState(() => _accountantSeparator = v);
+                      if (mounted) {
+                        setState(() => _accountantSeparator = v);
+                      }
                     },
                     items: const [
-                      DropdownMenuItem(value: '-', child: Text('شرطة (-)')),
                       DropdownMenuItem(
-                          value: '_', child: Text('شرطة سفلية (_)')),
-                      DropdownMenuItem(value: '', child: Text('بدون فاصل')),
+                          value: '-', child: Text('شرطة (-)')),
+                      DropdownMenuItem(
+                          value: '_',
+                          child: Text('شرطة سفلية (_)')),
+                      DropdownMenuItem(
+                          value: '', child: Text('بدون فاصل')),
                     ],
                   ),
                 ),
@@ -2021,13 +2167,15 @@ class _SettingsTabState extends State<SettingsTab> {
             secondary: const Icon(Icons.star, color: Colors.amber),
             title: const Text('إخفاء التصنيف'),
             value: _pdfHideCategory,
-            onChanged: (v) => _togglePdfSetting('pdf_hide_category', v),
+            onChanged: (v) =>
+                _togglePdfSetting('pdf_hide_category', v),
           ),
           SwitchListTile(
             secondary: const Icon(Icons.person, color: Colors.teal),
             title: const Text('إخفاء نوع الحساب'),
             value: _pdfHideAccountType,
-            onChanged: (v) => _togglePdfSetting('pdf_hide_account_type', v),
+            onChanged: (v) =>
+                _togglePdfSetting('pdf_hide_account_type', v),
           ),
 
           // ========== الحماية ==========
@@ -2035,21 +2183,25 @@ class _SettingsTabState extends State<SettingsTab> {
           SwitchListTile(
             secondary: const Icon(Icons.lock, color: Colors.blue),
             title: const Text('قفل التطبيق'),
-            subtitle: const Text('عند التفعيل، يُطلب رمز المرور عند فتح التطبيق'),
-            value: SettingsService.getBool(AppSettings.lockEnabled, defaultValue: false),
+            subtitle:
+                const Text('عند التفعيل، يُطلب رمز المرور عند فتح التطبيق'),
+            value: SettingsService.getBool(AppSettings.lockEnabled,
+                defaultValue: false),
             onChanged: (v) async {
               if (v) {
                 final hasPwd = await AuthService.hasPassword();
                 if (!hasPwd) {
                   final ok = await _enableLockDialog();
-                  if (!ok) return; 
+                  if (!ok) return;
                 }
-                await SettingsService.setBool(AppSettings.lockEnabled, true);
+                await SettingsService.setBool(
+                    AppSettings.lockEnabled, true);
                 if (mounted) setState(() {});
               } else {
                 final ok = await _disableLockDialog();
                 if (ok) {
-                  await SettingsService.setBool(AppSettings.lockEnabled, false);
+                  await SettingsService.setBool(
+                      AppSettings.lockEnabled, false);
                   if (mounted) setState(() {});
                 }
               }
@@ -2077,17 +2229,20 @@ class _SettingsTabState extends State<SettingsTab> {
                           ? 'ملف المزامنة مشفّر على Drive — اضغط للتغيير'
                           : 'اضغط لتفعيل حماية ملف المزامنة بكلمة مرور',
                       style: TextStyle(
-                        color: hasPassword ? Colors.green : Colors.orange,
+                        color: hasPassword
+                            ? Colors.green
+                            : Colors.orange,
                         fontSize: 11,
                       ),
                     ),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    trailing:
+                        const Icon(Icons.arrow_forward_ios, size: 16),
                     onTap: () async {
                       final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) =>
-                              MasterPasswordScreen(isChange: hasPassword),
+                          builder: (_) => MasterPasswordScreen(
+                              isChange: hasPassword),
                         ),
                       );
                       if (result == true && mounted) {
@@ -2097,14 +2252,15 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                   if (hasPassword)
                     ListTile(
-                      leading: const Icon(Icons.link, color: Colors.teal),
+                      leading:
+                          const Icon(Icons.link, color: Colors.teal),
                       title: const Text('🔗 توليد رمز الربط'),
                       subtitle: const Text(
                         'شارك هذا الرمز مع المحاسب الثاني لربط جهازه',
                         style: TextStyle(fontSize: 11),
                       ),
-                      trailing:
-                          const Icon(Icons.arrow_forward_ios, size: 16),
+                      trailing: const Icon(Icons.arrow_forward_ios,
+                          size: 16),
                       onTap: _showLinkCodeDialog,
                     ),
                 ],
@@ -2118,7 +2274,8 @@ class _SettingsTabState extends State<SettingsTab> {
           ListTile(
             leading: Icon(
               Icons.vpn_key,
-              color: _hasRecoveryCode ? Colors.deepPurple : Colors.grey,
+              color:
+                  _hasRecoveryCode ? Colors.deepPurple : Colors.grey,
             ),
             title: const Text('رمز الاسترداد'),
             subtitle: Text(
@@ -2126,9 +2283,12 @@ class _SettingsTabState extends State<SettingsTab> {
                   ? '✅ محفوظ — اضغط للعرض (يتطلب كلمة المرور)'
                   : 'لم يُنشأ بعد — اضغط للتوليد',
               style: TextStyle(
-                color: _hasRecoveryCode ? Colors.deepPurple : Colors.grey,
-                fontWeight:
-                    _hasRecoveryCode ? FontWeight.bold : FontWeight.normal,
+                color: _hasRecoveryCode
+                    ? Colors.deepPurple
+                    : Colors.grey,
+                fontWeight: _hasRecoveryCode
+                    ? FontWeight.bold
+                    : FontWeight.normal,
               ),
             ),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
@@ -2169,9 +2329,11 @@ class _SettingsTabState extends State<SettingsTab> {
                   ? '✅ محفوظ — اضغط للتغيير (يتطلب كلمة المرور)'
                   : 'لم يُضف بعد — اضغط للإضافة',
               style: TextStyle(
-                color: _hasSecurityQuestion ? Colors.blue : Colors.grey,
-                fontWeight:
-                    _hasSecurityQuestion ? FontWeight.bold : FontWeight.normal,
+                color:
+                    _hasSecurityQuestion ? Colors.blue : Colors.grey,
+                fontWeight: _hasSecurityQuestion
+                    ? FontWeight.bold
+                    : FontWeight.normal,
               ),
             ),
             trailing: Icon(
@@ -2188,7 +2350,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 ? const SizedBox(
                     width: 24,
                     height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child:
+                        CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.backup, color: Colors.blue),
             title: const Text('إنشاء نسخة احتياطية'),
@@ -2245,29 +2408,32 @@ class _SettingsTabState extends State<SettingsTab> {
             onTap: () async {
               await Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const GDriveScreen()),
+                MaterialPageRoute(
+                    builder: (_) => const GDriveScreen()),
               );
               _checkGDrive();
             },
           ),
           SwitchListTile(
-            secondary:
-                const Icon(Icons.cloud_upload, color: Colors.deepPurple),
+            secondary: const Icon(Icons.cloud_upload,
+                color: Colors.deepPurple),
             title: const Text('النسخ السحابي التلقائي'),
             value: _cloudBackupEnabled,
             onChanged: _toggleCloudBackup,
           ),
           if (_cloudBackupEnabled) ...[
             ListTile(
-              leading: const Icon(Icons.schedule, color: Colors.deepPurple),
+              leading: const Icon(Icons.schedule,
+                  color: Colors.deepPurple),
               title: const Text('تكرار الرفع'),
-              subtitle:
-                  Text(CloudBackupService.frequencyLabel(_cloudFrequency)),
+              subtitle: Text(
+                  CloudBackupService.frequencyLabel(_cloudFrequency)),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _changeCloudFrequency,
             ),
             ListTile(
-              leading: const Icon(Icons.storage, color: Colors.indigo),
+              leading:
+                  const Icon(Icons.storage, color: Colors.indigo),
               title: const Text('عدد النسخ المحفوظة'),
               subtitle: Text(_cloudMaxBackups < 0
                   ? 'غير نهائي'
@@ -2276,8 +2442,8 @@ class _SettingsTabState extends State<SettingsTab> {
               onTap: _changeCloudMaxBackups,
             ),
             ListTile(
-              leading:
-                  const Icon(Icons.play_circle, color: Colors.deepPurple),
+              leading: const Icon(Icons.play_circle,
+                  color: Colors.deepPurple),
               title: const Text('رفع نسخة الآن'),
               onTap: _backupBusy ? null : _runCloudBackupNow,
             ),
@@ -2420,7 +2586,8 @@ class _SettingsTabState extends State<SettingsTab> {
           ListTile(
             leading: const Icon(Icons.tune, color: Colors.deepPurple),
             title: const Text('الإعدادات المتقدمة'),
-            subtitle: const Text('47 إعدادًا للتحكم الكامل في سلوك التطبيق'),
+            subtitle: const Text(
+                'التحكم الكامل في سلوك التطبيق'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {
               Navigator.push(
@@ -2434,7 +2601,7 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== 🆕 التكرارات ==========
+          // ========== 🔀 التكرارات ==========
           const _SectionHeader('🔀 التكرارات'),
           FutureBuilder<Map<String, int>>(
             future: DatabaseHelper.instance.getDuplicatesStats(),
@@ -2512,8 +2679,8 @@ class _SettingsTabState extends State<SettingsTab> {
                           )
                         : const Icon(Icons.search, color: Colors.blue),
                     title: const Text('إعادة فحص الآن'),
-                    subtitle:
-                        const Text('يبحث عن تكرارات جديدة في السحابة'),
+                    subtitle: const Text(
+                        'يبحث عن تكرارات جديدة في السحابة'),
                     trailing: const Icon(Icons.refresh, size: 18),
                     onTap: _backupBusy ? null : _recheckDuplicates,
                   ),
@@ -2596,7 +2763,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ========== حوارات القفل ==========
   Future<bool> _enableLockDialog() async {
     final pwd1 = TextEditingController();
     final pwd2 = TextEditingController();
@@ -2646,7 +2812,8 @@ class _SettingsTabState extends State<SettingsTab> {
                   const Align(
                     alignment: Alignment.centerRight,
                     child: Text('سؤال الأمان:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                        style:
+                            TextStyle(fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
@@ -2712,7 +2879,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       : selectedQuestion;
 
                   if (p1.length < 4) {
-                    setSt(() => error = 'كلمة المرور: 4 أرقام على الأقل');
+                    setSt(() =>
+                        error = 'كلمة المرور: 4 أرقام على الأقل');
                     return;
                   }
                   if (p1 != p2) {
@@ -2821,7 +2989,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 child: const Text('إلغاء'),
               ),
               FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                style:
+                    FilledButton.styleFrom(backgroundColor: Colors.red),
                 onPressed: () async {
                   final ok =
                       await AuthService.verifyPassword(ctrl.text.trim());
@@ -2870,4 +3039,6 @@ class _SectionHeader extends StatelessWidget {
       );
 }
 
-// Settings Tab v2: إضافة قسم 🔀 التكرارات + زر إعادة فحص (المرحلة 5)
+// Settings Tab v1: الشاشة الأساسية للإعدادات
+// Settings Tab v2: إضافة قسم 🔀 التكرارات + زر إعادة فحص (المرحلة 5 من نظام التكرار)
+// Settings Tab v3: إضافة قسم 🔔 الإشعارات (مع عدّاد معلّق + رابط لشاشة الإشعارات)
