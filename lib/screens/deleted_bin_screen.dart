@@ -3,8 +3,9 @@ import '../models/log_event.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
-import '../services/accountant_service.dart'; // 🆕
+import '../services/accountant_service.dart';
 import '../services/logger_service.dart';
+import '../services/permission_gate.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 
@@ -28,6 +29,7 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    PermissionCache.refresh();
     _load();
   }
 
@@ -52,10 +54,13 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة عميل
-  // ═══════════════════════════════════════════════════════════
   Future<void> _restoreCustomer(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'edit_customers',
+      message: 'ليس لديك صلاحية استعادة الحسابات',
+    )) return;
+
     final confirm = await _confirmRestore(
       title: 'استعادة العميل',
       message: 'سيتم استعادة "${c.name}" وكل معاملاته.',
@@ -77,10 +82,13 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حذف نهائي لعميل
-  // ═══════════════════════════════════════════════════════════
   Future<void> _hardDeleteCustomer(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'delete_customers',
+      message: 'ليس لديك صلاحية الحذف النهائي للحسابات',
+    )) return;
+
     final confirm = await _confirmDelete(
       title: 'حذف نهائي',
       message:
@@ -104,10 +112,13 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // استعادة معاملة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _restoreTransaction(Transaction t) async {
+    if (!await PermissionGate.require(
+      context,
+      'edit_transactions',
+      message: 'ليس لديك صلاحية استعادة العمليات',
+    )) return;
+
     final confirm = await _confirmRestore(
       title: 'استعادة العملية',
       message:
@@ -131,10 +142,13 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حذف نهائي لمعاملة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _hardDeleteTransaction(Transaction t) async {
+    if (!await PermissionGate.require(
+      context,
+      'delete_transactions',
+      message: 'ليس لديك صلاحية الحذف النهائي للعمليات',
+    )) return;
+
     final confirm = await _confirmDelete(
       title: 'حذف نهائي',
       message:
@@ -159,12 +173,21 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تفريغ السلة
-  // ═══════════════════════════════════════════════════════════
   Future<void> _emptyBin() async {
     final total = _deletedCustomers.length + _deletedTransactions.length;
     if (total == 0) return;
+
+    if (!await PermissionGate.require(
+      context,
+      'delete_customers',
+      message: 'ليس لديك صلاحية تفريغ السلة',
+    )) return;
+
+    if (!await PermissionGate.require(
+      context,
+      'delete_transactions',
+      message: 'ليس لديك صلاحية تفريغ السلة',
+    )) return;
 
     final confirm = await _confirmDelete(
       title: 'تفريغ السلة',
@@ -200,12 +223,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     _load();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // أدوات
-  // ═══════════════════════════════════════════════════════════
-
-  /// 🆕 إصلاح: يستخدم AccountantService (SharedPreferences)
-  /// بدلاً من جدول settings (الذي لا يحتوي على accountant_name)
   Future<String?> _getAccountantName() async {
     try {
       return await AccountantService.getAccountantName();
@@ -324,6 +341,9 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     final theme = Theme.of(context);
     final total = _deletedCustomers.length + _deletedTransactions.length;
 
+    final canDeleteCustomers = PermissionCache.has('delete_customers');
+    final canDeleteTransactions = PermissionCache.has('delete_transactions');
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -343,7 +363,7 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
             ],
           ),
           actions: [
-            if (total > 0)
+            if (total > 0 && canDeleteCustomers && canDeleteTransactions)
               IconButton(
                 icon: const Icon(Icons.delete_sweep),
                 tooltip: 'تفريغ السلة',
@@ -355,7 +375,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
             ? const Center(child: CircularProgressIndicator())
             : Column(
                 children: [
-                  // شريط معلومات
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
@@ -390,9 +409,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تبويب العملاء
-  // ═══════════════════════════════════════════════════════════
   Widget _buildCustomersTab(ThemeData theme) {
     if (_deletedCustomers.isEmpty) {
       return _emptyView('لا يوجد عملاء محذوفون');
@@ -415,7 +431,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // الاسم
                   Row(
                     children: [
                       CircleAvatar(
@@ -468,7 +483,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 
                   const SizedBox(height: 8),
 
-                  // من حذف + متى
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -512,7 +526,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 
                   const SizedBox(height: 10),
 
-                  // الأزرار
                   Row(
                     children: [
                       Expanded(
@@ -549,9 +562,6 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تبويب المعاملات
-  // ═══════════════════════════════════════════════════════════
   Widget _buildTransactionsTab(ThemeData theme) {
     if (_deletedTransactions.isEmpty) {
       return _emptyView('لا توجد معاملات محذوفة');
@@ -752,3 +762,5 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 }
 
 // Deleted Bin Screen v2: إصلاح _getAccountantName — استخدام AccountantService بدل DB settings
+
+// Deleted Bin Screen v3: ربط صلاحيات المحاسب بالاستعادة والحذف النهائي
