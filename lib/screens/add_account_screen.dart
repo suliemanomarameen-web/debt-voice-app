@@ -8,6 +8,7 @@ import '../models/customer.dart';
 import '../models/log_event.dart';
 import '../services/accountant_service.dart';
 import '../services/logger_service.dart';
+import '../services/permission_gate.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 
@@ -34,6 +35,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   @override
   void initState() {
     super.initState();
+    PermissionCache.refresh();
+
     final c = widget.existing;
     _name = TextEditingController(text: c?.name ?? '');
     _phone = TextEditingController(text: c?.phone ?? '');
@@ -135,17 +138,35 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _busy = true);
 
-    final db = DatabaseHelper.instance;
-    final accountant = await AccountantService.getAccountantName();
-    final now = DateTime.now().toIso8601String();
+    if (isEdit) {
+      if (!await PermissionGate.require(
+        context,
+        'edit_customers',
+        message: 'ليس لديك صلاحية تعديل بيانات الحسابات',
+      )) return;
+    }
 
     double? maxBalance;
     final maxText = _maxBalance.text.trim();
     if (maxText.isNotEmpty) {
       maxBalance = double.tryParse(maxText);
     }
+
+    if (isEdit && maxBalance != widget.existing!.maxBalance) {
+      if (!await PermissionGate.require(
+        context,
+        'edit_max_balance',
+        message: 'ليس لديك صلاحية تعديل الحد الأقصى للرصيد',
+      )) return;
+    }
+
+    if (!mounted) return;
+    setState(() => _busy = true);
+
+    final db = DatabaseHelper.instance;
+    final accountant = await AccountantService.getAccountantName();
+    final now = DateTime.now().toIso8601String();
 
     if (isEdit) {
       final oldCustomer = widget.existing!;
@@ -238,6 +259,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   Future<void> _delete() async {
     if (!isEdit) return;
+
+    if (!await PermissionGate.require(
+      context,
+      'delete_customers',
+      message: 'ليس لديك صلاحية حذف الحسابات',
+    )) return;
 
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(widget.existing!.id!);
@@ -379,7 +406,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       await db.hardDeleteCustomer(widget.existing!.id!);
     }
 
-    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       widget.existing!.name,
       phone: widget.existing!.phone,
@@ -409,13 +435,17 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final canEdit = PermissionCache.has('edit_customers');
+    final canDelete = PermissionCache.has('delete_customers');
+    final canEditMax = PermissionCache.has('edit_max_balance');
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
           title: Text(isEdit ? 'تعديل حساب' : 'حساب جديد'),
           actions: [
-            if (isEdit)
+            if (isEdit && canDelete)
               IconButton(
                 icon: const Icon(Icons.delete, color: Colors.red),
                 tooltip: 'حذف الحساب',
@@ -565,6 +595,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               TextFormField(
                 controller: _maxBalance,
                 keyboardType: TextInputType.number,
+                enabled: !isEdit || canEditMax,
                 decoration: const InputDecoration(
                   labelText: 'الحد الأقصى للرصيد (اختياري)',
                   hintText: 'مثال: 5000',
@@ -641,3 +672,10 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     );
   }
 }
+
+// شاشة إضافة/تعديل الحساب v2: ربط صلاحيات المحاسب
+// - edit_customers     → تعديل بيانات حساب موجود
+// - edit_max_balance   → تعديل حقل الحد الأقصى للرصيد
+// - delete_customers   → حذف الحساب من AppBar
+// - تعطيل حقل maxBalance إذا المستخدم لا يملك edit_max_balance
+// - استدعاء PermissionCache.refresh() في initState
