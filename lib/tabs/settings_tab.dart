@@ -24,6 +24,7 @@ import '../services/link_code_service.dart';
 import '../services/logger_service.dart';
 import '../services/overlay_service.dart';
 import '../services/pending_notification_service.dart';
+import '../services/permission_gate.dart';
 import '../services/permission_service.dart';
 import '../services/recovery_service.dart';
 import '../services/reminder_service.dart';
@@ -93,6 +94,7 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   void initState() {
     super.initState();
+    PermissionCache.refresh();
     _checkStatus();
     _loadVersion();
     _loadAutoBackup();
@@ -294,11 +296,23 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _exportAllCsv() async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) return;
+
     final f = await ExportService.exportAllToCsv();
     await ExportService.shareFile(f, text: 'كل الحسابات CSV');
   }
 
   Future<void> _exportAllExcel() async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) return;
+
     final f = await ExportService.exportAllToExcel();
     await ExportService.shareFile(f, text: 'كل الحسابات Excel');
   }
@@ -925,6 +939,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _createBackup() async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     setState(() => _backupBusy = true);
     final result = await BackupService.createBackup();
     if (!mounted) return;
@@ -984,6 +1004,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _showBackupsList() async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     final backups = await BackupService.listBackups();
     if (!mounted) return;
 
@@ -1061,6 +1087,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _pickAndRestore() async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.any,
@@ -1176,6 +1208,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _toggleAutoBackup(bool v) async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     await AutoBackupService.setEnabled(v);
     await LoggerService.logSettingChanged(
       settingName: 'النسخ التلقائي المحلي',
@@ -1247,6 +1285,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _toggleCloudBackup(bool v) async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     if (v && !GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) {
@@ -1365,6 +1409,12 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _runCloudBackupNow() async {
+    if (!await PermissionGate.require(
+      context,
+      'manage_backups',
+      message: 'ليس لديك صلاحية إدارة النسخ الاحتياطية',
+    )) return;
+
     if (!GDriveService.isSignedIn) {
       final err = await GDriveService.signInWithError();
       if (err != null) {
@@ -1567,142 +1617,140 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _changeDigits() async {
-  final oldDigits = _codeDigits;
+    final oldDigits = _codeDigits;
 
-  final result = await showDialog<int>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('عدد الأرقام في الرمز'),
-        children: [4, 6, 8].map((d) {
-          final max = CodeService.getMaxPossible(d);
-          return SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, d),
-            child: Row(
-              children: [
-                if (_codeDigits == d)
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('$d أرقام',
+    final result = await showDialog<int>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('عدد الأرقام في الرمز'),
+          children: [4, 6, 8].map((d) {
+            final max = CodeService.getMaxPossible(d);
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, d),
+              child: Row(
+                children: [
+                  if (_codeDigits == d)
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('$d أرقام',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold)),
+                        Text(
+                          'يسمح بـ ${_formatNumber(max)} عملية',
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold)),
-                      Text(
-                        'يسمح بـ ${_formatNumber(max)} عملية',
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.grey),
-                      ),
-                    ],
+                              fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
       ),
-    ),
-  );
-
-  if (result == null) return;
-
-  // 🆕 إذا تغيّر عدد الأرقام → اسأل عن العدّاد
-  if (result != oldDigits) {
-    final proceed = await _askCounterResetDecision(
-      action: 'تغيير عدد الأرقام ($oldDigits → $result)',
     );
-    if (proceed != true) return;
-  }
 
-  await CodeService.setDigits(result);
-  if (!mounted) return;
-  setState(() => _codeDigits = result);
-}
+    if (result == null) return;
+
+    if (result != oldDigits) {
+      final proceed = await _askCounterResetDecision(
+        action: 'تغيير عدد الأرقام ($oldDigits → $result)',
+      );
+      if (proceed != true) return;
+    }
+
+    await CodeService.setDigits(result);
+    if (!mounted) return;
+    setState(() => _codeDigits = result);
+  }
 
   Future<void> _changeCodeMode() async {
-  final oldMode = _codeMode;
+    final oldMode = _codeMode;
 
-  final result = await showDialog<String>(
-    context: context,
-    builder: (_) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('طريقة توليد الرمز'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'sequential'),
-            child: Row(
-              children: [
-                if (_codeMode == 'sequential')
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('مرتب (تسلسلي)',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold)),
-                      Text('D-0001, D-0002, D-0003...',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                    ],
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SimpleDialog(
+          title: const Text('طريقة توليد الرمز'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'sequential'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'sequential')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('مرتب (تسلسلي)',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold)),
+                        Text('D-0001, D-0002, D-0003...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'random'),
-            child: Row(
-              children: [
-                if (_codeMode == 'random')
-                  const Icon(Icons.check, color: Colors.green)
-                else
-                  const SizedBox(width: 24),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('عشوائي',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold)),
-                      Text('D-4821, D-1938, D-7305...',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                    ],
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'random'),
+              child: Row(
+                children: [
+                  if (_codeMode == 'random')
+                    const Icon(Icons.check, color: Colors.green)
+                  else
+                    const SizedBox(width: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('عشوائي',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold)),
+                        Text('D-4821, D-1938, D-7305...',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-
-  if (result == null) return;
-
-  // 🆕 إذا تغيّر الوضع → اسأل عن العدّاد
-  if (result != oldMode) {
-    final proceed = await _askCounterResetDecision(
-      action: 'تغيير الوضع ($oldMode → $result)',
     );
-    if (proceed != true) return;
-  }
 
-  await CodeService.setMode(result);
-  if (!mounted) return;
-  setState(() => _codeMode = result);
-}
+    if (result == null) return;
+
+    if (result != oldMode) {
+      final proceed = await _askCounterResetDecision(
+        action: 'تغيير الوضع ($oldMode → $result)',
+      );
+      if (proceed != true) return;
+    }
+
+    await CodeService.setMode(result);
+    if (!mounted) return;
+    setState(() => _codeMode = result);
+  }
 
   String _formatNumber(int n) {
     if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
@@ -1727,11 +1775,17 @@ class _SettingsTabState extends State<SettingsTab> {
     final theme = context.watch<ThemeService>();
     final isDark = theme.mode == ThemeMode.dark;
 
+    final canManageAccountants = PermissionCache.has('manage_accountants');
+    final canAdvancedSettings = PermissionCache.has('access_advanced_settings');
+    final canViewLogs = PermissionCache.has('view_logs');
+    final canViewStats = PermissionCache.has('view_stats');
+    final canManageBackups = PermissionCache.has('manage_backups');
+    final canExport = PermissionCache.has('export_data');
+
     return Scaffold(
       appBar: AppBar(title: const Text('الإعدادات')),
       body: ListView(
         children: [
-          // ========== المحاسب (للأساسي فقط) ==========
           if (_isPrimary) ...[
             const _SectionHeader('المحاسب'),
             ListTile(
@@ -1758,27 +1812,26 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ],
 
-          // ========== إدارة المحاسبين والأجهزة ==========
-          ListTile(
-            leading: const Icon(Icons.people, color: Colors.teal),
-            title: const Text('إدارة المحاسبين والأجهزة'),
-            subtitle: const Text(
-              'الصلاحيات، الرموز، والأجهزة المرتبطة',
+          if (canManageAccountants)
+            ListTile(
+              leading: const Icon(Icons.people, color: Colors.teal),
+              title: const Text('إدارة المحاسبين والأجهزة'),
+              subtitle: const Text(
+                'الصلاحيات، الرموز، والأجهزة المرتبطة',
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AccountantsScreen(),
+                  ),
+                );
+                if (mounted) setState(() {});
+              },
             ),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const AccountantsScreen(),
-                ),
-              );
-              if (mounted) setState(() {});
-            },
-          ),
           const SizedBox(height: 8),
 
-          // ========== الفهم الصوتي ==========
           const _SectionHeader('الفهم الصوتي'),
           ListTile(
             leading: const Icon(Icons.record_voice_over,
@@ -1799,7 +1852,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 8),
 
-          // ========== فلترة المعلقات ==========
           const _SectionHeader('فلترة المعلقات الصوتية'),
           SwitchListTile(
             secondary: const Icon(Icons.mic_off,
@@ -1843,7 +1895,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           const SizedBox(height: 8),
 
-          // ========== 🆕 الإشعارات ==========
           const _SectionHeader('🔔 الإشعارات'),
           StreamBuilder<int>(
             stream: PendingNotificationService.pendingCountStream,
@@ -1956,21 +2007,21 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== السجل ==========
-          const _SectionHeader('سجل الأحداث'),
-          ListTile(
-            leading: const Icon(Icons.history, color: Colors.deepPurple),
-            title: const Text('عرض سجل الأحداث'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const LogsScreen()),
-              );
-            },
-          ),
+          if (canViewLogs) ...[
+            const _SectionHeader('سجل الأحداث'),
+            ListTile(
+              leading: const Icon(Icons.history, color: Colors.deepPurple),
+              title: const Text('عرض سجل الأحداث'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LogsScreen()),
+                );
+              },
+            ),
+          ],
 
-          // ========== التهيئة ==========
           const _SectionHeader('التهيئة'),
           ListTile(
             leading: Icon(
@@ -1997,7 +2048,6 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          // ========== الإشعارات والواتساب ==========
           const _SectionHeader('الإشعارات والواتساب'),
           SwitchListTile(
             secondary: const Icon(Icons.message, color: Colors.green),
@@ -2012,7 +2062,6 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
 
-          // ========== رموز العمليات (للأساسي فقط) ==========
           if (_isPrimary) ...[
             const _SectionHeader('رموز العمليات'),
             SwitchListTile(
@@ -2109,32 +2158,31 @@ class _SettingsTabState extends State<SettingsTab> {
                     const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: _changeCodeMode,
               ),
-              // 🆕 إعادة تعيين العدّاد
-FutureBuilder<Map<String, Map<String, dynamic>>>(
-  future: CodeService.getAllCountersInfo(),
-  builder: (_, snap) {
-    final info = snap.data ?? {};
-    final debtCounter =
-        (info['debt']?['counter'] ?? 0) as int;
-    final paymentCounter =
-        (info['payment']?['counter'] ?? 0) as int;
-    final returnCounter =
-        (info['return']?['counter'] ?? 0) as int;
+              FutureBuilder<Map<String, Map<String, dynamic>>>(
+                future: CodeService.getAllCountersInfo(),
+                builder: (_, snap) {
+                  final info = snap.data ?? {};
+                  final debtCounter =
+                      (info['debt']?['counter'] ?? 0) as int;
+                  final paymentCounter =
+                      (info['payment']?['counter'] ?? 0) as int;
+                  final returnCounter =
+                      (info['return']?['counter'] ?? 0) as int;
 
-    return ListTile(
-      leading: const Icon(Icons.restart_alt,
-          color: Colors.orange),
-      title: const Text('إعادة تعيين العدّاد'),
-      subtitle: Text(
-        'D: $debtCounter • P: $paymentCounter • R: $returnCounter',
-        style: const TextStyle(fontSize: 11),
-      ),
-      trailing:
-          const Icon(Icons.arrow_forward_ios, size: 16),
-      onTap: _showResetCounterDialog,
-    );
-  },
-),
+                  return ListTile(
+                    leading: const Icon(Icons.restart_alt,
+                        color: Colors.orange),
+                    title: const Text('إعادة تعيين العدّاد'),
+                    subtitle: Text(
+                      'D: $debtCounter • P: $paymentCounter • R: $returnCounter',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    trailing:
+                        const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: _showResetCounterDialog,
+                  );
+                },
+              ),
               const Divider(height: 1),
               SwitchListTile(
                 secondary:
@@ -2204,7 +2252,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             ],
           ],
 
-          // ========== إعدادات PDF ==========
           const _SectionHeader('إعدادات كشف الحساب (PDF)'),
           SwitchListTile(
             secondary: const Icon(Icons.qr_code, color: Colors.blue),
@@ -2227,7 +2274,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
                 _togglePdfSetting('pdf_hide_account_type', v),
           ),
 
-          // ========== الحماية ==========
           const _SectionHeader('الحماية'),
           SwitchListTile(
             secondary: const Icon(Icons.lock, color: Colors.blue),
@@ -2257,7 +2303,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             },
           ),
 
-          // ========== تشفير المزامنة ==========
           const _SectionHeader('🔐 تشفير المزامنة'),
           FutureBuilder<bool>(
             future: CryptoService.hasMasterPassword(),
@@ -2318,7 +2363,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
           ),
           const SizedBox(height: 8),
 
-          // ========== الاستعادة ==========
           const _SectionHeader('الاستعادة'),
           ListTile(
             leading: Icon(
@@ -2392,113 +2436,111 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             onTap: _editSecurityQuestion,
           ),
 
-          // ========== النسخ الاحتياطي المحلي ==========
-          const _SectionHeader('النسخ الاحتياطي المحلي'),
-          ListTile(
-            leading: _backupBusy
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child:
-                        CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.backup, color: Colors.blue),
-            title: const Text('إنشاء نسخة احتياطية'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: _backupBusy ? null : _createBackup,
-          ),
-          ListTile(
-            leading: const Icon(Icons.history, color: Colors.green),
-            title: const Text('عرض النسخ المحفوظة'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: _showBackupsList,
-          ),
-          ListTile(
-            leading: const Icon(Icons.restore, color: Colors.orange),
-            title: const Text('استعادة من ملف'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: _backupBusy ? null : _pickAndRestore,
-          ),
-
-          const Divider(height: 24),
-
-          // ========== النسخ التلقائي المحلي ==========
-          SwitchListTile(
-            secondary: const Icon(Icons.schedule, color: Colors.purple),
-            title: const Text('النسخ التلقائي المحلي'),
-            subtitle: Text(_autoEnabled
-                ? 'النسخ كل ${_freqLabel(_autoFreq)}'
-                : 'نسخ احتياطي في الخلفية (محلي)'),
-            value: _autoEnabled,
-            onChanged: _toggleAutoBackup,
-          ),
-          if (_autoEnabled) ...[
+          if (canManageBackups) ...[
+            const _SectionHeader('النسخ الاحتياطي المحلي'),
             ListTile(
-              leading: const Icon(Icons.repeat),
-              title: const Text('تكرار النسخ'),
-              subtitle: Text(_freqLabel(_autoFreq)),
+              leading: _backupBusy
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child:
+                          CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.backup, color: Colors.blue),
+              title: const Text('إنشاء نسخة احتياطية'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _changeFreq,
+              onTap: _backupBusy ? null : _createBackup,
             ),
+            ListTile(
+              leading: const Icon(Icons.history, color: Colors.green),
+              title: const Text('عرض النسخ المحفوظة'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _showBackupsList,
+            ),
+            ListTile(
+              leading: const Icon(Icons.restore, color: Colors.orange),
+              title: const Text('استعادة من ملف'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _backupBusy ? null : _pickAndRestore,
+            ),
+
+            const Divider(height: 24),
+
+            SwitchListTile(
+              secondary: const Icon(Icons.schedule, color: Colors.purple),
+              title: const Text('النسخ التلقائي المحلي'),
+              subtitle: Text(_autoEnabled
+                  ? 'النسخ كل ${_freqLabel(_autoFreq)}'
+                  : 'نسخ احتياطي في الخلفية (محلي)'),
+              value: _autoEnabled,
+              onChanged: _toggleAutoBackup,
+            ),
+            if (_autoEnabled) ...[
+              ListTile(
+                leading: const Icon(Icons.repeat),
+                title: const Text('تكرار النسخ'),
+                subtitle: Text(_freqLabel(_autoFreq)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _changeFreq,
+              ),
+            ],
+
+            const _SectionHeader('النسخ السحابي (Google Drive)'),
+            ListTile(
+              leading: Icon(
+                Icons.cloud,
+                color: _gdriveSignedIn ? Colors.green : Colors.blue,
+              ),
+              title: const Text('حالة الحساب'),
+              subtitle: Text(_gdriveSignedIn
+                  ? 'متصل: ${GDriveService.userEmail ?? ""}'
+                  : 'لم يتم تسجيل الدخول'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const GDriveScreen()),
+                );
+                _checkGDrive();
+              },
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.cloud_upload,
+                  color: Colors.deepPurple),
+              title: const Text('النسخ السحابي التلقائي'),
+              value: _cloudBackupEnabled,
+              onChanged: _toggleCloudBackup,
+            ),
+            if (_cloudBackupEnabled) ...[
+              ListTile(
+                leading: const Icon(Icons.schedule,
+                    color: Colors.deepPurple),
+                title: const Text('تكرار الرفع'),
+                subtitle: Text(
+                    CloudBackupService.frequencyLabel(_cloudFrequency)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _changeCloudFrequency,
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.storage, color: Colors.indigo),
+                title: const Text('عدد النسخ المحفوظة'),
+                subtitle: Text(_cloudMaxBackups < 0
+                    ? 'غير نهائي'
+                    : 'آخر $_cloudMaxBackups نسخة'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _changeCloudMaxBackups,
+              ),
+              ListTile(
+                leading: const Icon(Icons.play_circle,
+                    color: Colors.deepPurple),
+                title: const Text('رفع نسخة الآن'),
+                onTap: _backupBusy ? null : _runCloudBackupNow,
+              ),
+            ],
           ],
 
-          // ========== النسخ السحابي ==========
-          const _SectionHeader('النسخ السحابي (Google Drive)'),
-          ListTile(
-            leading: Icon(
-              Icons.cloud,
-              color: _gdriveSignedIn ? Colors.green : Colors.blue,
-            ),
-            title: const Text('حالة الحساب'),
-            subtitle: Text(_gdriveSignedIn
-                ? 'متصل: ${GDriveService.userEmail ?? ""}'
-                : 'لم يتم تسجيل الدخول'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const GDriveScreen()),
-              );
-              _checkGDrive();
-            },
-          ),
-          SwitchListTile(
-            secondary: const Icon(Icons.cloud_upload,
-                color: Colors.deepPurple),
-            title: const Text('النسخ السحابي التلقائي'),
-            value: _cloudBackupEnabled,
-            onChanged: _toggleCloudBackup,
-          ),
-          if (_cloudBackupEnabled) ...[
-            ListTile(
-              leading: const Icon(Icons.schedule,
-                  color: Colors.deepPurple),
-              title: const Text('تكرار الرفع'),
-              subtitle: Text(
-                  CloudBackupService.frequencyLabel(_cloudFrequency)),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _changeCloudFrequency,
-            ),
-            ListTile(
-              leading:
-                  const Icon(Icons.storage, color: Colors.indigo),
-              title: const Text('عدد النسخ المحفوظة'),
-              subtitle: Text(_cloudMaxBackups < 0
-                  ? 'غير نهائي'
-                  : 'آخر $_cloudMaxBackups نسخة'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _changeCloudMaxBackups,
-            ),
-            ListTile(
-              leading: const Icon(Icons.play_circle,
-                  color: Colors.deepPurple),
-              title: const Text('رفع نسخة الآن'),
-              onTap: _backupBusy ? null : _runCloudBackupNow,
-            ),
-          ],
-
-          // ========== الزر العائم ==========
           const _SectionHeader('الزر العائم'),
           ListTile(
             leading: const Icon(Icons.picture_in_picture_alt),
@@ -2521,7 +2563,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             },
           ),
 
-          // ========== المظهر ==========
           const _SectionHeader('المظهر'),
           ListTile(
             leading: const Icon(Icons.brightness_6),
@@ -2594,32 +2635,33 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             ),
           ),
 
-          // ========== الإحصائيات ==========
-          const _SectionHeader('الإحصائيات'),
-          ListTile(
-            leading: const Icon(Icons.bar_chart),
-            title: const Text('عرض الإحصائيات'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const StatsScreen()),
+          if (canViewStats) ...[
+            const _SectionHeader('الإحصائيات'),
+            ListTile(
+              leading: const Icon(Icons.bar_chart),
+              title: const Text('عرض الإحصائيات'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StatsScreen()),
+              ),
             ),
-          ),
+          ],
 
-          // ========== التصدير ==========
-          const _SectionHeader('التصدير'),
-          ListTile(
-            leading: const Icon(Icons.table_chart),
-            title: const Text('تصدير Excel'),
-            onTap: _exportAllExcel,
-          ),
-          ListTile(
-            leading: const Icon(Icons.file_download),
-            title: const Text('تصدير CSV'),
-            onTap: _exportAllCsv,
-          ),
+          if (canExport) ...[
+            const _SectionHeader('التصدير'),
+            ListTile(
+              leading: const Icon(Icons.table_chart),
+              title: const Text('تصدير Excel'),
+              onTap: _exportAllExcel,
+            ),
+            ListTile(
+              leading: const Icon(Icons.file_download),
+              title: const Text('تصدير CSV'),
+              onTap: _exportAllCsv,
+            ),
+          ],
 
-          // ========== التذكيرات ==========
           const _SectionHeader('التذكيرات'),
           ListTile(
             leading: const Icon(Icons.notifications_active),
@@ -2630,27 +2672,27 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             ),
           ),
 
-          // ========== الإعدادات المتقدمة ==========
-          const _SectionHeader('التحكم الكامل'),
-          ListTile(
-            leading: const Icon(Icons.tune, color: Colors.deepPurple),
-            title: const Text('الإعدادات المتقدمة'),
-            subtitle: const Text(
-                'التحكم الكامل في سلوك التطبيق'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const AdvancedSettingsScreen(),
-                ),
-              ).then((_) {
-                if (mounted) setState(() {});
-              });
-            },
-          ),
+          if (canAdvancedSettings) ...[
+            const _SectionHeader('التحكم الكامل'),
+            ListTile(
+              leading: const Icon(Icons.tune, color: Colors.deepPurple),
+              title: const Text('الإعدادات المتقدمة'),
+              subtitle: const Text(
+                  'التحكم الكامل في سلوك التطبيق'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdvancedSettingsScreen(),
+                  ),
+                ).then((_) {
+                  if (mounted) setState(() {});
+                });
+              },
+            ),
+          ],
 
-          // ========== 🔀 التكرارات ==========
           const _SectionHeader('🔀 التكرارات'),
           FutureBuilder<Map<String, int>>(
             future: DatabaseHelper.instance.getDuplicatesStats(),
@@ -2738,7 +2780,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             },
           ),
 
-          // ========== سلة المحذوفات ==========
           FutureBuilder<Map<String, int>>(
             future: DatabaseHelper.instance.getDeletedCount(),
             builder: (_, snap) {
@@ -2799,7 +2840,6 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
             },
           ),
 
-          // ========== معلومات ==========
           const _SectionHeader('معلومات'),
           ListTile(
             leading: const Icon(Icons.info_outline),
@@ -2812,403 +2852,398 @@ FutureBuilder<Map<String, Map<String, dynamic>>>(
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-// 🆕 إدارة العدّادات
-// ═══════════════════════════════════════════════════════════
+  Future<bool?> _askCounterResetDecision({required String action}) async {
+    final counters = await CodeService.getAllCountersInfo();
 
-Future<bool?> _askCounterResetDecision({required String action}) async {
-  final counters = await CodeService.getAllCountersInfo();
+    if (!mounted) return false;
 
-  if (!mounted) return false;
-
-  return showDialog<bool>(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.tune, color: Colors.blue),
-            SizedBox(width: 8),
-            Expanded(
-                child: Text('ماذا نعمل بالعدّاد؟',
-                    style: TextStyle(fontSize: 15))),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(action,
-                  style:
-                      const TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 6),
-              const Text('العدادات الحالية:',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 13)),
-              const SizedBox(height: 6),
-              ...counters.entries.map((e) {
-                final info = e.value;
-                final labels = {
-                  'debt': 'دين',
-                  'payment': 'سداد',
-                  'return': 'مرتجع',
-                };
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.circle,
-                          size: 6, color: Colors.grey),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          '${labels[e.key] ?? e.key}: ${info['counter']} / ${info['max']}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline,
-                        size: 14, color: Colors.amber),
-                    SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        '"الاحتفاظ" يبدأ من العدّاد الحالي. "البدء من 1" يُصفّر العدّاد.',
-                        style: TextStyle(fontSize: 10),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('إلغاء'),
-          ),
-          OutlinedButton(
-            onPressed: () async {
-              await CodeService.resetAllCounters();
-              if (ctx.mounted) Navigator.pop(ctx, true);
-            },
-            child: const Text('البدء من 1'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('الاحتفاظ'),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-Future<void> _showResetCounterDialog() async {
-  final counters = await CodeService.getAllCountersInfo();
-  if (!mounted) return;
-
-  final labels = {
-    'debt': 'دين',
-    'payment': 'سداد',
-    'return': 'مرتجع',
-  };
-
-  await showDialog(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.restart_alt, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('إعادة تعيين العدّاد'),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'اختر النوع الذي تريد إعادة تعيين عدّاده:',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
-              ...counters.entries.map((e) {
-                final info = e.value;
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  child: ListTile(
-                    leading: const Icon(Icons.circle,
-                        color: Colors.orange, size: 12),
-                    title: Text(labels[e.key] ?? e.key),
-                    subtitle: Text(
-                      'الحالي: ${info['counter']} / ${info['max']}',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    trailing: OutlinedButton(
-                      onPressed: () async {
-                        await CodeService.resetCounter(e.key);
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) setState(() {});
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                                '✅ تم إعادة تعيين ${labels[e.key]}'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      },
-                      child: const Text('تصفير',
-                          style: TextStyle(fontSize: 11)),
-                    ),
-                  ),
-                );
-              }),
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 6),
-              // إدخال يدوي
-              ListTile(
-                leading: const Icon(Icons.edit, color: Colors.blue),
-                title: const Text('إدخال آخر رقم يدوياً'),
-                subtitle: const Text(
-                  'مثال: أدخل 500 لتكون العملية القادمة 501',
-                  style: TextStyle(fontSize: 11),
-                ),
-                trailing:
-                    const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _showManualCounterEntry();
-                },
-              ),
-              // فحص آخر العمليات
-              ListTile(
-                leading: const Icon(Icons.search, color: Colors.purple),
-                title: const Text('فحص آخر 100 عملية'),
-                subtitle: const Text(
-                  'يكتشف آخر رقم مرتب متصل تلقائياً',
-                  style: TextStyle(fontSize: 11),
-                ),
-                trailing:
-                    const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _autoDetectCounters();
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إغلاق'),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  if (mounted) setState(() {});
-}
-
-Future<void> _showManualCounterEntry() async {
-  final ctrl = TextEditingController();
-  String selectedType = 'debt';
-
-  final result = await showDialog<Map<String, dynamic>>(
-    context: context,
-    builder: (ctx) => Directionality(
-      textDirection: TextDirection.rtl,
-      child: StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: const Text('إدخال آخر رقم يدوياً'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: selectedType,
-                decoration: const InputDecoration(
-                  labelText: 'النوع',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'debt', child: Text('دين')),
-                  DropdownMenuItem(value: 'payment', child: Text('سداد')),
-                  DropdownMenuItem(value: 'return', child: Text('مرتجع')),
-                ],
-                onChanged: (v) =>
-                    setSt(() => selectedType = v ?? 'debt'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: ctrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'آخر رقم مرتب',
-                  hintText: 'مثال: 500 (للعملية القادمة 501)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.numbers),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'ℹ️ سيبدأ التسلسل من الرقم المدخل + 1',
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final v = int.tryParse(ctrl.text.trim());
-                if (v == null || v < 0) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(
-                      content: Text('أدخل رقماً صحيحاً'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(ctx, {'type': selectedType, 'value': v});
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-
-  if (result == null) return;
-
-  await CodeService.setCounter(
-    result['type'] as String,
-    result['value'] as int,
-  );
-
-  if (mounted) {
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✅ العدّاد مضبوط على ${result['value']}'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-}
-
-Future<void> _autoDetectCounters() async {
-  if (!mounted) return;
-
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const Center(child: CircularProgressIndicator()),
-  );
-
-  try {
-    final debt = await CodeService.detectLastSequential(type: 'debt');
-    final payment =
-        await CodeService.detectLastSequential(type: 'payment');
-    final returnSeq =
-        await CodeService.detectLastSequential(type: 'return');
-
-    if (!mounted) return;
-    Navigator.pop(context); // close loading
-
-    final confirmed = await showDialog<bool>(
+    return showDialog<bool>(
       context: context,
       builder: (ctx) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.search, color: Colors.purple),
+              Icon(Icons.tune, color: Colors.blue),
               SizedBox(width: 8),
-              Text('نتيجة الفحص'),
+              Expanded(
+                  child: Text('ماذا نعمل بالعدّاد؟',
+                      style: TextStyle(fontSize: 15))),
             ],
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('آخر رقم متصل من 1:',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text('• دين: $debt'),
-              Text('• سداد: $payment'),
-              Text('• مرتجع: $returnSeq'),
-              const SizedBox(height: 12),
-              const Text(
-                'هل تريد ضبط العدّادات على هذه القيم؟',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(action,
+                    style:
+                        const TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 6),
+                const Text('العدادات الحالية:',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 6),
+                ...counters.entries.map((e) {
+                  final info = e.value;
+                  final labels = {
+                    'debt': 'دين',
+                    'payment': 'سداد',
+                    'return': 'مرتجع',
+                  };
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.circle,
+                            size: 6, color: Colors.grey),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '${labels[e.key] ?? e.key}: ${info['counter']} / ${info['max']}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 14, color: Colors.amber),
+                      SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '"الاحتفاظ" يبدأ من العدّاد الحالي. "البدء من 1" يُصفّر العدّاد.',
+                          style: TextStyle(fontSize: 10),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('إلغاء'),
             ),
+            OutlinedButton(
+              onPressed: () async {
+                await CodeService.resetAllCounters();
+                if (ctx.mounted) Navigator.pop(ctx, true);
+              },
+              child: const Text('البدء من 1'),
+            ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('ضبط'),
+              child: const Text('الاحتفاظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showResetCounterDialog() async {
+    final counters = await CodeService.getAllCountersInfo();
+    if (!mounted) return;
+
+    final labels = {
+      'debt': 'دين',
+      'payment': 'سداد',
+      'return': 'مرتجع',
+    };
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.restart_alt, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('إعادة تعيين العدّاد'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'اختر النوع الذي تريد إعادة تعيين عدّاده:',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                ...counters.entries.map((e) {
+                  final info = e.value;
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    child: ListTile(
+                      leading: const Icon(Icons.circle,
+                          color: Colors.orange, size: 12),
+                      title: Text(labels[e.key] ?? e.key),
+                      subtitle: Text(
+                        'الحالي: ${info['counter']} / ${info['max']}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      trailing: OutlinedButton(
+                        onPressed: () async {
+                          await CodeService.resetCounter(e.key);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          if (mounted) setState(() {});
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '✅ تم إعادة تعيين ${labels[e.key]}'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        },
+                        child: const Text('تصفير',
+                            style: TextStyle(fontSize: 11)),
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 6),
+                ListTile(
+                  leading: const Icon(Icons.edit, color: Colors.blue),
+                  title: const Text('إدخال آخر رقم يدوياً'),
+                  subtitle: const Text(
+                    'مثال: أدخل 500 لتكون العملية القادمة 501',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  trailing:
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _showManualCounterEntry();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.search, color: Colors.purple),
+                  title: const Text('فحص آخر 100 عملية'),
+                  subtitle: const Text(
+                    'يكتشف آخر رقم مرتب متصل تلقائياً',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  trailing:
+                      const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _autoDetectCounters();
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إغلاق'),
             ),
           ],
         ),
       ),
     );
 
-    if (confirmed != true) return;
+    if (mounted) setState(() {});
+  }
 
-    await CodeService.setCounter('debt', debt);
-    await CodeService.setCounter('payment', payment);
-    await CodeService.setCounter('return', returnSeq);
+  Future<void> _showManualCounterEntry() async {
+    final ctrl = TextEditingController();
+    String selectedType = 'debt';
 
-    if (!mounted) return;
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('✅ تم ضبط العدّادات'),
-        backgroundColor: Colors.green,
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: const Text('إدخال آخر رقم يدوياً'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedType,
+                  decoration: const InputDecoration(
+                    labelText: 'النوع',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'debt', child: Text('دين')),
+                    DropdownMenuItem(value: 'payment', child: Text('سداد')),
+                    DropdownMenuItem(value: 'return', child: Text('مرتجع')),
+                  ],
+                  onChanged: (v) =>
+                      setSt(() => selectedType = v ?? 'debt'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: ctrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'آخر رقم مرتب',
+                    hintText: 'مثال: 500 (للعملية القادمة 501)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.numbers),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'ℹ️ سيبدأ التسلسل من الرقم المدخل + 1',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final v = int.tryParse(ctrl.text.trim());
+                  if (v == null || v < 0) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('أدخل رقماً صحيحاً'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.pop(ctx, {'type': selectedType, 'value': v});
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
-  } catch (e) {
+
+    if (result == null) return;
+
+    await CodeService.setCounter(
+      result['type'] as String,
+      result['value'] as int,
+    );
+
     if (mounted) {
-      Navigator.pop(context);
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('✅ العدّاد مضبوط على ${result['value']}'),
+          backgroundColor: Colors.green,
+        ),
       );
     }
   }
-}
+
+  Future<void> _autoDetectCounters() async {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final debt = await CodeService.detectLastSequential(type: 'debt');
+      final payment =
+          await CodeService.detectLastSequential(type: 'payment');
+      final returnSeq =
+          await CodeService.detectLastSequential(type: 'return');
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.search, color: Colors.purple),
+                SizedBox(width: 8),
+                Text('نتيجة الفحص'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('آخر رقم متصل من 1:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('• دين: $debt'),
+                Text('• سداد: $payment'),
+                Text('• مرتجع: $returnSeq'),
+                const SizedBox(height: 12),
+                const Text(
+                  'هل تريد ضبط العدّادات على هذه القيم؟',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('ضبط'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      await CodeService.setCounter('debt', debt);
+      await CodeService.setCounter('payment', payment);
+      await CodeService.setCounter('return', returnSeq);
+
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ تم ضبط العدّادات'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<bool> _enableLockDialog() async {
     final pwd1 = TextEditingController();
     final pwd2 = TextEditingController();
@@ -3489,3 +3524,13 @@ class _SectionHeader extends StatelessWidget {
 // Settings Tab v2: إضافة قسم 🔀 التكرارات + زر إعادة فحص (المرحلة 5 من نظام التكرار)
 // Settings Tab v3: إضافة قسم 🔔 الإشعارات (مع عدّاد معلّق + رابط لشاشة الإشعارات)
 // Settings Tab v3.1: إصلاح theme.colorScheme → Theme.of(context).colorScheme (السطر 1865)
+// تبويب الإعدادات v4: ربط صلاحيات المحاسب
+// - manage_accountants       → رابط إدارة المحاسبين والأجهزة
+// - access_advanced_settings → رابط الإعدادات المتقدمة
+// - view_logs                → رابط سجل الأحداث
+// - view_stats               → رابط الإحصائيات
+// - manage_backups           → النسخ المحلي + التلقائي + السحابي + GDrive
+// - export_data              → تصدير Excel و CSV
+// - فحص الصلاحية داخل الدوال عند تنفيذ أي إجراء
+// - استدعاء PermissionCache.refresh() في initState
+// - استيراد permission_gate.dart
