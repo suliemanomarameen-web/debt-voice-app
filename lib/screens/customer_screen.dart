@@ -12,6 +12,7 @@ import '../services/date_filter.dart';
 import '../services/export_service.dart';
 import '../services/logger_service.dart';
 import '../services/pdf_service.dart';
+import '../services/permission_gate.dart';
 import '../services/whatsapp_service.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
@@ -39,6 +40,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
     super.initState();
     _customer = widget.customer;
     _load();
+    PermissionCache.refresh();
   }
 
   Future<void> _load() async {
@@ -179,7 +181,14 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _sendWhatsAppReminder() async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية إرسال تذكيرات',
+    )) return;
+
     if (_customer.phone == null || _customer.phone!.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('لا يوجد رقم هاتف لهذا العميل'),
@@ -271,6 +280,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _addTransaction(String type) async {
+    if (!await PermissionGate.require(
+      context,
+      'add_transactions',
+      message: 'ليس لديك صلاحية إضافة العمليات',
+    )) return;
+
     if (!_customer.isActive) {
       final proceed = await showDialog<bool>(
         context: context,
@@ -522,6 +537,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _editTransaction(Transaction t) async {
+    if (!await PermissionGate.require(
+      context,
+      'edit_transactions',
+      message: 'ليس لديك صلاحية تعديل العمليات',
+    )) return;
+
     if (!SettingsService.getBool(
       AppSettings.allowEditTransactions,
       defaultValue: true,
@@ -688,6 +709,12 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   Future<void> _deleteTransaction(Transaction t) async {
+    if (!await PermissionGate.require(
+      context,
+      'delete_transactions',
+      message: 'ليس لديك صلاحية حذف العمليات',
+    )) return;
+
     if (SettingsService.getBool(
       AppSettings.blockTransactionDeletion,
       defaultValue: false,
@@ -753,7 +780,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         await db.hardDeleteTransaction(t.id!);
       }
 
-      // 🆕 تمرير التفاصيل الكاملة
       await LoggerService.logTransactionDeleted(
         customerName: _customer.name,
         amount: t.amount,
@@ -780,6 +806,10 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 
   void _showTransactionMenu(Transaction t) {
+    final canEdit = PermissionCache.has('edit_transactions');
+    final canDelete = PermissionCache.has('delete_transactions');
+    final canExport = PermissionCache.has('export_data');
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -938,50 +968,52 @@ class _CustomerScreenState extends State<CustomerScreen> {
                 ),
                 const Divider(height: 1),
 
-                ListTile(
-                  leading: const Icon(Icons.message, color: Colors.green),
-                  title: const Text('إرسال عبر واتساب'),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    if (_customer.phone == null ||
-                        _customer.phone!.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('لا يوجد رقم هاتف لهذا العميل'),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      return;
-                    }
-                    try {
-                      await WhatsAppService.sendTransactionNotification(
-                        phone: _customer.phone,
-                        customerName: _customer.name,
-                        type: t.type,
-                        amount: t.amount,
-                        newBalance: _balance,
-                      );
-                    } catch (e) {
-                      if (mounted) {
+                if (canExport)
+                  ListTile(
+                    leading: const Icon(Icons.message, color: Colors.green),
+                    title: const Text('إرسال عبر واتساب'),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      if (_customer.phone == null ||
+                          _customer.phone!.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('خطأ: $e')),
+                          const SnackBar(
+                            content: Text('لا يوجد رقم هاتف لهذا العميل'),
+                            backgroundColor: Colors.orange,
+                          ),
                         );
+                        return;
                       }
-                    }
-                  },
-                ),
+                      try {
+                        await WhatsAppService.sendTransactionNotification(
+                          phone: _customer.phone,
+                          customerName: _customer.name,
+                          type: t.type,
+                          amount: t.amount,
+                          newBalance: _balance,
+                        );
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('خطأ: $e')),
+                          );
+                        }
+                      }
+                    },
+                  ),
 
-                ListTile(
-                  leading: const Icon(Icons.share, color: Colors.blue),
-                  title: const Text('مشاركة'),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    final typeLabel = t.type == 'debt'
-                        ? 'دين'
-                        : t.items.startsWith('مرتجع')
-                            ? 'مرتجع'
-                            : 'سداد';
-                    final text = '''
+                if (canExport)
+                  ListTile(
+                    leading: const Icon(Icons.share, color: Colors.blue),
+                    title: const Text('مشاركة'),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final typeLabel = t.type == 'debt'
+                          ? 'دين'
+                          : t.items.startsWith('مرتجع')
+                              ? 'مرتجع'
+                              : 'سداد';
+                      final text = '''
 السلام عليكم ${_customer.name}،
 تم تسجيل العملية التالية:
 
@@ -993,52 +1025,55 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 
 شكراً لتعاملكم معنا
 ''';
-                    await Share.share(text);
-                  },
-                ),
+                      await Share.share(text);
+                    },
+                  ),
 
-                ListTile(
-                  leading: const Icon(Icons.print, color: Colors.orange),
-                  title: const Text('طباعة / حفظ PDF للعملية'),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    try {
-                      final file = await PdfService.generateStatement(
-                        _customer,
-                        fromDate: DateTime.parse(t.createdAt),
-                        toDate: DateTime.parse(t.createdAt),
-                      );
-                      await PdfService.share(file, _customer.name);
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('فشل: $e')),
+                if (canExport)
+                  ListTile(
+                    leading: const Icon(Icons.print, color: Colors.orange),
+                    title: const Text('طباعة / حفظ PDF للعملية'),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      try {
+                        final file = await PdfService.generateStatement(
+                          _customer,
+                          fromDate: DateTime.parse(t.createdAt),
+                          toDate: DateTime.parse(t.createdAt),
                         );
+                        await PdfService.share(file, _customer.name);
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('فشل: $e')),
+                          );
+                        }
                       }
-                    }
-                  },
-                ),
+                    },
+                  ),
 
-                const Divider(height: 1),
+                if (canEdit || canDelete) const Divider(height: 1),
 
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('تعديل'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _editTransaction(t);
-                  },
-                ),
+                if (canEdit)
+                  ListTile(
+                    leading: const Icon(Icons.edit),
+                    title: const Text('تعديل'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _editTransaction(t);
+                    },
+                  ),
 
-                ListTile(
-                  leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('حذف',
-                      style: TextStyle(color: Colors.red)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _deleteTransaction(t);
-                  },
-                ),
+                if (canDelete)
+                  ListTile(
+                    leading: const Icon(Icons.delete, color: Colors.red),
+                    title: const Text('حذف',
+                        style: TextStyle(color: Colors.red)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _deleteTransaction(t);
+                    },
+                  ),
               ],
             ),
           ),
@@ -1048,11 +1083,23 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   }
 
   Future<void> _exportStatement() async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) return;
+
     final f = await ExportService.exportCustomerStatement(_customer.id!);
     await ExportService.shareFile(f, text: 'كشف حساب ${_customer.name}');
   }
 
   Future<void> _exportPdf() async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) return;
+
     DateTime? fromDate;
     DateTime? toDate;
     String selectedFont = 'Tajawal';
@@ -1167,6 +1214,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     if (result == null) return;
 
     try {
+      if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -1553,6 +1601,12 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
   }
 
   Future<void> _toggleCustomerActive() async {
+    if (!await PermissionGate.require(
+      context,
+      'toggle_customer_active',
+      message: 'ليس لديك صلاحية إيقاف/تفعيل الحسابات',
+    )) return;
+
     final willStop = _customer.isActive;
 
     final confirmed = await showDialog<bool>(
@@ -1855,6 +1909,12 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final canEditCustomer = PermissionCache.has('edit_customers');
+    final canToggle = PermissionCache.has('toggle_customer_active');
+    final canDelete = PermissionCache.has('delete_customers');
+    final canExport = PermissionCache.has('export_data');
+    final canAddTx = PermissionCache.has('add_transactions');
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -1873,95 +1933,111 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
               tooltip: 'فلترة: ${_dateFilter.label}',
               onPressed: _showDateFilter,
             ),
-            IconButton(
-              icon: const Icon(Icons.image),
-              tooltip: 'مشاركة كصورة',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ShareReceiptScreen(customer: _customer),
+            if (canExport)
+              IconButton(
+                icon: const Icon(Icons.image),
+                tooltip: 'مشاركة كصورة',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ShareReceiptScreen(customer: _customer),
+                  ),
                 ),
               ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.picture_as_pdf),
-              tooltip: 'كشف حساب PDF',
-              onPressed: _exportPdf,
-            ),
-            IconButton(
-              icon: const Icon(Icons.message, color: Colors.green),
-              tooltip: 'تذكير عبر واتساب',
-              onPressed: _sendWhatsAppReminder,
-            ),
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                switch (v) {
-                  case 'excel':
-                    _exportStatement();
-                    break;
-                  case 'edit':
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AddAccountScreen(existing: _customer),
-                      ),
-                    ).then((changed) {
-                      if (changed == true && mounted) {
-                        Navigator.pop(context, true);
-                      } else {
-                        _load();
-                      }
-                    });
-                    break;
-                  case 'toggle':
-                    _toggleCustomerActive();
-                    break;
-                  case 'delete':
-                    _showDeleteCustomer();
-                    break;
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'excel',
-                  child: ListTile(
-                    leading: Icon(Icons.table_chart),
-                    title: Text('تصدير Excel'),
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(
-                    leading: Icon(Icons.edit),
-                    title: Text('تعديل بيانات الحساب'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'toggle',
-                  child: ListTile(
-                    leading: Icon(
-                      _customer.isActive ? Icons.block : Icons.check_circle,
-                      color: _customer.isActive ? Colors.orange : Colors.green,
-                    ),
-                    title: Text(
-                      _customer.isActive ? 'إيقاف الحساب' : 'تفعيل الحساب',
-                      style: TextStyle(
-                        color:
-                            _customer.isActive ? Colors.orange : Colors.green,
+            if (canExport)
+              IconButton(
+                icon: const Icon(Icons.picture_as_pdf),
+                tooltip: 'كشف حساب PDF',
+                onPressed: _exportPdf,
+              ),
+            if (canExport)
+              IconButton(
+                icon: const Icon(Icons.message, color: Colors.green),
+                tooltip: 'تذكير عبر واتساب',
+                onPressed: _sendWhatsAppReminder,
+              ),
+            if (canEditCustomer || canToggle || canDelete || canExport)
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  switch (v) {
+                    case 'excel':
+                      _exportStatement();
+                      break;
+                    case 'edit':
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              AddAccountScreen(existing: _customer),
+                        ),
+                      ).then((changed) {
+                        if (changed == true && mounted) {
+                          Navigator.pop(context, true);
+                        } else {
+                          _load();
+                        }
+                      });
+                      break;
+                    case 'toggle':
+                      _toggleCustomerActive();
+                      break;
+                    case 'delete':
+                      _showDeleteCustomer();
+                      break;
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (canExport)
+                    const PopupMenuItem(
+                      value: 'excel',
+                      child: ListTile(
+                        leading: Icon(Icons.table_chart),
+                        title: Text('تصدير Excel'),
                       ),
                     ),
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(
-                    leading: Icon(Icons.delete, color: Colors.red),
-                    title: Text('حذف الحساب',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ),
-              ],
-            ),
+                  if (canEditCustomer)
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: ListTile(
+                        leading: Icon(Icons.edit),
+                        title: Text('تعديل بيانات الحساب'),
+                      ),
+                    ),
+                  if (canToggle)
+                    PopupMenuItem(
+                      value: 'toggle',
+                      child: ListTile(
+                        leading: Icon(
+                          _customer.isActive
+                              ? Icons.block
+                              : Icons.check_circle,
+                          color: _customer.isActive
+                              ? Colors.orange
+                              : Colors.green,
+                        ),
+                        title: Text(
+                          _customer.isActive
+                              ? 'إيقاف الحساب'
+                              : 'تفعيل الحساب',
+                          style: TextStyle(
+                            color: _customer.isActive
+                                ? Colors.orange
+                                : Colors.green,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (canDelete)
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        leading: Icon(Icons.delete, color: Colors.red),
+                        title: Text('حذف الحساب',
+                            style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
+                ],
+              ),
           ],
         ),
         body: Column(
@@ -2016,50 +2092,58 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
             ),
           ],
         ),
-        bottomNavigationBar: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('debt'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('دين'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor:
-                          isDark ? Colors.red.shade400 : Colors.red),
+        bottomNavigationBar: !canAddTx
+            ? null
+            : Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _addTransaction('debt'),
+                        icon: const Icon(Icons.add),
+                        label: const Text('دين'),
+                        style: FilledButton.styleFrom(
+                            backgroundColor:
+                                isDark ? Colors.red.shade400 : Colors.red),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _addTransaction('payment'),
+                        icon: const Icon(Icons.payments),
+                        label: const Text('سداد'),
+                        style: FilledButton.styleFrom(
+                            backgroundColor: isDark
+                                ? Colors.green.shade400
+                                : theme.colorScheme.primary),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _addTransaction('return'),
+                        icon: const Icon(Icons.keyboard_return),
+                        label: const Text('مرتجع'),
+                        style: FilledButton.styleFrom(
+                            backgroundColor: Colors.orange),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('payment'),
-                  icon: const Icon(Icons.payments),
-                  label: const Text('سداد'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: isDark
-                          ? Colors.green.shade400
-                          : theme.colorScheme.primary),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _addTransaction('return'),
-                  icon: const Icon(Icons.keyboard_return),
-                  label: const Text('مرتجع'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: Colors.orange),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 
   Future<void> _showDeleteCustomer() async {
+    if (!await PermissionGate.require(
+      context,
+      'delete_customers',
+      message: 'ليس لديك صلاحية حذف الحسابات',
+    )) return;
+
     if (SettingsService.getBool(
       AppSettings.blockCustomerDeletion,
       defaultValue: false,
@@ -2241,7 +2325,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       await db.hardDeleteCustomer(_customer.id!);
     }
 
-    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       _customer.name,
       phone: _customer.phone,
@@ -2262,3 +2345,14 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
     );
   }
 }
+
+// شاشة العميل v2: ربط صلاحيات المحاسب
+// - add_transactions       → إضافة عمليات (دين/سداد/مرتجع)
+// - edit_transactions      → تعديل عملية
+// - delete_transactions    → حذف عملية
+// - toggle_customer_active → إيقاف/تفعيل الحساب
+// - delete_customers       → حذف الحساب
+// - export_data            → تصدير Excel/PDF/صورة/واتساب
+// - إخفاء أزرار الشريط السفلي عند غياب add_transactions
+// - إخفاء PopupMenu وعناصر القوائم الجانبية حسب الصلاحية
+// - استدعاء PermissionCache.refresh() في initState
