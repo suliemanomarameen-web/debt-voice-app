@@ -7,7 +7,9 @@ import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/notification_dispatcher.dart';
 import '../services/notification_service.dart';
+import '../services/settings_service.dart';
 import '../services/tts_service.dart';
+import '../config/app_settings.dart';
 
 /// معالج حفظ العملية — يُستخدم من Overlay و VoiceScreen
 class TransactionHandler {
@@ -52,7 +54,44 @@ class TransactionHandler {
         debugPrint('Duplicate check error: $e');
       }
 
-      // 2. جلب اسم المحاسب
+      // 🆕 2. فحص حد الرصيد (قبل الحفظ)
+      final balanceCheck = await _checkMaxBalance(
+        customer: customer,
+        db: db,
+        normalizedType: normalizedType,
+        amount: parsed.amount.toDouble(),
+      );
+
+      if (balanceCheck == _BalanceCheckResult.blocked) {
+        await LoggerService.logOverLimit(
+          customerName: customer.name,
+          balance: await db.customerBalance(customer.id!),
+          maxBalance: customer.maxBalance ?? 0,
+        );
+        await TtsService.speak(
+          'تجاوزت حد الرصيد المسموح لـ ${customer.name}',
+        );
+        await NotificationService.show(
+          '⚠️ تجاوز الحد الأقصى',
+          'الرصيد سيتجاوز ${customer.maxBalance?.toStringAsFixed(0) ?? "0"} ريال\n'
+              'تم منع الحفظ',
+        );
+        return false;
+      }
+
+      if (balanceCheck == _BalanceCheckResult.warning) {
+        await TtsService.speak(
+          'تنبيه: رصيد ${customer.name} سيتجاوز الحد المسموح',
+        );
+        await NotificationService.show(
+          '⚠️ تنبيه: تجاوز الحد',
+          'الرصيد الجديد سيتجاوز ${customer.maxBalance?.toStringAsFixed(0) ?? "0"} ريال\n'
+              'سيتم حفظ العملية',
+        );
+        // نكمل الحفظ
+      }
+
+      // 3. جلب اسم المحاسب
       String? accountant;
       try {
         accountant = await AccountantService.getAccountantName();
@@ -60,7 +99,7 @@ class TransactionHandler {
         debugPrint('❌ Accountant name error: $e');
       }
 
-      // 3. توليد الرمز
+      // 4. توليد الرمز
       String? code;
       try {
         code = await CodeService.generateCode(normalizedType);
@@ -68,7 +107,7 @@ class TransactionHandler {
         debugPrint('❌ Code generation error: $e');
       }
 
-      // 4. إدراج العملية
+      // 5. إدراج العملية
       await db.insertTransaction(Transaction(
         customerId: customer.id!,
         code: code,
@@ -83,7 +122,7 @@ class TransactionHandler {
         createdAt: DateTime.now().toIso8601String(),
       ));
 
-      // 5. حساب الرصيد الجديد
+      // 6. حساب الرصيد الجديد
       final newBalance = await db.customerBalance(customer.id!);
 
       final label = {
@@ -92,7 +131,7 @@ class TransactionHandler {
         'return': 'مرتجع',
       }[normalizedType] ?? 'عملية';
 
-      // 6. تسجيل الحدث
+      // 7. تسجيل الحدث
       await LoggerService.logTransactionAdded(
         typeLabel: label,
         customerName: customer.name,
@@ -110,7 +149,7 @@ class TransactionHandler {
         parsedAction: label,
       );
 
-      // 7. إشعار صوتي
+      // 8. إشعار صوتي
       await TtsService.confirmTransaction(
         type: label,
         amount: parsed.amount,
@@ -119,7 +158,7 @@ class TransactionHandler {
         currency: parsed.currency,
       );
 
-      // 8. بناء تفاصيل الإشعار
+      // 9. بناء تفاصيل الإشعار
       final detail = StringBuffer();
       detail.write('${customer.name}\n');
       if (code != null) detail.write('الرمز: $code\n');
@@ -136,7 +175,7 @@ class TransactionHandler {
 
       await NotificationService.show('تم تسجيل $label', detail.toString());
 
-      // 9. الإشعارات (واتساب، إلخ)
+      // 10. الإشعارات (واتساب، إلخ)
       await NotificationDispatcher.afterTransactionAdded(
         customerId: customer.id!,
         customerName: customer.name,
@@ -153,4 +192,78 @@ class TransactionHandler {
       return false;
     }
   }
+
+  /// 🆕 فحص حد الرصيد قبل الحفظ
+  ///
+  /// يُرجع:
+  /// - `ok`      → لا مشكلة، احفظ
+  /// - `warning` → تحذير فقط، احفظ
+  /// - `blocked` → متجاوز + blockOnExceed مفعّل، لا تحفظ
+  static Future<_BalanceCheckResult> _checkMaxBalance({
+    required Customer customer,
+    required DatabaseHelper db,
+    required String normalizedType,
+    required double amount,
+  }) async {
+    try {
+      // 1. الحد الأقصى معطّل؟
+      if (!SettingsService.getBool(
+        AppSettings.enforceMaxBalance,
+        defaultValue: true,
+      )) {
+        return _BalanceCheckResult.ok;
+      }
+
+      // 2. الحساب لا حد أقصى له؟
+      if (customer.maxBalance == null || customer.maxBalance! <= 0) {
+        return _BalanceCheckResult.ok;
+      }
+
+      // 3. احسب الرصيد المتوقع
+      final currentBalance = await db.customerBalance(customer.id!);
+      // المرتجع مخزّن كـ payment، لذلك يعمل كسداد
+      final projectedBalance = normalizedType == 'debt'
+          ? currentBalance + amount
+          : currentBalance - amount;
+
+      // 4. هل سيتجاوز؟
+      if (projectedBalance <= customer.maxBalance!) {
+        return _BalanceCheckResult.ok;
+      }
+
+      // 5. تجاوز الحد — ماذا نفعل؟
+      if (SettingsService.getBool(
+        AppSettings.blockOnExceed,
+        defaultValue: false,
+      )) {
+        return _BalanceCheckResult.blocked;
+      }
+
+      if (SettingsService.getBool(
+        AppSettings.warnOnExceed,
+        defaultValue: true,
+      )) {
+        return _BalanceCheckResult.warning;
+      }
+
+      return _BalanceCheckResult.ok;
+    } catch (e) {
+      debugPrint('⚠️ [TransactionHandler] _checkMaxBalance: $e');
+      return _BalanceCheckResult.ok;
+    }
+  }
 }
+
+/// 🆕 نتيجة فحص حد الرصيد
+enum _BalanceCheckResult {
+  ok,
+  warning,
+  blocked,
+}
+
+// Transaction Handler v2: ربط إعدادات حد الرصيد بالمنطق
+// - enforceMaxBalance   → تفعيل/تعطيل فحص الحد الأقصى
+// - warnOnExceed        → عرض تحذير (يُكمل الحفظ)
+// - blockOnExceed       → منع الحفظ (يُرجع false)
+// - فحص الرصيد المتوقع قبل إدراج العملية
+// - تسجيل الحدث عند المنع في سجل الأحداث
