@@ -6,6 +6,7 @@ import '../models/log_event.dart';
 import '../services/accountant_service.dart';
 import '../services/export_service.dart';
 import '../services/logger_service.dart';
+import '../services/permission_gate.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 import '../screens/add_account_screen.dart';
@@ -33,6 +34,7 @@ class _CustomersTabState extends State<CustomersTab> {
   void initState() {
     super.initState();
     _refresh();
+    PermissionCache.refresh();
   }
 
   Future<void> _refresh() async {
@@ -71,12 +73,25 @@ class _CustomersTabState extends State<CustomersTab> {
   }
 
   Future<void> _editCustomer(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'edit_customers',
+      message: 'ليس لديك صلاحية تعديل بيانات العملاء',
+    )) return;
+
+    if (!mounted) return;
     await Navigator.push(context,
         MaterialPageRoute(builder: (_) => AddAccountScreen(existing: c)));
     _refresh();
   }
 
   Future<void> _deleteCustomer(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'delete_customers',
+      message: 'ليس لديك صلاحية حذف العملاء',
+    )) return;
+
     final balance = await db.customerBalance(c.id!);
 
     if (SettingsService.getBool(
@@ -222,7 +237,6 @@ class _CustomersTabState extends State<CustomersTab> {
       await db.hardDeleteCustomer(c.id!);
     }
 
-    // 🆕 تمرير التفاصيل الكاملة
     await LoggerService.logCustomerDeleted(
       c.name,
       phone: c.phone,
@@ -245,6 +259,12 @@ class _CustomersTabState extends State<CustomersTab> {
   }
 
   Future<void> _toggleActive(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'toggle_customer_active',
+      message: 'ليس لديك صلاحية إيقاف/تفعيل الحسابات',
+    )) return;
+
     final willStop = c.isActive;
 
     final confirmed = await showDialog<bool>(
@@ -312,11 +332,24 @@ class _CustomersTabState extends State<CustomersTab> {
   }
 
   Future<void> _exportCustomer(Customer c) async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) return;
+
     final f = await ExportService.exportCustomerStatement(c.id!);
     await ExportService.shareFile(f, text: 'كشف حساب ${c.name}');
   }
 
   Future<void> _addTransactionQuick() async {
+    if (!await PermissionGate.require(
+      context,
+      'add_transactions',
+      message: 'ليس لديك صلاحية إضافة العمليات',
+    )) return;
+
+    if (!mounted) return;
     final changed = await QuickTransactionDialog.show(context);
     if (changed == true && mounted) {
       await _refresh();
@@ -324,6 +357,11 @@ class _CustomersTabState extends State<CustomersTab> {
   }
 
   void _showMenu(Customer c) {
+    final canEdit = PermissionCache.has('edit_customers');
+    final canDelete = PermissionCache.has('delete_customers');
+    final canToggle = PermissionCache.has('toggle_customer_active');
+    final canExport = PermissionCache.has('export_data');
+
     showModalBottomSheet(
       context: context,
       builder: (_) => Directionality(
@@ -372,47 +410,51 @@ class _CustomersTabState extends State<CustomersTab> {
                 ),
               ),
               const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('تعديل الحساب'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _editCustomer(c);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.table_chart),
-                title: const Text('تصدير كشف الحساب (Excel)'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _exportCustomer(c);
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  c.isActive ? Icons.block : Icons.check_circle,
-                  color: c.isActive ? Colors.orange : Colors.green,
+              if (canEdit)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('تعديل الحساب'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _editCustomer(c);
+                  },
                 ),
-                title: Text(
-                  c.isActive ? 'إيقاف الحساب' : 'تفعيل الحساب',
-                  style: TextStyle(
+              if (canExport)
+                ListTile(
+                  leading: const Icon(Icons.table_chart),
+                  title: const Text('تصدير كشف الحساب (Excel)'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportCustomer(c);
+                  },
+                ),
+              if (canToggle)
+                ListTile(
+                  leading: Icon(
+                    c.isActive ? Icons.block : Icons.check_circle,
                     color: c.isActive ? Colors.orange : Colors.green,
                   ),
+                  title: Text(
+                    c.isActive ? 'إيقاف الحساب' : 'تفعيل الحساب',
+                    style: TextStyle(
+                      color: c.isActive ? Colors.orange : Colors.green,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _toggleActive(c);
+                  },
                 ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleActive(c);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('حذف الحساب',
-                    style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _deleteCustomer(c);
-                },
-              ),
+              if (canDelete)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('حذف الحساب',
+                      style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _deleteCustomer(c);
+                  },
+                ),
             ],
           ),
         ),
@@ -550,41 +592,53 @@ class _CustomersTabState extends State<CustomersTab> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              FloatingActionButton(
-                heroTag: 'voice_customers',
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const VoiceScreen()),
-                  );
-                  _refresh();
-                },
-                backgroundColor: Colors.deepOrange,
-                tooltip: 'تسجيل صوتي',
-                child: const Icon(Icons.mic, color: Colors.white),
-              ),
-              const SizedBox(width: 10),
-              FloatingActionButton.extended(
-                heroTag: 'add_transaction_customers',
-                onPressed: _addTransactionQuick,
-                icon: const Icon(Icons.add_card),
-                label: const Text('عملية'),
-                backgroundColor: Colors.teal,
-              ),
-              const SizedBox(width: 10),
-              FloatingActionButton.extended(
-                heroTag: 'add_customer_2',
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const AddAccountScreen()),
-                  );
-                  _refresh();
-                },
-                icon: const Icon(Icons.person_add),
-                label: const Text('حساب'),
-              ),
+              if (PermissionCache.has('add_transactions'))
+                FloatingActionButton(
+                  heroTag: 'voice_customers',
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const VoiceScreen()),
+                    );
+                    _refresh();
+                  },
+                  backgroundColor: Colors.deepOrange,
+                  tooltip: 'تسجيل صوتي',
+                  child: const Icon(Icons.mic, color: Colors.white),
+                ),
+              if (PermissionCache.has('add_transactions'))
+                const SizedBox(width: 10),
+              if (PermissionCache.has('add_transactions'))
+                FloatingActionButton.extended(
+                  heroTag: 'add_transaction_customers',
+                  onPressed: _addTransactionQuick,
+                  icon: const Icon(Icons.add_card),
+                  label: const Text('عملية'),
+                  backgroundColor: Colors.teal,
+                ),
+              if (PermissionCache.has('add_customers')) ...[
+                const SizedBox(width: 10),
+                FloatingActionButton.extended(
+                  heroTag: 'add_customer_2',
+                  onPressed: () async {
+                    if (!await PermissionGate.require(
+                      context,
+                      'add_customers',
+                      message: 'ليس لديك صلاحية إضافة حسابات جديدة',
+                    )) return;
+
+                    if (!context.mounted) return;
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const AddAccountScreen()),
+                    );
+                    _refresh();
+                  },
+                  icon: const Icon(Icons.person_add),
+                  label: const Text('حساب'),
+                ),
+              ],
             ],
           ),
         ],
@@ -815,3 +869,13 @@ class _CustomersTabState extends State<CustomersTab> {
     );
   }
 }
+
+// تبويب العملاء v2: ربط صلاحيات المحاسب
+// - add_customers       → زر "حساب" العائم
+// - edit_customers      → تعديل بيانات عميل (من القائمة الطويلة)
+// - delete_customers    → حذف عميل
+// - toggle_customer_active → إيقاف/تفعيل الحساب
+// - export_data         → تصدير Excel
+// - add_transactions    → زر "عملية" و"تسجيل صوتي"
+// - إخفاء عناصر القائمة الجانبية حسب الصلاحية
+// - استدعاء PermissionCache.refresh() في initState
