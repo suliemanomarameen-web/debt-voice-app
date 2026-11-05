@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class SpeechService {
-  // instance واحد يُشارَك بين التطبيق الرئيسي والنافذة العائمة
   static final SpeechService _instance = SpeechService._internal();
   factory SpeechService() => _instance;
   SpeechService._internal();
@@ -12,14 +11,11 @@ class SpeechService {
   bool _initializing = false;
   String _locale = 'ar_YE';
 
-  /// 🆕 آخر نص تم التعرف عليه (لاستخدامه في الإيقاف التلقائي)
   String _lastText = '';
 
   bool get isListening => _speech.isListening;
   bool get isAvailable => _available;
   bool get isReady => _available;
-
-  /// 🆕 آخر نص مكتشف
   String get lastText => _lastText;
 
   void setLocale(String loc) => _locale = loc;
@@ -27,7 +23,6 @@ class SpeechService {
   Future<bool> init() async {
     if (_available) return true;
 
-    // إذا كانت هناك تهيئة جارية، انتظر حتى تنتهي
     if (_initializing) {
       for (int i = 0; i < 50; i++) {
         await Future.delayed(const Duration(milliseconds: 100));
@@ -48,13 +43,11 @@ class SpeechService {
       debugPrint('❌ STT Init error: $e');
       _available = false;
     } finally {
-      // ✅ إعادة تصفير دائمًا — حتى لو حدث استثناء
       _initializing = false;
     }
     return _available;
   }
 
-  /// إعادة تعيين الحالة (للاستخدام عند تغيير المحرك أو إعادة المحاولة)
   Future<void> reset() async {
     try {
       await _speech.cancel();
@@ -68,7 +61,11 @@ class SpeechService {
     required void Function(String text, bool isFinal) onResult,
     Duration listenFor = const Duration(seconds: 30),
     Duration pauseFor = const Duration(seconds: 5),
+    @Deprecated('استخدم listenFor بدلًا منه')
+    Duration? timeout,
   }) async {
+    final effectiveListenFor = timeout ?? listenFor;
+
     if (!_available) {
       final ok = await init();
       if (!ok) {
@@ -79,13 +76,12 @@ class SpeechService {
 
     _lastText = '';
 
-    // ننتظر قليلًا للتأكد من أن المحرك جاهز
     await Future.delayed(const Duration(milliseconds: 150));
 
     try {
       await _speech.listen(
         localeId: _locale,
-        listenFor: listenFor,
+        listenFor: effectiveListenFor,
         pauseFor: pauseFor,
         partialResults: true,
         onResult: (r) {
@@ -93,9 +89,7 @@ class SpeechService {
           _lastText = text;
           onResult(text, r.finalResult);
         },
-        onSoundLevelChange: (level) {
-          // لا نستخدمه حاليًا — لكنه متاح لمستقبل
-        },
+        onSoundLevelChange: (level) {},
       );
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
@@ -123,9 +117,5 @@ class SpeechService {
 }
 
 // Speech Service v1: النسخة الأساسية (STT بسيط)
-// Speech Service v2: تحسين التعرف الصوتي
-// - إصلاح تعليق _initializing عند فشل التهيئة (try/finally)
-// - زيادة pauseFor من 3 إلى 5 ثوانٍ (صبر أطول على الصمت)
-// - زيادة listenFor من 15 إلى 30 ثانية (كلام أطول)
-// - إضافة _lastText لتتبع آخر نص
-// - إضافة reset() للحالات العالقة
+// Speech Service v2: تحسين التعرف الصوتي + try/finally
+// Speech Service v2.1: إعادة timeout كمعامل قديم للتوافق مع overlay_widget (سيُزال في v7)
