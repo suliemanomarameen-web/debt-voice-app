@@ -161,6 +161,17 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       )) return;
     }
 
+    // 🆕 طلب سبب التعديل (إذا الإعداد مفعل)
+    String editReason = '';
+    if (isEdit) {
+      final reason = await PermissionGate.requireReason(
+        context,
+        title: 'سبب تعديل الحساب',
+      );
+      if (reason == null) return;
+      editReason = reason;
+    }
+
     if (!mounted) return;
     setState(() => _busy = true);
 
@@ -214,11 +225,15 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
             defaultValue: true,
           )) {
         final fieldNames = changedFields.map(_fieldNameAr).join('، ');
+        final reasonLine = (editReason.isNotEmpty)
+            ? '\nسبب التعديل: $editReason'
+            : '';
+
         await LoggerService.log(
           action: '✏️ تعديل حساب',
           description: 'تم تعديل $fieldNames '
               'للحساب "${oldCustomer.name}"\n'
-              'بواسطة: ${accountant ?? "غير معروف"}',
+              'بواسطة: ${accountant ?? "غير معروف"}$reasonLine',
           level: LogLevel.info,
           category: LogCategory.customer,
           accountant: accountant,
@@ -226,6 +241,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           metadata: {
             'fields': changedFields,
             'customer_name': oldCustomer.name,
+            if (editReason.isNotEmpty) 'edit_reason': editReason,
           },
         );
       }
@@ -265,6 +281,18 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       'delete_customers',
       message: 'ليس لديك صلاحية حذف الحسابات',
     )) return;
+
+    // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد حذف الحساب',
+        message: 'سيتم طلب كلمة المرور قبل حذف الحساب.',
+      )) return;
+    }
 
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(widget.existing!.id!);
@@ -674,8 +702,4 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 }
 
 // شاشة إضافة/تعديل الحساب v2: ربط صلاحيات المحاسب
-// - edit_customers     → تعديل بيانات حساب موجود
-// - edit_max_balance   → تعديل حقل الحد الأقصى للرصيد
-// - delete_customers   → حذف الحساب من AppBar
-// - تعطيل حقل maxBalance إذا المستخدم لا يملك edit_max_balance
-// - استدعاء PermissionCache.refresh() في initState
+// شاشة إضافة/تعديل الحساب v3: ربط requirePasswordForDelete وrequireEditReason
