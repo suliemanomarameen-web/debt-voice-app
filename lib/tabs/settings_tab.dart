@@ -142,8 +142,16 @@ class _SettingsTabState extends State<SettingsTab> {
     final sp = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _filterEmptyVoice = sp.getBool('pending_filter_empty') ?? true;
-      _filterUnclearText = sp.getBool('pending_filter_unclear') ?? true;
+      // 🆕 الفلتران الأولان من AppSettings (مصدر الحقيقة الوحيد)
+      _filterEmptyVoice = SettingsService.getBool(
+        AppSettings.voiceFilterEmpty,
+        defaultValue: true,
+      );
+      _filterUnclearText = SettingsService.getBool(
+        AppSettings.voiceFilterUnclear,
+        defaultValue: true,
+      );
+      // الفلتران الآخران من SharedPreferences (لا يوجد مفتاح لهما في AppSettings)
       _filterOtherErrors = sp.getBool('pending_filter_errors') ?? true;
       _filterOtherWarnings = sp.getBool('pending_filter_warnings') ?? true;
     });
@@ -160,8 +168,16 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _togglePendingFilter(String key, bool v) async {
-    final sp = await SharedPreferences.getInstance();
-    await sp.setBool(key, v);
+    // 🆕 المفتاحان المرتبطان بـ AppSettings → SettingsService
+    if (key == 'pending_filter_empty') {
+      await SettingsService.setBool(AppSettings.voiceFilterEmpty, v);
+    } else if (key == 'pending_filter_unclear') {
+      await SettingsService.setBool(AppSettings.voiceFilterUnclear, v);
+    } else {
+      // المفتاحان الآخران → SharedPreferences (كما هو)
+      final sp = await SharedPreferences.getInstance();
+      await sp.setBool(key, v);
+    }
 
     await LoggerService.logSettingChanged(
       settingName: key
@@ -3525,12 +3541,4 @@ class _SectionHeader extends StatelessWidget {
 // Settings Tab v3: إضافة قسم 🔔 الإشعارات (مع عدّاد معلّق + رابط لشاشة الإشعارات)
 // Settings Tab v3.1: إصلاح theme.colorScheme → Theme.of(context).colorScheme (السطر 1865)
 // تبويب الإعدادات v4: ربط صلاحيات المحاسب
-// - manage_accountants       → رابط إدارة المحاسبين والأجهزة
-// - access_advanced_settings → رابط الإعدادات المتقدمة
-// - view_logs                → رابط سجل الأحداث
-// - view_stats               → رابط الإحصائيات
-// - manage_backups           → النسخ المحلي + التلقائي + السحابي + GDrive
-// - export_data              → تصدير Excel و CSV
-// - فحص الصلاحية داخل الدوال عند تنفيذ أي إجراء
-// - استدعاء PermissionCache.refresh() في initState
-// - استيراد permission_gate.dart
+// تبويب الإعدادات v5: ربط voiceFilterEmpty وvoiceFilterUnclear بـ AppSettings
