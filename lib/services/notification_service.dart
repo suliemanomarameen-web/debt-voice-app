@@ -198,6 +198,52 @@ class NotificationService {
     );
   }
 
+  /// 🆕 إشعار دائم مع أزرار تفاعلية
+  ///
+  /// يُستخدم لإشعار الزر العائم بحيث يحتوي على زر "🎤 ابدأ التسجيل".
+  ///
+  /// ملاحظات مهمة:
+  /// - `onlyAlertOnce: true` يمنع الصوت عند كل تحديث.
+  /// - `ongoing: true` + `autoCancel: false` يجعل الإشعار دائمًا.
+  /// - الأزرار تستخدم `cancelNotification: false` حتى لا يختفي الإشعار.
+  /// - `showsUserInterface: false` للأزرار (لا تفتح التطبيق).
+  static Future<void> showPersistentWithActions({
+    required int id,
+    required String title,
+    required String body,
+    required List<NotificationAction> actions,
+    String? payload,
+  }) async {
+    await _notif.show(
+      id,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          persistentChannelId,
+          persistentChannelName,
+          channelDescription: persistentChannelDesc,
+          importance: Importance.low,
+          priority: Priority.low,
+          ongoing: true,
+          autoCancel: false,
+          showWhen: false,
+          onlyAlertOnce: true,
+          styleInformation: BigTextStyleInformation(body),
+          actions: actions
+              .map((a) => AndroidNotificationAction(
+                    a.id,
+                    a.title,
+                    showsUserInterface: a.showsUserInterface,
+                    cancelNotification: a.cancelNotification,
+                  ))
+              .toList(),
+        ),
+      ),
+      payload: payload,
+    );
+  }
+
   static Future<void> cancel(int id) async {
     await _notif.cancel(id);
   }
@@ -216,3 +262,4 @@ void notificationTapBackground(NotificationResponse response) async {
 // Notification Service v1: الخدمة الأساسية (show, showPersistent, cancel)
 // Notification Service v2: دعم أزرار تفاعلية + Group Summary + payloads متعددة + onAction
 // Notification Service v2.1: إضافة showsUserInterface + cancelNotification في NotificationAction
+// Notification Service v3: إضافة showPersistentWithActions لإشعار الزر العائم بزر "ابدأ التسجيل"
