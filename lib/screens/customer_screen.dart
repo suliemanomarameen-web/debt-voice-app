@@ -286,7 +286,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
       message: 'ليس لديك صلاحية إضافة العمليات',
     )) return;
 
-    // 🆕 فحص الدين على حساب موقوف
     if (type == 'debt' && !_customer.isActive) {
       final allow = SettingsService.getBool(
         AppSettings.allowDebtOnInactive,
@@ -294,7 +293,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
       );
 
       if (!allow) {
-        // منع تام
         if (SettingsService.getBool(
           AppSettings.notifyDebtOnInactive,
           defaultValue: true,
@@ -338,7 +336,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
         return;
       }
 
-      // مسموح — سجّل تحذيراً + اسأل
       if (SettingsService.getBool(
         AppSettings.notifyDebtOnInactive,
         defaultValue: true,
@@ -622,6 +619,13 @@ class _CustomerScreenState extends State<CustomerScreen> {
       return;
     }
 
+    // 🆕 طلب سبب التعديل (إذا الإعداد مفعل)
+    final editReason = await PermissionGate.requireReason(
+      context,
+      title: 'سبب تعديل العملية',
+    );
+    if (editReason == null) return;
+
     final isDebt = t.type == 'debt';
     final isReturn = t.items.startsWith('مرتجع');
     final amountCtrl = TextEditingController(text: t.amount.toStringAsFixed(0));
@@ -741,12 +745,16 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       ? amt.toStringAsFixed(0)
                       : newItems;
 
+                  final reasonLine = (editReason.isNotEmpty)
+                      ? '\nسبب التعديل: $editReason'
+                      : '';
+
                   await LoggerService.log(
                     action: '✏️ تعديل عملية',
                     description: 'تم تعديل $fieldNames\n'
                         'من: $oldVal\n'
                         'إلى: $newVal\n'
-                        'بواسطة: ${accountant ?? "غير معروف"}',
+                        'بواسطة: ${accountant ?? "غير معروف"}$reasonLine',
                     level: LogLevel.warning,
                     category: LogCategory.transaction,
                     accountant: accountant,
@@ -758,6 +766,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
                       'new_amount': amt,
                       'old_items': t.items,
                       'new_items': newItems,
+                      if (editReason.isNotEmpty) 'edit_reason': editReason,
                     },
                   );
                 }
@@ -793,6 +802,18 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
       );
       return;
+    }
+
+    // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد حذف العملية',
+        message: 'سيتم طلب كلمة المرور قبل حذف العملية.',
+      )) return;
     }
 
     final confirmed = await showDialog<bool>(
@@ -2242,6 +2263,18 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
+    // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد حذف الحساب',
+        message: 'سيتم طلب كلمة المرور قبل حذف الحساب.',
+      )) return;
+    }
+
     final balance = await db.customerBalance(_customer.id!);
 
     if (SettingsService.getBool(
@@ -2412,16 +2445,5 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 }
 
 // شاشة العميل v2: ربط صلاحيات المحاسب
-// - add_transactions       → إضافة عمليات (دين/سداد/مرتجع)
-// - edit_transactions      → تعديل عملية
-// - delete_transactions    → حذف عملية
-// - toggle_customer_active → إيقاف/تفعيل الحساب
-// - delete_customers       → حذف الحساب
-// - export_data            → تصدير Excel/PDF/صورة/واتساب
-// - إخفاء أزرار الشريط السفلي عند غياب add_transactions
-// - إخفاء PopupMenu وعناصر القوائم الجانبية حسب الصلاحية
-// - استدعاء PermissionCache.refresh() في initState
-
 // شاشة العميل v3: ربط إعدادات الدين على حساب موقوف
-// - allowDebtOnInactive  → منع أم السماح بالدين
-// - notifyDebtOnInactive → تسجيل تحذير في السجل
+// شاشة العميل v4: ربط requirePasswordForDelete وrequireEditReason
