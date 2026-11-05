@@ -4,36 +4,29 @@ import 'dart:convert';
 ///
 /// يمثّل تسجيلاً صوتياً واحداً يحتاج إجراءً من المستخدم.
 class PendingNotification {
-  final int? id; // ← يُستخدم كـ Android notification ID
-  final String type; // 'voice'
-  final String? text; // النص الأصلي (للعرض)
-  final String? audioPath; // مسار التسجيل الصوتي
-  final String? intent; // 'debt' / 'payment' / 'return' / 'add_account' / null
-  final String? customerName; // اسم العميل الذي استخرجه التحليل
+  final int? id;
+  final String type;
+  final String? text;
+  final String? audioPath;
+  final String? intent;
+  final String? customerName;
   final double? amount;
   final String currency;
   final String? items;
   final String? accountType;
 
-  /// 'single' (حساب واحد مطابق)
-  /// 'multiple' (أكثر من حساب)
-  /// 'unclear' (لم يُفهم النص)
-  /// 'no_account' (فُهم لكن لا يوجد حساب)
+  /// 'single' | 'multiple' | 'unclear' | 'no_account'
   final String matchType;
 
   final int? matchedCustomerId;
   final String? matchedCustomerName;
 
-  /// قائمة المرشحين عند matchType='multiple'
   final List<Map<String, dynamic>> candidates;
 
   /// 'pending' | 'saved' | 'cancelled' | 'dismissed' | 'expired'
   final String status;
 
   final String createdAt;
-
-  /// null = لا ينتهي (للمفهوم)
-  /// ISO timestamp = ينتهي في هذا الوقت (لغير المفهوم)
   final String? expiresAt;
 
   PendingNotification({
@@ -165,19 +158,14 @@ class PendingNotification {
   bool get isSingle => matchType == 'single';
   bool get isMultiple => matchType == 'multiple';
 
-  /// هل ينتهي تلقائياً؟
   bool get hasExpiry => expiresAt != null && expiresAt!.isNotEmpty;
-
-  /// هل يحتاج إجراءً في الإشعار؟
   bool get needsAction => isSingle || isMultiple;
 
-  /// تاريخ انتهاء الصلاحية كـ DateTime
   DateTime? get expiryDate {
     if (expiresAt == null || expiresAt!.isEmpty) return null;
     return DateTime.tryParse(expiresAt!);
   }
 
-  /// المتبقي قبل الانتهاء (null = لا ينتهي)
   Duration? get timeRemaining {
     final dt = expiryDate;
     if (dt == null) return null;
@@ -222,13 +210,13 @@ class PendingNotification {
   int get matchTypeColor {
     switch (matchType) {
       case 'single':
-        return 0xFF4CAF50; // أخضر
+        return 0xFF4CAF50;
       case 'multiple':
-        return 0xFFFFC107; // أصفر
+        return 0xFFFFC107;
       case 'unclear':
-        return 0xFF9E9E9E; // رمادي
+        return 0xFF9E9E9E;
       case 'no_account':
-        return 0xFFFF9800; // برتقالي
+        return 0xFFFF9800;
       default:
         return 0xFF607D8B;
     }
@@ -254,15 +242,15 @@ class PendingNotification {
   int get statusColor {
     switch (status) {
       case 'pending':
-        return 0xFFFF9800; // برتقالي
+        return 0xFFFF9800;
       case 'saved':
-        return 0xFF4CAF50; // أخضر
+        return 0xFF4CAF50;
       case 'cancelled':
-        return 0xFF9E9E9E; // رمادي
+        return 0xFF9E9E9E;
       case 'dismissed':
-        return 0xFF2196F3; // أزرق
+        return 0xFF2196F3;
       case 'expired':
-        return 0xFFF44336; // أحمر
+        return 0xFFF44336;
       default:
         return 0xFF607D8B;
     }
@@ -283,7 +271,6 @@ class PendingNotification {
     }
   }
 
-  /// ملخص قصير للعرض
   String get summary {
     final parts = <String>[];
     if (intentLabel.isNotEmpty) parts.add(intentLabel);
@@ -299,21 +286,22 @@ class PendingNotification {
     return parts.join(' — ');
   }
 
-  /// هل يمكن أن يُفعَّل زر "حفظ"؟
   bool get canSave => isSingle && matchedCustomerId != null && intent != null;
-
-  /// هل يمكن أن يُفعَّل زر "حدد الحساب"؟
   bool get canChoose => isMultiple && candidates.isNotEmpty;
 
   // ═══════════════════════════════════════════════════════════
   // إنشاء من تحليل الصوت
   // ═══════════════════════════════════════════════════════════
 
-  /// من "غير مفهوم" — صلاحية 5 دقائق
+  /// من "غير مفهوم"
+  ///
+  /// [expiresInMinutes] تُحدَّد من الإعداد `voicePendingAutoExpireDays`
+  /// (تُمرَّر من overlay_handler)
   factory PendingNotification.unclear({
     required String text,
     String? audioPath,
     String? accountant,
+    int expiresInMinutes = 5,
   }) {
     final now = DateTime.now();
     return PendingNotification(
@@ -322,11 +310,11 @@ class PendingNotification {
       audioPath: audioPath,
       matchType: 'unclear',
       createdAt: now.toIso8601String(),
-      expiresAt: now.add(const Duration(minutes: 5)).toIso8601String(),
+      expiresAt: now.add(Duration(minutes: expiresInMinutes)).toIso8601String(),
     );
   }
 
-  /// من "لا يوجد حساب" — صلاحية 5 دقائق
+  /// من "لا يوجد حساب"
   factory PendingNotification.noAccount({
     required String text,
     required String customerName,
@@ -335,6 +323,7 @@ class PendingNotification {
     required String currency,
     required String items,
     String? audioPath,
+    int expiresInMinutes = 5,
   }) {
     final now = DateTime.now();
     return PendingNotification(
@@ -348,7 +337,7 @@ class PendingNotification {
       items: items,
       matchType: 'no_account',
       createdAt: now.toIso8601String(),
-      expiresAt: now.add(const Duration(minutes: 5)).toIso8601String(),
+      expiresAt: now.add(Duration(minutes: expiresInMinutes)).toIso8601String(),
     );
   }
 
@@ -379,7 +368,7 @@ class PendingNotification {
       matchedCustomerId: matchedCustomerId,
       matchedCustomerName: matchedCustomerName,
       createdAt: DateTime.now().toIso8601String(),
-      expiresAt: null, // ← لا ينتهي
+      expiresAt: null,
     );
   }
 
@@ -408,9 +397,10 @@ class PendingNotification {
       matchType: 'multiple',
       candidates: candidates,
       createdAt: DateTime.now().toIso8601String(),
-      expiresAt: null, // ← لا ينتهي
+      expiresAt: null,
     );
   }
 }
 
-// Pending Notification Model v1: نموذج إشعار صوتي معلّق يدعم 4 أنواع (unclear/no_account/single/multiple)
+// Pending Notification Model v1: نموذج إشعار صوتي معلّق يدعم 4 أنواع
+// Pending Notification Model v2: إضافة expiresInMinutes لتطبيق voicePendingAutoExpireDays
