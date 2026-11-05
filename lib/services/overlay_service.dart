@@ -19,16 +19,6 @@ class OverlayService {
     return await FlutterOverlayWindow.isActive();
   }
 
-  /// تشغيل الزر العائم (مع معالجة Huawei)
-  ///
-  /// الخطوات:
-  /// 1. طلب إذن الظهور فوق التطبيقات
-  /// 2. طلب تجاهل تحسين البطارية
-  /// 3. طلب إذن الإشعارات
-  /// 4. **طلب إذن الميكروفون** (جديد — قبل فتح الـ overlay)
-  /// 5. إظهار الإشعار الدائم بأزرار
-  /// 6. فتح الـ overlay
-  /// 7. **إرسال speech_ready ومعلومات الوضع** (جديد — بعد الفتح)
   static Future<bool> show() async {
     // 1) إذن الظهور فوق التطبيقات
     if (!await FlutterOverlayWindow.isPermissionGranted()) {
@@ -36,23 +26,21 @@ class OverlayService {
       if (granted != true) return false;
     }
 
-    // 2) تجاهل تحسين البطارية (مهم على Huawei/Xiaomi/Oppo)
+    // 2) تجاهل تحسين البطارية
     if (!await Permission.ignoreBatteryOptimizations.isGranted) {
       await Permission.ignoreBatteryOptimizations.request();
     }
 
-    // 3) إذن الإشعارات (Android 13+)
+    // 3) إذن الإشعارات
     if (!await Permission.notification.isGranted) {
       await Permission.notification.request();
     }
 
-    // 4) 🆕 إذن الميكروفون — هنا في main isolate (Activity موجود)
-    //    لا يمكن طلبه من overlay isolate (لن يظهر حوار)
+    // 4) إذن الميكروفون (في main isolate — Activity موجود)
     if (!await Permission.microphone.isGranted) {
       final micStatus = await Permission.microphone.request();
       if (!micStatus.isGranted) {
         debugPrint('⚠️ [OverlayService] Microphone permission denied');
-        // نكمل — المستخدم قد يمنحه لاحقًا، لكن التسجيل لن يعمل
       }
     }
 
@@ -83,7 +71,7 @@ class OverlayService {
           alignment: OverlayAlignment.centerRight,
           visibility: NotificationVisibility.visibilityPublic,
           positionGravity: PositionGravity.auto,
-          flag: OverlayDefaultFlag.defaultFlag,
+          flag: OverlayFlag.defaultFlag,
         );
         opened = true;
       } catch (e) {
@@ -92,16 +80,13 @@ class OverlayService {
       }
     }
 
-    // 7) 🆕 بعد فتح الـ overlay — انتظر ثم أرسل الحالة
+    // 7) بعد فتح الـ overlay — انتظر ثم أرسل الحالة
     if (opened) {
-      // انتظر حتى يكون overlayMain قد بدأ وبدأ يستمع
       await Future.delayed(const Duration(milliseconds: 800));
 
       try {
-        // أرسل speech_ready
         await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
 
-        // أرسل وضع التسجيل المحفوظ
         final prefs = await SharedPreferences.getInstance();
         final mode = prefs.getString('overlay_record_mode') ?? 'long_press';
         await FlutterOverlayWindow.shareData({
@@ -133,9 +118,6 @@ class OverlayService {
     await FlutterOverlayWindow.shareData(data);
   }
 
-  /// 🆕 إرسال أمر بدء التسجيل للـ overlay من داخل التطبيق
-  ///
-  /// يُستخدم عند الضغط على "🎤 ابدأ التسجيل" من الإشعار الدائم.
   static Future<void> startRecordingFromNotification() async {
     try {
       if (!await FlutterOverlayWindow.isActive()) {
@@ -155,8 +137,4 @@ class OverlayService {
 
 // Overlay Service v1: النسخة الأساسية (show/hide/listen/sendData)
 // Overlay Service v2: تحسينات جذرية للزر العائم
-// - طلب إذن الميكروفون في main isolate قبل فتح الـ overlay
-// - إرسال speech_ready بعد showOverlay + تأخير 800ms (بدل main())
-// - إرسال وضع التسجيل (long_press / tap) للـ overlay
-// - إشعار دائم بزر "🎤 ابدأ التسجيل"
-// - دالة startRecordingFromNotification() لبدء التسجيل من الإشعار
+// Overlay Service v2.1: إصلاح توافق OverlayFlag بدلًا من OverlayDefaultFlag
