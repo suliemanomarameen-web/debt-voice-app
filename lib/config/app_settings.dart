@@ -15,7 +15,6 @@ class AppSettings {
   static const String blockTransactionDeletion =
       'block_transaction_deletion';
 
-  // إعدادات التعارض (حصريان)
   static const String permanentDeleteAlwaysWins =
       'permanent_delete_always_wins';
   static const String modificationAlwaysWins =
@@ -79,7 +78,7 @@ class AppSettings {
   // ═══════════════════════════════════════════════════════════
 
   static const String notificationsRetentionMode =
-      'notifications_retention_mode'; // 'days' | 'count'
+      'notifications_retention_mode';
   static const String notificationsRetentionDays =
       'notifications_retention_days';
   static const String notificationsRetentionCount =
@@ -114,6 +113,13 @@ class AppSettings {
       'voice_pending_auto_expire_days';
   static const String voiceFilterEmpty = 'voice_filter_empty';
   static const String voiceFilterUnclear = 'voice_filter_unclear';
+
+  // 🆕 الحوار الصوتي التفاعلي (v6)
+  static const String voiceConversationEnabled =
+      'voice_conversation_enabled';
+  static const String voiceAlwaysAskForItems = 'voice_always_ask_for_items';
+  static const String voiceMaxConversationRounds =
+      'voice_max_conversation_rounds';
 
   // ═══════════════════════════════════════════════════════════
   // 💰 مجموعة الرصيد والحدود
@@ -154,6 +160,12 @@ class AppSettings {
   static const String codeIncludeAccountant = 'code_include_accountant';
   static const String codeAccountantPosition = 'code_accountant_position';
   static const String codeAccountantSeparator = 'code_accountant_separator';
+
+  // ═══════════════════════════════════════════════════════════
+  // 🖼️ مجموعة الزر العائم
+  // ═══════════════════════════════════════════════════════════
+
+  static const String overlayRecordMode = 'overlay_record_mode';
 
   // ═══════════════════════════════════════════════════════════
   // 📋 القيم الافتراضية
@@ -234,6 +246,11 @@ class AppSettings {
     voiceFilterEmpty: true,
     voiceFilterUnclear: true,
 
+    // 🆕 الحوار الصوتي التفاعلي
+    voiceConversationEnabled: true,
+    voiceAlwaysAskForItems: false,
+    voiceMaxConversationRounds: 3,
+
     // 💰 الرصيد
     enforceMaxBalance: true,
     warnOnExceed: true,
@@ -258,6 +275,9 @@ class AppSettings {
     codeIncludeAccountant: false,
     codeAccountantPosition: 'suffix',
     codeAccountantSeparator: '',
+
+    // 🖼️ الزر العائم
+    overlayRecordMode: 'long_press',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -341,6 +361,10 @@ class AppSettings {
     voicePendingAutoExpireDays,
     voiceFilterEmpty,
     voiceFilterUnclear,
+    // 🆕 الحوار الصوتي
+    voiceConversationEnabled,
+    voiceAlwaysAskForItems,
+    voiceMaxConversationRounds,
     lockEnabled,
     lockTimeoutMinutes,
     requirePasswordForDelete,
@@ -353,12 +377,14 @@ class AppSettings {
     codeIncludeAccountant,
     codeAccountantPosition,
     codeAccountantSeparator,
-    // 🔔 الإشعارات (محلية — كل جهاز له احتياجاته)
+    // 🔔 الإشعارات
     notificationsRetentionMode,
     notificationsRetentionDays,
     notificationsRetentionCount,
     notificationsKeepPending,
     notificationsDeleteAudio,
+    // 🖼️ الزر العائم
+    overlayRecordMode,
   };
 
   static bool isShared(String key) => sharedSettings.contains(key);
@@ -366,7 +392,8 @@ class AppSettings {
   static bool isDangerous(String key) => dangerousSettings.contains(key);
 }
 
-// الإعدادات v2: إضافة permanentDeleteAlwaysWins (خيار الحذف النهائي يفوز دائماً)
-// الإعدادات v2.2: إضافة modificationAlwaysWins (حصري مع permanentDeleteAlwaysWins — لا يُفعّلان معاً)
-// الإعدادات v2.4: إضافة 18 إعداداً شاملاً لنظام التكرار (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
-// الإعدادات v2.5: إضافة 5 إعدادات للإشعارات (وضع الاحتفاظ، المدة، العدد، احتفظ بالمعلقة، احذف الصوت)
+// الإعدادات v2: إضافة permanentDeleteAlwaysWins
+// الإعدادات v2.2: إضافة modificationAlwaysWins
+// الإعدادات v2.4: إضافة 18 إعداداً للتكرار
+// الإعدادات v2.5: إضافة 5 إعدادات للإشعارات
+// الإعدادات v6: إضافة 3 إعدادات للحوار الصوتي التفاعلي + overlayRecordMode
