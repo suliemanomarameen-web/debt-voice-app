@@ -1,55 +1,31 @@
 import 'package:flutter/material.dart';
 import 'accountants_service.dart';
+import 'auth_service.dart';
 import 'device_service.dart';
+import 'settings_service.dart';
+import '../config/app_settings.dart';
 
-/// ═══════════════════════════════════════════════════════════
 /// بوابة الصلاحيات — تُطبَّق على كل إجراء حساس
-///
-/// المبدأ:
-/// - المحاسب الأساسي (isPrimary) له كل الصلاحيات تلقائيًا
-/// - المحاسب الثانوي يعتمد على صلاحياته المعيّنة من الأساسي
-/// - الفحص في طبقتين:
-///   1. الواجهة: إخفاء الأزرار (PermissionGateWidget)
-///   2. الدالة: رفض التنفيذ (PermissionGate.check)
-///
-/// هذا يُوفّر الحماية حتى لو تلاعب المستخدم بالواجهة.
-/// ═══════════════════════════════════════════════════════════
 class PermissionGate {
-  /// فحص صلاحية واحدة — بدون واجهة
-  ///
-  /// يُستخدم داخل الدوال قبل تنفيذ أي إجراء حساس.
   static Future<bool> check(String permission) async {
     try {
-      // 👑 الأساسي له كل الصلاحيات دائمًا
       if (await DeviceService.isPrimaryDevice()) return true;
-
-      // تحقق من صلاحيات المحاسب الحالي
       return await AccountantsService.hasPermission(permission);
     } catch (_) {
-      // عند أي خطأ → ارفض (fail-safe)
       return false;
     }
   }
 
-  /// فحص + عرض رسالة عند الرفض
-  ///
-  /// يُستخدم في بداية كل دالة يمكن للمستخدم استدعاؤها.
   static Future<bool> require(
     BuildContext context,
     String permission, {
     String? message,
   }) async {
     if (await check(permission)) return true;
-
-    if (context.mounted) {
-      _showDenied(context, message);
-    }
+    if (context.mounted) _showDenied(context, message);
     return false;
   }
 
-  /// فحص + حوار تأكيد قبل الإجراءات الخطيرة
-  ///
-  /// يُستخدم للحذف النهائي، أو أي إجراء لا رجعة فيه.
   static Future<bool> requireWithConfirm(
     BuildContext context,
     String permission, {
@@ -64,7 +40,6 @@ class PermissionGate {
       if (context.mounted) _showDenied(context, denyMessage);
       return false;
     }
-
     if (!context.mounted) return false;
     final ok = await showDialog<bool>(
       context: context,
@@ -92,7 +67,184 @@ class PermissionGate {
     return ok == true;
   }
 
-  /// عرض رسالة الرفض
+  /// 🆕 طلب كلمة المرور — يتخطى تلقائيًا إذا القفل معطل
+  static Future<bool> requirePassword(
+    BuildContext context, {
+    String? title,
+    String? message,
+  }) async {
+    try {
+      final enabled = await AuthService.isEnabled();
+      if (!enabled) return true;
+
+      final hasPwd = await AuthService.hasPassword();
+      if (!hasPwd) return true;
+
+      if (!context.mounted) return false;
+
+      final ctrl = TextEditingController();
+      String? error;
+
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: StatefulBuilder(
+            builder: (ctx, setSt) => AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.lock_outline, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Text(title ?? 'تأكيد الهوية'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    message ?? 'أدخل كلمة المرور للمتابعة',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: ctrl,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    autofocus: true,
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                      labelText: 'كلمة المرور',
+                      border: const OutlineInputBorder(),
+                      errorText: error,
+                      prefixIcon: const Icon(Icons.lock),
+                    ),
+                    onSubmitted: (v) async {
+                      final ok = await AuthService.verifyPassword(v.trim());
+                      if (ok) {
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } else {
+                        setSt(() => error = 'كلمة المرور غير صحيحة');
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final pwd = ctrl.text.trim();
+                    if (pwd.isEmpty) {
+                      setSt(() => error = 'أدخل كلمة المرور');
+                      return;
+                    }
+                    final ok = await AuthService.verifyPassword(pwd);
+                    if (ok) {
+                      if (ctx.mounted) Navigator.pop(ctx, true);
+                    } else {
+                      setSt(() => error = 'كلمة المرور غير صحيحة');
+                      ctrl.clear();
+                    }
+                  },
+                  child: const Text('تأكيد'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 🆕 طلب سبب التعديل — يتخطى تلقائيًا إذا الإعداد معطل
+  ///
+  /// القيم المرجعة:
+  /// - `null` = المستخدم ألغى → لا تكمل
+  /// - `''`   = الإعداد معطل → أكمل بدون سبب
+  /// - نص    = السبب → أكمل مع تسجيله
+  static Future<String?> requireReason(
+    BuildContext context, {
+    String? title,
+    String? hint,
+  }) async {
+    final enabled = SettingsService.getBool(
+      AppSettings.requireEditReason,
+      defaultValue: false,
+    );
+    if (!enabled) return '';
+
+    if (!context.mounted) return null;
+
+    final ctrl = TextEditingController();
+    String? error;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (ctx, setSt) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.edit_note, color: Colors.blue),
+                const SizedBox(width: 8),
+                Text(title ?? 'سبب التعديل'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'يرجى كتابة سبب التعديل (سيُسجَّل في السجل)',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: ctrl,
+                  maxLines: 3,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'السبب',
+                    hintText: hint ?? 'مثال: خطأ في المبلغ',
+                    border: const OutlineInputBorder(),
+                    errorText: error,
+                    prefixIcon: const Icon(Icons.edit_note),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final v = ctrl.text.trim();
+                  if (v.isEmpty) {
+                    setSt(() => error = 'أدخل السبب');
+                    return;
+                  }
+                  Navigator.pop(ctx, v);
+                },
+                child: const Text('تأكيد'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return result;
+  }
+
   static void _showDenied(BuildContext context, String? customMessage) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -115,20 +267,6 @@ class PermissionGate {
   }
 }
 
-/// ═══════════════════════════════════════════════════════════
-/// Widget يخفي محتواه إذا لم تكن الصلاحية متاحة
-///
-/// الاستخدام:
-/// ```dart
-/// PermissionGateWidget(
-///   permission: 'delete_customers',
-///   child: IconButton(
-///     icon: Icon(Icons.delete, color: Colors.red),
-///     onPressed: () => _delete(),
-///   ),
-/// )
-/// ```
-/// ═══════════════════════════════════════════════════════════
 class PermissionGateWidget extends StatelessWidget {
   final String permission;
   final Widget child;
@@ -167,50 +305,28 @@ class PermissionGateWidget extends StatelessWidget {
   }
 }
 
-/// ═══════════════════════════════════════════════════════════
-/// Cache للصلاحيات — يُستخدم في القوائم الطويلة
-///
-/// بدلًا من FutureBuilder لكل صف (يسبب تأخيرًا)، نُحمّل كل
-/// الصلاحيات مرة واحدة عند الدخول للشاشة ونستخدمها مباشرة.
-///
-/// يجب استدعاء refresh() في initState للشاشة.
-/// ═══════════════════════════════════════════════════════════
 class PermissionCache {
   static Map<String, bool> _cache = {};
   static String? _cachedDeviceId;
   static bool _isPrimary = false;
 
-  /// كل الصلاحيات المعرّفة
   static const List<String> _allPermissions = [
-    'add_customers',
-    'edit_customers',
-    'delete_customers',
-    'toggle_customer_active',
-    'edit_max_balance',
-    'add_transactions',
-    'edit_transactions',
-    'delete_transactions',
-    'view_all_transactions',
-    'view_stats',
-    'export_data',
-    'view_logs',
-    'access_advanced_settings',
-    'manage_backups',
-    'manage_accountants',
-    'can_become_primary',
+    'add_customers', 'edit_customers', 'delete_customers',
+    'toggle_customer_active', 'edit_max_balance',
+    'add_transactions', 'edit_transactions', 'delete_transactions',
+    'view_all_transactions', 'view_stats', 'export_data',
+    'view_logs', 'access_advanced_settings', 'manage_backups',
+    'manage_accountants', 'can_become_primary',
   ];
 
-  /// تحديث الـ cache — استدعِ هذا في initState
   static Future<void> refresh() async {
     try {
       _cachedDeviceId = await DeviceService.getDeviceId();
-
       if (await DeviceService.isPrimaryDevice()) {
         _isPrimary = true;
         _cache = {for (final key in _allPermissions) key: true};
         return;
       }
-
       _isPrimary = false;
       final current = await AccountantsService.getCurrentAccountant();
       if (current == null) {
@@ -224,16 +340,13 @@ class PermissionCache {
     }
   }
 
-  /// فحص سريع من الذاكرة — بدون async
   static bool has(String permission) {
     if (_isPrimary) return true;
     return _cache[permission] == true;
   }
 
-  /// هل المستخدم أساسي؟
   static bool get isPrimary => _isPrimary;
 
-  /// هل يجب تجديد الـ cache؟
   static Future<bool> needsRefresh() async {
     try {
       final currentDeviceId = await DeviceService.getDeviceId();
@@ -243,7 +356,6 @@ class PermissionCache {
     }
   }
 
-  /// مسح الـ cache — استدعِ هذا بعد تغيير المحاسب/الصلاحيات
   static void clear() {
     _cache = {};
     _cachedDeviceId = null;
@@ -251,12 +363,5 @@ class PermissionCache {
   }
 }
 
-// ═══════════════════════════════════════════════════════════
 // بوابة الصلاحيات v1 — ملف جديد
-// - PermissionGate:     فحص (check / require / requireWithConfirm)
-// - PermissionGateWidget: إخفاء عناصر الواجهة حسب الصلاحية
-// - PermissionCache:    تحميل مسبق للصلاحيات لتسريع القوائم
-//
-// الهدف: إغلاق ثغرة الصلاحيات الشكلية في accountants_service
-// حيث كانت 16 صلاحية معرّفة و1 فقط مستخدمة فعليًا.
-// ═══════════════════════════════════════════════════════════
+// بوابة الصلاحيات v2: إضافة requirePassword وrequireReason
