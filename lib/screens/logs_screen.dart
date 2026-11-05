@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
@@ -13,6 +12,8 @@ import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/notification_dispatcher.dart';
+import '../services/settings_service.dart';
+import '../config/app_settings.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});
@@ -906,7 +907,7 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
   bool _loading = true;
   String? _playingPath;
 
-  // 🆕 فلاتر
+  // 🆕 فلاتر — تُقرأ من AppSettings عبر SettingsService
   bool _filterEmptyVoice = true;
   bool _filterUnclearText = true;
 
@@ -928,13 +929,19 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     super.dispose();
   }
 
+  // 🆕 قراءة الفلاتر من AppSettings (مصدر الحقيقة الوحيد)
   Future<void> _loadFilters() async {
     try {
-      final sp = await SharedPreferences.getInstance();
       if (!mounted) return;
       setState(() {
-        _filterEmptyVoice = sp.getBool('pending_filter_empty') ?? true;
-        _filterUnclearText = sp.getBool('pending_filter_unclear') ?? true;
+        _filterEmptyVoice = SettingsService.getBool(
+          AppSettings.voiceFilterEmpty,
+          defaultValue: true,
+        );
+        _filterUnclearText = SettingsService.getBool(
+          AppSettings.voiceFilterUnclear,
+          defaultValue: true,
+        );
       });
     } catch (_) {}
   }
@@ -1818,3 +1825,6 @@ class _PendingVoiceTabState extends State<_PendingVoiceTab> {
     );
   }
 }
+
+// Logs Screen v1: النسخة الأساسية
+// Logs Screen v2: قراءة فلاتر المعلقات من الإعدادات الرسمية عبر SettingsService بدل SharedPreferences
