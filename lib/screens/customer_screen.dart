@@ -619,7 +619,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
       return;
     }
 
-    // 🆕 طلب سبب التعديل (إذا الإعداد مفعل)
     final editReason = await PermissionGate.requireReason(
       context,
       title: 'سبب تعديل العملية',
@@ -804,7 +803,6 @@ class _CustomerScreenState extends State<CustomerScreen> {
       return;
     }
 
-    // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,
       defaultValue: false,
@@ -2263,7 +2261,6 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
       return;
     }
 
-    // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,
       defaultValue: false,
