@@ -61,6 +61,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       message: 'ليس لديك صلاحية استعادة الحسابات',
     )) return;
 
+    // 🆕 طلب كلمة مرور قبل الاستعادة (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForRestore,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد استعادة الحساب',
+        message: 'سيتم طلب كلمة المرور قبل استعادة الحساب.',
+      )) return;
+    }
+
     final confirm = await _confirmRestore(
       title: 'استعادة العميل',
       message: 'سيتم استعادة "${c.name}" وكل معاملاته.',
@@ -88,6 +100,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       'delete_customers',
       message: 'ليس لديك صلاحية الحذف النهائي للحسابات',
     )) return;
+
+    // 🆕 طلب كلمة مرور قبل الحذف النهائي (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد الحذف النهائي',
+        message: 'سيتم طلب كلمة المرور قبل الحذف النهائي.',
+      )) return;
+    }
 
     final confirm = await _confirmDelete(
       title: 'حذف نهائي',
@@ -119,6 +143,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       message: 'ليس لديك صلاحية استعادة العمليات',
     )) return;
 
+    // 🆕 طلب كلمة مرور قبل الاستعادة (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForRestore,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد استعادة العملية',
+        message: 'سيتم طلب كلمة المرور قبل استعادة العملية.',
+      )) return;
+    }
+
     final confirm = await _confirmRestore(
       title: 'استعادة العملية',
       message:
@@ -148,6 +184,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       'delete_transactions',
       message: 'ليس لديك صلاحية الحذف النهائي للعمليات',
     )) return;
+
+    // 🆕 طلب كلمة مرور قبل الحذف النهائي (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد الحذف النهائي',
+        message: 'سيتم طلب كلمة المرور قبل الحذف النهائي.',
+      )) return;
+    }
 
     final confirm = await _confirmDelete(
       title: 'حذف نهائي',
@@ -188,6 +236,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       'delete_transactions',
       message: 'ليس لديك صلاحية تفريغ السلة',
     )) return;
+
+    // 🆕 طلب كلمة مرور قبل تفريغ السلة (إذا الإعداد مفعل)
+    if (SettingsService.getBool(
+      AppSettings.requirePasswordForDelete,
+      defaultValue: false,
+    )) {
+      if (!await PermissionGate.requirePassword(
+        context,
+        title: 'تأكيد تفريغ السلة',
+        message: 'سيتم طلب كلمة المرور قبل الحذف النهائي.',
+      )) return;
+    }
 
     final confirm = await _confirmDelete(
       title: 'تفريغ السلة',
@@ -764,3 +824,4 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 // Deleted Bin Screen v2: إصلاح _getAccountantName — استخدام AccountantService بدل DB settings
 
 // Deleted Bin Screen v3: ربط صلاحيات المحاسب بالاستعادة والحذف النهائي
+// Deleted Bin Screen v4: ربط requirePasswordForRestore وrequirePasswordForDelete
