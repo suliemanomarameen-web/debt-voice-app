@@ -286,7 +286,72 @@ class _CustomerScreenState extends State<CustomerScreen> {
       message: 'ليس لديك صلاحية إضافة العمليات',
     )) return;
 
-    if (!_customer.isActive) {
+    // 🆕 فحص الدين على حساب موقوف
+    if (type == 'debt' && !_customer.isActive) {
+      final allow = SettingsService.getBool(
+        AppSettings.allowDebtOnInactive,
+        defaultValue: true,
+      );
+
+      if (!allow) {
+        // منع تام
+        if (SettingsService.getBool(
+          AppSettings.notifyDebtOnInactive,
+          defaultValue: true,
+        )) {
+          await LoggerService.logDebtOnInactiveAccount(
+            customerName: _customer.name,
+            amount: 0,
+            currency: 'YER',
+            accountant: await AccountantService.getAccountantName(),
+            relatedId: _customer.id?.toString(),
+          );
+        }
+        if (!mounted) return;
+        await showDialog(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.block, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('الدين معطّل'),
+                ],
+              ),
+              content: Text(
+                'الحساب "${_customer.name}" موقوف.\n\n'
+                '💡 إعداد "السماح بالدين على حساب موقوف" معطّل.\n'
+                'فعّله من الإعدادات المتقدمة إن أردت السماح.',
+                style: const TextStyle(fontSize: 13),
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('فهمت'),
+                ),
+              ],
+            ),
+          ),
+        );
+        return;
+      }
+
+      // مسموح — سجّل تحذيراً + اسأل
+      if (SettingsService.getBool(
+        AppSettings.notifyDebtOnInactive,
+        defaultValue: true,
+      )) {
+        await LoggerService.logDebtOnInactiveAccount(
+          customerName: _customer.name,
+          amount: 0,
+          currency: 'YER',
+          accountant: await AccountantService.getAccountantName(),
+          relatedId: _customer.id?.toString(),
+        );
+      }
+
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => Directionality(
@@ -2356,3 +2421,7 @@ ${t.items.isNotEmpty ? 'الأصناف: ${t.items}\n' : ''}التاريخ: ${_fo
 // - إخفاء أزرار الشريط السفلي عند غياب add_transactions
 // - إخفاء PopupMenu وعناصر القوائم الجانبية حسب الصلاحية
 // - استدعاء PermissionCache.refresh() في initState
+
+// شاشة العميل v3: ربط إعدادات الدين على حساب موقوف
+// - allowDebtOnInactive  → منع أم السماح بالدين
+// - notifyDebtOnInactive → تسجيل تحذير في السجل
