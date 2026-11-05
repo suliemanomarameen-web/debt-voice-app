@@ -2,19 +2,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../config/app_settings.dart';
 import '../db/database_helper.dart';
+import '../models/transaction.dart';
 import 'settings_service.dart';
 
 /// كاشف التكرارات — يطابق السجلات السحابية بالمحلية
-///
-/// - يقرأ إعدادات المستخدم (تفعيل، مستوى، حظر، تطبيع)
-/// - يُطبّق تطبيع عربي كامل (همزات، تاء، تشكيل، أسماء مركبة)
-/// - يُرجع درجة التشابه لكل زوج
-/// - يحفظ التكرارات في pending_duplicates
 class DuplicateDetector {
-  /// يكتشف التكرارات ويحفظها
-  ///
-  /// يُستدعى من `_performSync` قبل الدمج
-  /// Returns: عدد التكرارات الجديدة المكتشفة
   static Future<int> detect(Map<String, dynamic> cloudData) async {
     if (!SettingsService.getBool(
       AppSettings.duplicateDetectionEnabled,
@@ -28,6 +20,13 @@ class DuplicateDetector {
     final now = DateTime.now().toIso8601String();
     int found = 0;
 
+    // 🆕 الحد الأقصى للتكرارات في جلسة واحدة
+    final maxDuplicates = SettingsService.getInt(
+      AppSettings.maxDuplicatesPerSync,
+      defaultValue: 50,
+    );
+    bool reachedMax() => maxDuplicates > 0 && found >= maxDuplicates;
+
     // ═══════════════════════════════════════════════════
     // 1) العملاء
     // ═══════════════════════════════════════════════════
@@ -35,13 +34,14 @@ class DuplicateDetector {
     final localCustomers = await db.allCustomersWithDeleted();
 
     for (final cloudC in cloudCustomers) {
+      if (reachedMax()) break;
+
       final cloudId = cloudC['cloud_id'] as String?;
       final cloudName = cloudC['name'] as String? ?? '';
 
       if (cloudId == null || cloudId.isEmpty) continue;
       if (await db.hasTombstone(cloudId)) continue;
 
-      // إذا نفس السجل موجود محلياً (نفس cloud_id) → ليس تكراراً
       bool isSameRecord = false;
       for (final localC in localCustomers) {
         if (localC.cloudId == cloudId) {
@@ -51,8 +51,8 @@ class DuplicateDetector {
       }
       if (isSameRecord) continue;
 
-      // البحث عن تكرارات بالاسم
       for (final localC in localCustomers) {
+        if (reachedMax()) break;
         if (localC.cloudId == cloudId) continue;
         if (localC.cloudId == null || localC.cloudId!.isEmpty) continue;
         if (localC.isPermanentlyDeleted) continue;
@@ -61,7 +61,6 @@ class DuplicateDetector {
         if (cmp.level == 'different') continue;
         if (!_isLevelEnabled(cmp.level)) continue;
 
-        // تحقق من عدم وجود تكرار سابق (pending أو skipped فقط)
         final existing = await db.database.then((d) => d.query(
               'pending_duplicates',
               where:
@@ -101,13 +100,32 @@ class DuplicateDetector {
     // ═══════════════════════════════════════════════════
     // 2) العمليات
     // ═══════════════════════════════════════════════════
+
+    // 🆕 خريطة معرّف العميل السحابي → معرّفه المحلي
+    final cloudCustomerIdToLocal = <int, int>{};
+    for (final cloudC in cloudCustomers) {
+      final cloudId = cloudC['id'] as int?;
+      final cloudCloudId = cloudC['cloud_id'] as String?;
+      if (cloudId == null ||
+          cloudCloudId == null ||
+          cloudCloudId.isEmpty) {
+        continue;
+      }
+      for (final localC in localCustomers) {
+        if (localC.cloudId == cloudCloudId && localC.id != null) {
+          cloudCustomerIdToLocal[cloudId] = localC.id!;
+          break;
+        }
+      }
+    }
+
     final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
     final localTransactions = await db.allTransactionsWithDeleted();
 
     for (final cloudT in cloudTransactions) {
-      final cloudId = cloudT['cloud_id'] as String?;
-      final cloudCode = cloudT['code'] as String?;
+      if (reachedMax()) break;
 
+      final cloudId = cloudT['cloud_id'] as String?;
       if (cloudId == null || cloudId.isEmpty) continue;
       if (await db.hasTombstone(cloudId)) continue;
 
@@ -121,11 +139,18 @@ class DuplicateDetector {
       if (isSameRecord) continue;
 
       for (final localT in localTransactions) {
+        if (reachedMax()) break;
         if (localT.cloudId == cloudId) continue;
         if (localT.cloudId == null || localT.cloudId!.isEmpty) continue;
         if (localT.isDeleted) continue;
-        if (cloudCode == null || cloudCode.isEmpty) continue;
-        if (localT.code != cloudCode) continue;
+
+        // 🆕 فحص التكرار حسب الوضع
+        final isDup = _isTransactionDuplicate(
+          localT: localT,
+          cloudT: cloudT,
+          cloudCustomerIdToLocal: cloudCustomerIdToLocal,
+        );
+        if (!isDup) continue;
 
         final existing = await db.database.then((d) => d.query(
               'pending_duplicates',
@@ -142,6 +167,11 @@ class DuplicateDetector {
             ));
         if (existing.isNotEmpty) continue;
 
+        final mode = SettingsService.getString(
+          AppSettings.transactionDuplicateMode,
+          defaultValue: 'code',
+        );
+
         await db.insertPendingDuplicate({
           'type': 'transaction',
           'local_cloud_id': localT.cloudId,
@@ -151,27 +181,92 @@ class DuplicateDetector {
           'detected_at': now,
           'status': 'pending',
           'metadata': jsonEncode({
-            'code': cloudCode,
+            'code': cloudT['code'],
             'amount': cloudT['amount'],
             'type': cloudT['type'],
+            'mode': mode,
           }),
         });
         found++;
-        debugPrint('🔀 [Detector] Transaction code=$cloudCode');
+        debugPrint(
+            '🔀 [Detector] Transaction: ${cloudT['code'] ?? cloudT['amount']} (mode=$mode)');
       }
     }
 
-    debugPrint('🔀 [Detector] Detected $found new duplicates');
+    debugPrint(
+        '🔀 [Detector] Detected $found new duplicates${reachedMax() ? " (max reached)" : ""}');
     return found;
   }
 
-  /// هل يجب حظر المزامنة الآن؟
+  /// 🆕 هل العملية مكررة بناءً على الوضع المختار؟
+  static bool _isTransactionDuplicate({
+    required Transaction localT,
+    required Map<String, dynamic> cloudT,
+    required Map<int, int> cloudCustomerIdToLocal,
+  }) {
+    final mode = SettingsService.getString(
+      AppSettings.transactionDuplicateMode,
+      defaultValue: 'code',
+    );
+
+    switch (mode) {
+      case 'code':
+        // نفس رمز العملية
+        final cloudCode = cloudT['code'] as String?;
+        return cloudCode != null &&
+            cloudCode.isNotEmpty &&
+            localT.code == cloudCode;
+
+      case 'basic':
+        // نفس العميل + المبلغ + النوع
+        final cloudCustomerId = cloudT['customer_id'] as int?;
+        final localCustomerId = cloudCustomerIdToLocal[cloudCustomerId];
+        if (localCustomerId == null) return false;
+        if (localT.customerId != localCustomerId) return false;
+
+        final cloudAmount = (cloudT['amount'] as num?)?.toDouble();
+        if (cloudAmount == null) return false;
+        if ((localT.amount - cloudAmount).abs() >= 0.01) return false;
+
+        final cloudType = cloudT['type'] as String?;
+        return localT.type == cloudType;
+
+      case 'window':
+        // نفس العميل + المبلغ + النوع + ضمن نافذة زمنية
+        final cloudCustomerId = cloudT['customer_id'] as int?;
+        final localCustomerId = cloudCustomerIdToLocal[cloudCustomerId];
+        if (localCustomerId == null) return false;
+        if (localT.customerId != localCustomerId) return false;
+
+        final cloudAmount = (cloudT['amount'] as num?)?.toDouble();
+        if (cloudAmount == null) return false;
+        if ((localT.amount - cloudAmount).abs() >= 0.01) return false;
+
+        final cloudType = cloudT['type'] as String?;
+        if (localT.type != cloudType) return false;
+
+        final windowMin = SettingsService.getInt(
+          AppSettings.transactionWindowMinutes,
+          defaultValue: 30,
+        );
+        try {
+          final t1 = DateTime.parse(localT.createdAt);
+          final t2 = DateTime.parse(cloudT['created_at'] as String? ?? '');
+          return t1.difference(t2).inMinutes.abs() <= windowMin;
+        } catch (_) {
+          return false;
+        }
+
+      default:
+        return false;
+    }
+  }
+
   static Future<bool> shouldBlockSync() async {
     final count = await getBlockingCount();
     return count > 0;
   }
 
-  /// عدد التكرارات التي تحظر المزامنة حالياً
   static Future<int> getBlockingCount() async {
     final db = DatabaseHelper.instance;
     final duplicates = await db.getUnresolvedDuplicatesRaw();
@@ -227,7 +322,6 @@ class DuplicateDetector {
     }
   }
 
-  /// مقارنة اسمين عربيين مع تطبيع كامل
   static NameComparison _compareNames(String a, String b) {
     final normA = _normalize(a);
     final normB = _normalize(b);
@@ -236,7 +330,6 @@ class DuplicateDetector {
       return NameComparison(level: 'different', score: 0.0);
     }
 
-    // تطابق تام
     if (normA == normB) {
       return NameComparison(level: 'confirmed', score: 1.0);
     }
@@ -244,7 +337,6 @@ class DuplicateDetector {
     final wordsA = normA.split(' ').where((w) => w.isNotEmpty).toList();
     final wordsB = normB.split(' ').where((w) => w.isNotEmpty).toList();
 
-    // فحص البادئة
     final shorter = wordsA.length <= wordsB.length ? wordsA : wordsB;
     final longer = wordsA.length > wordsB.length ? wordsA : wordsB;
 
@@ -270,7 +362,6 @@ class DuplicateDetector {
       }
     }
 
-    // نفس عدد الكلمات → Levenshtein
     if (wordsA.length == wordsB.length &&
         SettingsService.getBool(
           AppSettings.detectHighSimilarity,
@@ -289,12 +380,9 @@ class DuplicateDetector {
     String n = input.trim();
     if (n.isEmpty) return '';
 
-    // حذف التشكيل
     n = n.replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '');
-    // حذف التطويل
     n = n.replaceAll('\u0640', '');
 
-    // توحيد الهمزات
     if (SettingsService.getBool(
       AppSettings.normalizeHamza,
       defaultValue: true,
@@ -302,7 +390,6 @@ class DuplicateDetector {
       n = n.replaceAll(RegExp(r'[أإآ]'), 'ا');
     }
 
-    // توحيد التاء المربوطة
     if (SettingsService.getBool(
       AppSettings.normalizeTaaMarbuta,
       defaultValue: true,
@@ -310,12 +397,10 @@ class DuplicateDetector {
       n = n.replaceAll('ة', 'ه');
     }
 
-    // توحيد الألف المقصورة
     n = n.replaceAll('ى', 'ي');
     n = n.replaceAll('ئ', 'ي');
     n = n.replaceAll('ؤ', 'و');
 
-    // الأسماء المركبة
     final compoundMode = SettingsService.getString(
       AppSettings.compoundNameHandling,
       defaultValue: 'auto',
@@ -324,7 +409,6 @@ class DuplicateDetector {
       n = n.replaceAll(RegExp(r'\b(عبد|ابو|ابن|ام|بنت)\s+'), r'$1');
     }
 
-    // مسافات
     n = n.replaceAll(RegExp(r'\s+'), ' ');
 
     return n.toLowerCase().trim();
@@ -369,3 +453,4 @@ class NameComparison {
 }
 
 // Duplicate Detector v1: نظام الكشف عن التكرارات (تطبيع عربي + مقارنة + حظر) — المرحلة 2
+// Duplicate Detector v2: ربط transactionDuplicateMode وtransactionWindowMinutes وmaxDuplicatesPerSync
