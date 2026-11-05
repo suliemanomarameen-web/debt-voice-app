@@ -57,9 +57,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 فحص التفعيل
-  // ═══════════════════════════════════════════════════════════
   bool _isVoiceEnabled() {
     return SettingsService.getBool(
       AppSettings.voiceEnabled,
@@ -67,9 +64,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🎤 زر التحدث
-  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleSpeech() async {
     if (!_isVoiceEnabled()) {
       _showDisabledMessage();
@@ -111,9 +105,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🔴 زر التسجيل
-  // ═══════════════════════════════════════════════════════════
   Future<void> _toggleRecording() async {
     if (!_isVoiceEnabled()) {
       _showDisabledMessage();
@@ -197,9 +188,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // معالجة النص
-  // ═══════════════════════════════════════════════════════════
   Future<void> _process() async {
     if (_autoProcessed) return;
     _autoProcessed = true;
@@ -354,9 +342,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 حفظ حساب جديد — مع إصلاح bug
-  // ═══════════════════════════════════════════════════════════
   Future<void> _saveAccount() async {
     if (_isSavingAccount) return;
     if (_parsed == null || _parsed!.customerName.isEmpty) return;
@@ -375,7 +360,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           _errorMessage = 'الحساب موجود مسبقاً';
           _parsed = null;
         });
-        // ✅ إصلاح: استخدام متغير محلي قبل التصفير
         TtsService.speakExistsBefore(customerName);
         return;
       }
@@ -416,9 +400,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // حفظ عملية — مع tracking
-  // ═══════════════════════════════════════════════════════════
   Future<void> _saveTransaction() async {
     if (_isSavingTransaction) return;
 
@@ -434,6 +415,109 @@ class _VoiceScreenState extends State<VoiceScreen> {
       final normalizedType = CodeService.normalizeType(p.intent);
       final storedType =
           (normalizedType == 'return') ? 'payment' : normalizedType;
+
+      // 🆕 فحص الدين على حساب موقوف
+      if (normalizedType == 'debt' && !c.isActive) {
+        final allow = SettingsService.getBool(
+          AppSettings.allowDebtOnInactive,
+          defaultValue: true,
+        );
+
+        if (!allow) {
+          if (SettingsService.getBool(
+            AppSettings.notifyDebtOnInactive,
+            defaultValue: true,
+          )) {
+            await LoggerService.logDebtOnInactiveAccount(
+              customerName: c.name,
+              amount: p.amount,
+              currency: p.currency,
+              accountant: await AccountantService.getAccountantName(),
+              relatedId: c.id?.toString(),
+            );
+          }
+          if (!mounted) return;
+          setState(() => _isSavingTransaction = false);
+          await showDialog(
+            context: context,
+            builder: (ctx) => Directionality(
+              textDirection: TextDirection.rtl,
+              child: AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.block, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('الدين معطّل'),
+                  ],
+                ),
+                content: Text(
+                  'الحساب "${c.name}" موقوف.\n\n'
+                  '💡 إعداد "السماح بالدين على حساب موقوف" معطّل.\n'
+                  'فعّله من الإعدادات المتقدمة إن أردت السماح.',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('فهمت'),
+                  ),
+                ],
+              ),
+            ),
+          );
+          return;
+        }
+
+        if (SettingsService.getBool(
+          AppSettings.notifyDebtOnInactive,
+          defaultValue: true,
+        )) {
+          await LoggerService.logDebtOnInactiveAccount(
+            customerName: c.name,
+            amount: p.amount,
+            currency: p.currency,
+            accountant: await AccountantService.getAccountantName(),
+            relatedId: c.id?.toString(),
+          );
+        }
+
+        if (!mounted) return;
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.block, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('الحساب موقوف'),
+                ],
+              ),
+              content: Text(
+                'الحساب "${c.name}" موقوف حالياً.\n\n'
+                'هل تريد المتابعة وإضافة العملية؟',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: Colors.orange),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('متابعة'),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (proceed != true) {
+          setState(() => _isSavingTransaction = false);
+          return;
+        }
+      }
 
       final results = await Future.wait([
         db.transactionExistsRecent(
@@ -476,7 +560,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
         createdAt: DateTime.now().toIso8601String(),
       ));
 
-      // 🆕 تحديث updated_at للعميل
       if (accountant != null && accountant.isNotEmpty) {
         await db.updateCustomerFields(
           c.id!,
@@ -611,7 +694,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    // ===== النص المكتشف =====
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
@@ -649,11 +731,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // ===== زرّان =====
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        // 🎤 زر التحدث
                         Column(
                           children: [
                             GestureDetector(
@@ -710,7 +790,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                           ],
                         ),
 
-                        // 🔴 زر التسجيل
                         Column(
                           children: [
                             GestureDetector(
@@ -773,7 +852,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
                     const SizedBox(height: 16),
 
-                    // ===== رسالة الحالة =====
                     Text(
                       !voiceEnabled
                           ? 'الإدخال الصوتي معطّل'
@@ -791,7 +869,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ),
 
-                    // ===== معاينة الصوت =====
                     if (_currentAudioPath != null && !_recording) ...[
                       const SizedBox(height: 12),
                       Container(
@@ -818,7 +895,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
-                    // ===== الأخطاء =====
                     if (_errorMessage != null) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -842,7 +918,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
-                    // ===== الإجابة =====
                     if (_queryResult != null) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -891,7 +966,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
-                    // ===== اختيار العميل =====
                     if (_askingWhich && _matches.isNotEmpty) ...[
                       const SizedBox(height: 20),
                       Card(
@@ -944,7 +1018,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
-                    // ===== تأكيد العملية =====
                     if (_parsed != null && _foundCustomer != null) ...[
                       const SizedBox(height: 24),
                       Card(
@@ -1015,7 +1088,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ),
                     ],
 
-                    // ===== إنشاء حساب =====
                     if (_parsed != null &&
                         _parsed!.intent == 'add_account' &&
                         _foundCustomer == null) ...[
@@ -1121,3 +1193,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 }
+
+// شاشة التسجيل الصوتي v2: ربط إعدادات الدين على حساب موقوف
+// - allowDebtOnInactive  → منع أم السماح بالدين
+// - notifyDebtOnInactive → تسجيل تحذير في السجل
+// - إظهار حوار تأكيد عند السماح
