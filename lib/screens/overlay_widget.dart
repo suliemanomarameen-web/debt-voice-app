@@ -10,8 +10,8 @@ import '../services/speech_service.dart';
 /// - STT مباشر في overlay isolate (يعمل عندما تكون Activity موجودة)
 /// - إيقاف تلقائي عند isFinal = true
 /// - وضعان: long_press (افتراضي) و tap
-/// - يستمع لـ start_recording من الإشعار
-/// - لا مؤقتات احتياطية، لا flags معقدة
+/// - يستمع لـ start_recording من الإشعار (عبر SharedPreferences polling)
+/// - يعالج الأزرار الأخرى (عملية، عميل جديد، إحصائيات، إشعارات، إيقاف)
 class OverlayWidget extends StatefulWidget {
   const OverlayWidget({super.key});
 
@@ -28,6 +28,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   String _mode = 'long_press';
 
   StreamSubscription<dynamic>? _subscription;
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -35,10 +36,11 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     _loadMode();
     _setupListener();
     _initSpeech();
+    _startPolling();
   }
 
   // ═══════════════════════════════════════════════════════════
-  // قراءة الوضع من SharedPreferences (لا SettingsService)
+  // قراءة الوضع من SharedPreferences
   // ═══════════════════════════════════════════════════════════
   Future<void> _loadMode() async {
     try {
@@ -73,7 +75,6 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 
         switch (action) {
           case 'speech_ready':
-            // main isolate جاهز — جرب التهيئة مرة أخرى
             if (!_ready) _initSpeech();
             break;
 
@@ -91,6 +92,69 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     } catch (e) {
       debugPrint('❌ [Overlay] listener error: $e');
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Polling للأوامر من الإشعار الدائم (خلفية)
+  // ═══════════════════════════════════════════════════════════
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+
+        // 🎤 ابدأ التسجيل
+        if (prefs.getBool('pending_overlay_record') == true) {
+          await prefs.setBool('pending_overlay_record', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_overlay_record → start');
+          if (!_recording && _ready) _startRecording();
+          return;
+        }
+
+        // ➕ عملية سريعة → اطلب من main isolate فتح الحوار
+        if (prefs.getBool('pending_quick_tx') == true) {
+          await prefs.setBool('pending_quick_tx', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_quick_tx → open_quick_tx');
+          await FlutterOverlayWindow.shareData({'action': 'open_quick_tx'});
+          return;
+        }
+
+        // 👤 عميل جديد
+        if (prefs.getBool('pending_new_customer') == true) {
+          await prefs.setBool('pending_new_customer', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_new_customer → open_new_customer');
+          await FlutterOverlayWindow.shareData({'action': 'open_new_customer'});
+          return;
+        }
+
+        // 📊 الإحصائيات
+        if (prefs.getBool('pending_open_stats') == true) {
+          await prefs.setBool('pending_open_stats', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_open_stats → open_stats');
+          await FlutterOverlayWindow.shareData({'action': 'open_stats'});
+          return;
+        }
+
+        // 📋 الإشعارات
+        if (prefs.getBool('pending_open_notifications') == true) {
+          await prefs.setBool('pending_open_notifications', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_open_notifications → open_notifications');
+          await FlutterOverlayWindow.shareData({'action': 'open_notifications'});
+          return;
+        }
+
+        // ⏹️ إيقاف الزر العائم
+        if (prefs.getBool('pending_stop_overlay') == true) {
+          await prefs.setBool('pending_stop_overlay', false);
+          debugPrint('🖼️ [Overlay] Poll: pending_stop_overlay → stop');
+          // إغلاق الـ overlay من الداخل (سيؤدي إلى إغلاق الخدمة)
+          await FlutterOverlayWindow.closeOverlay();
+          return;
+        }
+      } catch (e) {
+        debugPrint('❌ [Overlay] Poll error: $e');
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -164,7 +228,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // إلغاء التسجيل (بدون إرسال)
+  // إلغاء التسجيل
   // ═══════════════════════════════════════════════════════════
   Future<void> _cancelRecording() async {
     if (!_recording) return;
@@ -193,6 +257,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -319,9 +384,8 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 // Overlay Widget v1: النسخة الأساسية
 // Overlay Widget v2: إعادة كتابة
 // Overlay Widget v3: نسخة نظيفة
-// - STT مباشر في overlay isolate (يعمل عندما Activity موجودة)
-// - إيقاف تلقائي عند isFinal = true
-// - وضعان: long_press (افتراضي) و tap
-// - استماع لـ start_recording من الإشعار
-// - بدون مؤقتات احتياطية، بدون _finishing، بدون _recordingTimer
-// - قراءة الوضع من SharedPreferences مباشرة
+// Overlay Widget v4: إضافة Polling
+// - كل 500ms يقرأ SharedPreferences
+// - ينفذ الإجراءات: record, quick_tx, new_customer, stats, notifications, stop
+// - يرسل shareData للـ main isolate لفتح الشاشات المطلوبة
+// - يغلق الـ overlay مباشرة عند stop_overlay
