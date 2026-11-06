@@ -166,6 +166,18 @@ class AppSettings {
   // ═══════════════════════════════════════════════════════════
 
   static const String overlayRecordMode = 'overlay_record_mode';
+  static const String overlayAutoStart = 'overlay_auto_start';
+
+  // 🆕 أزرار الإشعار الدائم (3 كحد أقصى في Android)
+  static const String overlayNotifBtnRecord = 'overlay_notif_btn_record';
+  static const String overlayNotifBtnQuickTx = 'overlay_notif_btn_quick_tx';
+  static const String overlayNotifBtnNotifications =
+      'overlay_notif_btn_notifications';
+  static const String overlayNotifBtnNewCustomer =
+      'overlay_notif_btn_new_customer';
+  static const String overlayNotifBtnStats = 'overlay_notif_btn_stats';
+  static const String overlayNotifBtnStopOverlay =
+      'overlay_notif_btn_stop_overlay';
 
   // ═══════════════════════════════════════════════════════════
   // 📋 القيم الافتراضية
@@ -278,6 +290,13 @@ class AppSettings {
 
     // 🖼️ الزر العائم
     overlayRecordMode: 'long_press',
+    overlayAutoStart: true,
+    overlayNotifBtnRecord: true,
+    overlayNotifBtnQuickTx: false,
+    overlayNotifBtnNotifications: false,
+    overlayNotifBtnNewCustomer: false,
+    overlayNotifBtnStats: false,
+    overlayNotifBtnStopOverlay: false,
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -385,6 +404,13 @@ class AppSettings {
     notificationsDeleteAudio,
     // 🖼️ الزر العائم
     overlayRecordMode,
+    overlayAutoStart,
+    overlayNotifBtnRecord,
+    overlayNotifBtnQuickTx,
+    overlayNotifBtnNotifications,
+    overlayNotifBtnNewCustomer,
+    overlayNotifBtnStats,
+    overlayNotifBtnStopOverlay,
   };
 
   static bool isShared(String key) => sharedSettings.contains(key);
@@ -392,8 +418,11 @@ class AppSettings {
   static bool isDangerous(String key) => dangerousSettings.contains(key);
 }
 
-// الإعدادات v2: إضافة permanentDeleteAlwaysWins
-// الإعدادات v2.2: إضافة modificationAlwaysWins
-// الإعدادات v2.4: إضافة 18 إعداداً للتكرار
-// الإعدادات v2.5: إضافة 5 إعدادات للإشعارات
+// الإعدادات v2: إضافة permanentDeleteAlwaysWins (خيار الحذف النهائي يفوز دائماً)
+// الإعدادات v2.2: إضافة modificationAlwaysWins (حصري مع permanentDeleteAlwaysWins — لا يُفعّلان معاً)
+// الإعدادات v2.4: إضافة 18 إعداداً شاملاً لنظام التكرار (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
+// الإعدادات v2.5: إضافة 5 إعدادات للإشعارات (وضع الاحتفاظ، المدة، العدد، احتفظ بالمعلقة، احذف الصوت)
+
 // الإعدادات v6: إضافة 3 إعدادات للحوار الصوتي التفاعلي + overlayRecordMode
+
+// الإعدادات v7: إضافة overlayAutoStart + 6 إعدادات لأزرار الإشعار الدائم
