@@ -14,6 +14,7 @@ import 'services/cloud_backup_service.dart';
 import 'services/keywords_service.dart';
 import 'services/notification_action_handler.dart';
 import 'services/notification_service.dart';
+import 'services/overlay_service.dart';
 import 'services/pending_notification_service.dart';
 import 'services/permission_service.dart';
 import 'services/reminder_service.dart';
@@ -22,6 +23,7 @@ import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/tts_service.dart';
 import 'services/settings_service.dart';
+import 'services/voice_prompts_service.dart';
 // 🆕 استيرادات جديدة
 import 'services/device_service.dart';
 import 'services/accountants_service.dart';
@@ -57,6 +59,7 @@ void main() async {
 
   await TtsService.init();
   await KeywordsService.init();
+  await VoicePromptsService.init();
   await CodeService.migrateCountersIfNeeded();  // 🆕
 
   final theme = ThemeService();
@@ -103,17 +106,17 @@ void main() async {
   await AudioRecorderService.init();
 
   // ═══════════════════════════════════════════════════════
-  // 5. إشعار الزر العائم بأن الصوت جاهز
+  // 5. إعداد رد نداء الإشعارات (Actions + Tap)
   // ═══════════════════════════════════════════════════════
-  try {
-    await FlutterOverlayWindow.shareData({'action': 'speech_ready'});
-  } catch (_) {}
+  // 🆕 زر "🎤 ابدأ التسجيل" في إشعار الزر العائم
+  NotificationService.onAction = (actionId, payload) async {
+    if (actionId == 'overlay_record') {
+      debugPrint('🎤 [Main] Action: overlay_record → start recording');
+      await OverlayService.startRecordingFromNotification();
+      return;
+    }
 
-  // ═══════════════════════════════════════════════════════
-  // 6. إعداد رد نداء الإشعارات (Actions + Tap)
-  // ═══════════════════════════════════════════════════════
-  // 🆕 زر في الإشعار → handleAction (حفظ/إلغاء/حدد/تمييز)
-  NotificationService.onAction = (actionId, payload) {
+    // باقي الأزرار → handleAction (حفظ/إلغاء/حدد/تمييز)
     NotificationActionHandler.handleAction(actionId, payload);
   };
 
@@ -121,12 +124,12 @@ void main() async {
   NotificationService.onTap = _onNotificationTap;
 
   // ═══════════════════════════════════════════════════════
-  // 7. بدء مستمع الزر العائم
+  // 6. بدء مستمع الزر العائم
   // ═══════════════════════════════════════════════════════
   OverlayHandler.listen();
 
   // ═══════════════════════════════════════════════════════
-  // 8. تشغيل التطبيق
+  // 7. تشغيل التطبيق
   // ═══════════════════════════════════════════════════════
   runApp(MultiProvider(
     providers: [ChangeNotifierProvider.value(value: theme)],
@@ -283,3 +286,10 @@ void overlayMain() {
 // main v2: فحص التكرارات عند البدء والاستئناف + فتح شاشة التكرارات الإلزامية (المرحلة 5)
 // main v3: تهيئة PendingNotificationService (احتفاظ + انتهاء + إعادة عرض) + ربط onAction و onTap
 // main v3.2: _onNotificationTap يفتح شاشة الإشعارات (open_notifications / voice_notif:X) + استيراد notifications_screen
+
+// main v4: ربط الحوار الصوتي التفاعلي
+// - إضافة استيراد voice_prompts_service + overlay_service
+// - تهيئة VoicePromptsService.init() بعد KeywordsService.init()
+// - حذف كتلة speech_ready من main() (نُقلت إلى OverlayService.show)
+// - NotificationService.onAction أصبح async + معالج overlay_record
+// - عند الضغط على "🎤 ابدأ التسجيل" → OverlayService.startRecordingFromNotification()
