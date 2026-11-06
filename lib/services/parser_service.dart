@@ -288,7 +288,13 @@ class ParserService {
     final amount = _extractAmountOnly(original);
 
     // 3. اسم الحساب
-    String? customerName = _extractNamePartial(clean);
+    // ✅ إصلاح: عند add_account، استخدم _extractAccountName (تعرف "باسم...")
+    String? customerName;
+    if (intent == 'add_account') {
+      customerName = _extractAccountName(original);
+    } else {
+      customerName = _extractNamePartial(clean);
+    }
 
     // 4. الأصناف
     String? items = _extractItemsPartial(clean, amount);
@@ -798,3 +804,4 @@ class _NameAmount {
 // - _extractNameFromAnswer: لاستخراج اسم من رد مباشر
 // - _extractAmountOnly: لاستخراج رقم من أي نص
 // - merge(): لدمج نتائج متعددة
+// Parser Service v2.1: إصلاح استخراج اسم الحساب عند add_account (استخدام _extractAccountName)
