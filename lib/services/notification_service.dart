@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class NotificationAction {
   final String id;
@@ -200,13 +201,12 @@ class NotificationService {
 
   /// 🆕 إشعار دائم مع أزرار تفاعلية
   ///
-  /// يُستخدم لإشعار الزر العائم بحيث يحتوي على زر "🎤 ابدأ التسجيل".
+  /// يُستخدم لإشعار الزر العائم بحيث يحتوي على أزرار تفاعلية.
   ///
   /// ملاحظات مهمة:
   /// - `onlyAlertOnce: true` يمنع الصوت عند كل تحديث.
   /// - `ongoing: true` + `autoCancel: false` يجعل الإشعار دائمًا.
   /// - الأزرار تستخدم `cancelNotification: false` حتى لا يختفي الإشعار.
-  /// - `showsUserInterface: false` للأزرار (لا تفتح التطبيق).
   static Future<void> showPersistentWithActions({
     required int id,
     required String title,
@@ -253,13 +253,80 @@ class NotificationService {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🆕 المعالج الخلفي لأزرار الإشعار
+// ═══════════════════════════════════════════════════════════════
+//
+// يعمل عندما التطبيق في الخلفية (مغلق أو في تطبيق آخر).
+//
+// استراتيجية التواصل مع الـ overlay:
+// 1. المستخدم يضغط "🎤 ابدأ التسجيل" في الإشعار
+// 2. Android يستدعي هذا المعالج (في isolate منفصل)
+// 3. نكتب flag في SharedPreferences
+// 4. overlay_widget (في overlay isolate) يستطلع كل 500ms
+// 5. يقرأ flag = true → يبدأ التسجيل → يمسح flag
+//
+// لماذا SharedPreferences وليس shareData؟
+// - shareData قد لا يعمل من isolate خلفي على جميع الأجهزة
+// - SharedPreferences مضمون 100% (تخزين بسيط)
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
-  debugPrint('🔔 [Notif BG] Action: ${response.actionId}');
+
+  final actionId = response.actionId;
+  final payload = response.payload ?? '';
+
+  debugPrint('🔔 [Notif BG] Action: $actionId, payload: $payload');
+
+  if (actionId == null || actionId.isEmpty) return;
+
+  try {
+    final prefs = await SharedPreferences.getInstance();
+
+    switch (actionId) {
+      case 'overlay_record':
+        // علم للـ overlay بأن يبدأ التسجيل
+        await prefs.setBool('pending_overlay_record', true);
+        debugPrint('🔔 [Notif BG] Set pending_overlay_record = true');
+        break;
+
+      case 'overlay_quick_tx':
+        await prefs.setBool('pending_quick_tx', true);
+        debugPrint('🔔 [Notif BG] Set pending_quick_tx = true');
+        break;
+
+      case 'overlay_new_customer':
+        await prefs.setBool('pending_new_customer', true);
+        debugPrint('🔔 [Notif BG] Set pending_new_customer = true');
+        break;
+
+      case 'overlay_stats':
+        await prefs.setBool('pending_open_stats', true);
+        debugPrint('🔔 [Notif BG] Set pending_open_stats = true');
+        break;
+
+      case 'overlay_notifications':
+        await prefs.setBool('pending_open_notifications', true);
+        debugPrint('🔔 [Notif BG] Set pending_open_notifications = true');
+        break;
+
+      case 'overlay_stop':
+        await prefs.setBool('pending_stop_overlay', true);
+        debugPrint('🔔 [Notif BG] Set pending_stop_overlay = true');
+        break;
+    }
+  } catch (e) {
+    debugPrint('❌ [Notif BG] Error: $e');
+  }
 }
 
 // Notification Service v1: الخدمة الأساسية (show, showPersistent, cancel)
 // Notification Service v2: دعم أزرار تفاعلية + Group Summary + payloads متعددة + onAction
 // Notification Service v2.1: إضافة showsUserInterface + cancelNotification في NotificationAction
 // Notification Service v3: إضافة showPersistentWithActions لإشعار الزر العائم بزر "ابدأ التسجيل"
+
+// Notification Service v4: إصلاح المعالج الخلفي
+// - استيراد shared_preferences
+// - notificationTapBackground يكتب flags (pending_*) في SharedPreferences
+// - يدعم 6 أزرار (record/quick_tx/new_customer/stats/notifications/stop)
+// - overlay_widget سيستطلع هذه الـ flags كل 500ms
