@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_settings.dart';
 import 'notification_service.dart';
+import 'settings_service.dart';
 
 class OverlayService {
   static const int _notificationId = 9999;
@@ -19,6 +21,7 @@ class OverlayService {
     return await FlutterOverlayWindow.isActive();
   }
 
+  /// تشغيل الزر العائم (مع معالجة Huawei)
   static Future<bool> show() async {
     // 1) إذن الظهور فوق التطبيقات
     if (!await FlutterOverlayWindow.isPermissionGranted()) {
@@ -44,19 +47,13 @@ class OverlayService {
       }
     }
 
-    // 5) الإشعار الدائم مع زر "🎤 ابدأ التسجيل"
+    // 5) الإشعار الدائم مع أزرار ديناميكية
+    final actions = _buildNotificationActions();
     await NotificationService.showPersistentWithActions(
       id: _notificationId,
       title: '✅ الزر العائم يعمل',
-      body: 'اضغط على الزر البرتقالي أو استخدم "🎤 ابدأ التسجيل"',
-      actions: const [
-        NotificationAction(
-          id: 'overlay_record',
-          title: '🎤 ابدأ التسجيل',
-          showsUserInterface: false,
-          cancelNotification: false,
-        ),
-      ],
+      body: 'اضغط على الزر البرتقالي أو استخدم الأزرار أدناه',
+      actions: actions,
       payload: 'overlay_persistent',
     );
 
@@ -103,6 +100,121 @@ class OverlayService {
     return true;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 بناء الأزرار ديناميكياً حسب الإعدادات (3 كحد أقصى)
+  // ═══════════════════════════════════════════════════════════
+  static List<NotificationAction> _buildNotificationActions() {
+    final actions = <NotificationAction>[];
+
+    // الأولوية 1: 🎤 ابدأ التسجيل (لا يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnRecord,
+      defaultValue: true,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_record',
+        title: '🎤 ابدأ التسجيل',
+        showsUserInterface: false,
+        cancelNotification: false,
+      ));
+    }
+
+    // الأولوية 2: ➕ عملية سريعة (يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnQuickTx,
+      defaultValue: false,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_quick_tx',
+        title: '➕ عملية',
+        showsUserInterface: true,
+        cancelNotification: false,
+      ));
+    }
+
+    // الأولوية 3: 📋 الإشعارات (يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnNotifications,
+      defaultValue: false,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_notifications',
+        title: '📋 الإشعارات',
+        showsUserInterface: true,
+        cancelNotification: false,
+      ));
+    }
+
+    // الأولوية 4: 👤 عميل جديد (يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnNewCustomer,
+      defaultValue: false,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_new_customer',
+        title: '👤 عميل جديد',
+        showsUserInterface: true,
+        cancelNotification: false,
+      ));
+    }
+
+    // الأولوية 5: 📊 الإحصائيات (يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnStats,
+      defaultValue: false,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_stats',
+        title: '📊 الإحصائيات',
+        showsUserInterface: true,
+        cancelNotification: false,
+      ));
+    }
+
+    // الأولوية 6: ⏹️ إيقاف الزر (لا يفتح التطبيق)
+    if (SettingsService.getBool(
+      AppSettings.overlayNotifBtnStopOverlay,
+      defaultValue: false,
+    )) {
+      actions.add(const NotificationAction(
+        id: 'overlay_stop',
+        title: '⏹️ إيقاف الزر',
+        showsUserInterface: false,
+        cancelNotification: true,
+      ));
+    }
+
+    // ⚠️ Android يدعم 3 أزرار كحد أقصى — نأخذ الأول 3 فقط
+    if (actions.length > 3) {
+      debugPrint('⚠️ [OverlayService] ${actions.length} actions requested, '
+          'Android only supports 3 — keeping first 3');
+      return actions.sublist(0, 3);
+    }
+
+    return actions;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // تحديث الإشعار (عند تغيير الإعدادات)
+  // ═══════════════════════════════════════════════════════════
+  static Future<void> refreshNotification() async {
+    if (!await FlutterOverlayWindow.isActive()) return;
+
+    try {
+      final actions = _buildNotificationActions();
+      await NotificationService.showPersistentWithActions(
+        id: _notificationId,
+        title: '✅ الزر العائم يعمل',
+        body: 'اضغط على الزر البرتقالي أو استخدم الأزرار أدناه',
+        actions: actions,
+        payload: 'overlay_persistent',
+      );
+      debugPrint('✅ [OverlayService] Notification refreshed');
+    } catch (e) {
+      debugPrint('❌ [OverlayService] refreshNotification: $e');
+    }
+  }
+
   static Future<void> hide() async {
     if (await FlutterOverlayWindow.isActive()) {
       await FlutterOverlayWindow.closeOverlay();
@@ -118,6 +230,7 @@ class OverlayService {
     await FlutterOverlayWindow.shareData(data);
   }
 
+  /// إرسال أمر بدء التسجيل للـ overlay
   static Future<void> startRecordingFromNotification() async {
     try {
       if (!await FlutterOverlayWindow.isActive()) {
@@ -137,4 +250,12 @@ class OverlayService {
 
 // Overlay Service v1: النسخة الأساسية (show/hide/listen/sendData)
 // Overlay Service v2: تحسينات جذرية للزر العائم
+// - طلب إذن الميكروفون في main isolate قبل فتح الـ overlay
+// - إرسال speech_ready بعد showOverlay + تأخير 800ms
+// - إرسال وضع التسجيل (long_press / tap) للـ overlay
+// - إشعار دائم بزر "🎤 ابدأ التسجيل"
 // Overlay Service v2.1: إصلاح توافق OverlayFlag بدلًا من OverlayDefaultFlag
+// Overlay Service v3: أزرار ديناميكية
+// - _buildNotificationActions: يبني الأزرار حسب AppSettings (6 مفاتيح)
+// - Android يدعم 3 أزرار كحد أقصى — نأخذ الأول 3
+// - refreshNotification: تحديث الإشعار عند تغيير الإعدادات
