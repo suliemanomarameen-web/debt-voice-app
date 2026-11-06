@@ -161,7 +161,8 @@ class QueryService {
     }
 
     if (txs.isNotEmpty) {
-      final recent = txs.take(3).toList();
+      // ✅ إصلاح: آخر 3 عمليات لكن مرتبة من الأقدم للأحدث
+      final recent = txs.take(3).toList().reversed.toList();
       final parts = <String>[];
       for (final t in recent) {
         final isDebt = t.type == 'debt';
@@ -202,3 +203,7 @@ class QueryService {
     return false;
   }
 }
+
+// Query Service v1: خدمة الاستعلام الأساسية (رصيد / كشف حساب)
+// Query Service v2: ربط keywords_service (كلمات قابلة للتعديل)
+// Query Service v2.1: ترتيب آخر 3 عمليات من الأقدم للأحدث (reversed بعد take)
