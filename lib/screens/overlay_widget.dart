@@ -251,8 +251,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
   @override
   Widget build(BuildContext context) {
     final isTapMode = _mode == 'tap';
-    final isDark = !_isReady || _recording ? false : true;
-
+    
     // لون الحالة
     final Color bgColor = _recording
         ? Colors.red
