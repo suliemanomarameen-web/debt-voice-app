@@ -28,14 +28,14 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 15,
+      version: 16,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
   }
 
   // ═══════════════════════════════════════════════════════════
-  // إنشاء الجداول (v15)
+  // إنشاء الجداول (v16)
   // ═══════════════════════════════════════════════════════════
   Future _createDB(Database db, int v) async {
     await db.execute('''
@@ -43,6 +43,7 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cloud_id TEXT UNIQUE,
         name TEXT NOT NULL,
+        name_normalized TEXT,
         phone TEXT,
         account_type TEXT DEFAULT 'customer',
         note TEXT,
@@ -60,6 +61,11 @@ class DatabaseHelper {
         created_at TEXT NOT NULL
       )
     ''');
+
+    try {
+      await db.execute(
+          "CREATE INDEX IF NOT EXISTS idx_customers_name_normalized ON customers(name_normalized)");
+    } catch (_) {}
 
     await db.execute('''
       CREATE TABLE transactions(
@@ -425,6 +431,82 @@ class DatabaseHelper {
         debugPrint('⚠️ [DB v15] $e');
       }
     }
+
+    if (oldV < 16) {
+      try {
+        await _addColumnIfMissing(
+            db, 'customers', 'name_normalized', 'TEXT');
+
+        // املأ العمود للصفوف الموجودة
+        try {
+          final rows = await db.query('customers', columns: ['id', 'name']);
+          for (final row in rows) {
+            final name = row['name'] as String? ?? '';
+            final id = row['id'] as int;
+            final normalized = normalizeArabicName(name);
+            await db.update(
+              'customers',
+              {'name_normalized': normalized},
+              where: 'id = ?',
+              whereArgs: [id],
+            );
+          }
+        } catch (e) {
+          debugPrint('⚠️ [DB v16] fill normalized: $e');
+        }
+
+        try {
+          await db.execute(
+              "CREATE INDEX IF NOT EXISTS idx_customers_name_normalized ON customers(name_normalized)");
+        } catch (_) {}
+
+        debugPrint('✅ [DB] Upgraded to v16 (name_normalized)');
+      } catch (e) {
+        debugPrint('⚠️ [DB v16] $e');
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 تطبيع الاسم العربي — للبحث الذكي
+  // ═══════════════════════════════════════════════════════════
+
+  /// توحيد الهمزات والتاء المربوطة والتنوين والألف المقصورة
+  ///
+  /// أمثلة:
+  /// - "أحمد" = "احمد" = "أحمَد"
+  /// - "فاطمة" = "فاطمه"
+  /// - "مصطفى" = "مصطفي"
+  /// - "عبد الله" = "عبدالله" (بعد حذف المسافات المتعددة)
+  static String normalizeArabicName(String input) {
+    String n = input.trim();
+    if (n.isEmpty) return '';
+
+    // 1. حذف التشكيل (فتحة، ضمة، كسرة، سكون، شدة، تنوين)
+    n = n.replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '');
+
+    // 2. حذف التطويل (الكشيدة)
+    n = n.replaceAll('\u0640', '');
+
+    // 3. توحيد الهمزات (أ إ آ → ا)
+    n = n.replaceAll(RegExp(r'[أإآ]'), 'ا');
+
+    // 4. توحيد الألف المقصورة (ى → ي)
+    n = n.replaceAll('ى', 'ي');
+
+    // 5. توحيد التاء المربوطة (ة → ه)
+    n = n.replaceAll('ة', 'ه');
+
+    // 6. توحيد الهمزة على ياء (ئ → ي)
+    n = n.replaceAll('ئ', 'ي');
+
+    // 7. توحيد الهمزة على واو (ؤ → و)
+    n = n.replaceAll('ؤ', 'و');
+
+    // 8. توحيد المسافات المتعددة
+    n = n.replaceAll(RegExp(r'\s+'), ' ');
+
+    return n.toLowerCase().trim();
   }
 
   Future<void> _addColumnIfMissing(
@@ -1100,12 +1182,18 @@ class DatabaseHelper {
     final db = await database;
     final map = c.toMap();
 
+    // 🆕 تطبيع الاسم
+    if (map['name'] != null && (map['name'] as String).isNotEmpty) {
+      map['name_normalized'] = normalizeArabicName(map['name'] as String);
+    }
+
     if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
       map['cloud_id'] = _generateCloudId();
     }
     map['updated_at'] = map['updated_at'] ?? map['created_at'] ?? _now();
 
-    final id = await db.insert('customers', map);
+    final sanitized = await _sanitizeForTable('customers', map);
+    final id = await db.insert('customers', sanitized);
     _notifyChanged();
     return id;
   }
@@ -1117,6 +1205,12 @@ class DatabaseHelper {
     }
     data['updated_at'] = data['updated_at'] ?? data['created_at'] ?? _now();
 
+    // 🆕 تطبيع الاسم
+    if (data['name'] != null && (data['name'] as String).isNotEmpty) {
+      data['name_normalized'] =
+          normalizeArabicName(data['name'] as String);
+    }
+
     final sanitized = await _sanitizeForTable('customers', data);
     return db.insert('customers', sanitized);
   }
@@ -1127,7 +1221,14 @@ class DatabaseHelper {
     data['updated_at'] = _now();
     if (by != null && by.isNotEmpty) data['updated_by'] = by;
 
-    final r = await db.update('customers', data,
+    // 🆕 تطبيع الاسم
+    if (data['name'] != null && (data['name'] as String).isNotEmpty) {
+      data['name_normalized'] =
+          normalizeArabicName(data['name'] as String);
+    }
+
+    final sanitized = await _sanitizeForTable('customers', data);
+    final r = await db.update('customers', sanitized,
         where: 'id = ?', whereArgs: [c.id]);
     _notifyChanged();
     return r;
@@ -1142,6 +1243,13 @@ class DatabaseHelper {
       data['updated_at'] = _now();
       if (by != null && by.isNotEmpty) {
         data['updated_by'] = by;
+      }
+
+      // 🆕 تطبيع الاسم إذا تغيّر
+      if (data.containsKey('name') && data['name'] is String) {
+        final name = data['name'] as String;
+        data['name_normalized'] =
+            name.isEmpty ? null : normalizeArabicName(name);
       }
 
       final sanitized = await _sanitizeForTable('customers', data);
@@ -1266,6 +1374,13 @@ class DatabaseHelper {
       if (cloudRow.containsKey(f)) {
         data[f] = cloudRow[f];
       }
+    }
+
+    // 🆕 تطبيع الاسم إذا تغيّر
+    if (data.containsKey('name') && data['name'] is String) {
+      final name = data['name'] as String;
+      data['name_normalized'] =
+          name.isEmpty ? null : normalizeArabicName(name);
     }
 
     final sanitized = await _sanitizeForTable('customers', data);
@@ -1407,9 +1522,24 @@ class DatabaseHelper {
     return Customer.fromMap(r.first);
   }
 
+  // 🆕 البحث الدقيق بالتطبيع العربي
   Future<Customer?> findExactCustomer(String name) async {
     final db = await database;
+    final normalized = normalizeArabicName(name);
+
+    // 1. محاولة البحث العمودي (normalized = normalized)
     final r = await db.query(
+      'customers',
+      where: 'name_normalized = ? '
+          'AND (is_deleted = 0 OR is_deleted IS NULL) '
+          'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
+      whereArgs: [normalized],
+      limit: 1,
+    );
+    if (r.isNotEmpty) return Customer.fromMap(r.first);
+
+    // 2. fallback: البحث بالنص الأصلي (للصفوف القديمة قبل v16)
+    final r2 = await db.query(
       'customers',
       where: 'name = ? '
           'AND (is_deleted = 0 OR is_deleted IS NULL) '
@@ -1417,13 +1547,32 @@ class DatabaseHelper {
       whereArgs: [name],
       limit: 1,
     );
-    if (r.isEmpty) return null;
-    return Customer.fromMap(r.first);
+    if (r2.isNotEmpty) return Customer.fromMap(r2.first);
+
+    return null;
   }
 
+  // 🆕 البحث الجزئي بالتطبيع العربي
   Future<List<Customer>> findCustomersContaining(String name) async {
     final db = await database;
+    final normalized = normalizeArabicName(name);
+
+    // 1. البحث العمودي (normalized LIKE %normalized%)
     final r = await db.query(
+      'customers',
+      where: 'name_normalized LIKE ? '
+          'AND (is_deleted = 0 OR is_deleted IS NULL) '
+          'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
+      whereArgs: ['%$normalized%'],
+      orderBy: 'name ASC',
+    );
+
+    if (r.isNotEmpty) {
+      return r.map((e) => Customer.fromMap(e)).toList();
+    }
+
+    // 2. fallback: البحث بالنص الأصلي
+    final r2 = await db.query(
       'customers',
       where: 'name LIKE ? '
           'AND (is_deleted = 0 OR is_deleted IS NULL) '
@@ -1431,18 +1580,30 @@ class DatabaseHelper {
       whereArgs: ['%$name%'],
       orderBy: 'name ASC',
     );
-    return r.map((e) => Customer.fromMap(e)).toList();
+    return r2.map((e) => Customer.fromMap(e)).toList();
   }
 
+  // 🆕 البحث بالاسم + التاريخ (للاستعادة من النسخ)
   Future<int?> findCustomerIdByNameAndDate(
       String name, String createdAt) async {
     final db = await database;
+    final normalized = normalizeArabicName(name);
+
+    // 1. البحث العمودي
     final r = await db.query('customers',
+        where: 'name_normalized = ? AND created_at = ?',
+        whereArgs: [normalized, createdAt],
+        limit: 1);
+    if (r.isNotEmpty) return r.first['id'] as int?;
+
+    // 2. fallback
+    final r2 = await db.query('customers',
         where: 'name = ? AND created_at = ?',
         whereArgs: [name, createdAt],
         limit: 1);
-    if (r.isEmpty) return null;
-    return r.first['id'] as int?;
+    if (r2.isNotEmpty) return r2.first['id'] as int?;
+
+    return null;
   }
 
   Future<int> setCustomerActive(int id, bool active, {String? by}) async {
@@ -2308,3 +2469,4 @@ class DatabaseHelper {
 // قاعدة البيانات v14: إضافة جدول pending_duplicates + 14 دالة لإدارة التكرارات
 // قاعدة البيانات v15: إضافة جدول pending_notifications + 14 دالة CRUD
 // قاعدة البيانات v15.1: إعادة إدراج دوال pending_duplicates (كانت مفقودة من إصدار v15 الأصلي) + applyNotificationsRetention
+// قاعدة البيانات v16: إضافة name_normalized + التطبيع العربي للبحث عن الحسابات
