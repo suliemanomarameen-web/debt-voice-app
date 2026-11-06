@@ -3,7 +3,9 @@ import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 import '../services/auth_service.dart';
 import '../services/logger_service.dart';
+import '../services/voice_prompts_service.dart';
 import '../models/log_event.dart';
+import 'voice_prompts_screen.dart';
 
 class AdvancedSettingsScreen extends StatefulWidget {
   const AdvancedSettingsScreen({super.key});
@@ -341,6 +343,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.voicePendingAutoExpireDays: 'انتهاء صلاحية المعلقات الصوتية',
       AppSettings.voiceFilterEmpty: 'فلترة التسجيلات الفارغة',
       AppSettings.voiceFilterUnclear: 'فلترة غير المفهومة',
+      // 🆕 الحوار الصوتي
+      AppSettings.voiceConversationEnabled: 'تفعيل الحوار الصوتي التفاعلي',
+      AppSettings.voiceAlwaysAskForItems: 'السؤال عن البيان دائمًا',
+      AppSettings.voiceMaxConversationRounds: 'عدد محاولات الحوار',
+      // 🆕 الزر العائم
+      AppSettings.overlayRecordMode: 'طريقة التسجيل من الزر العائم',
+      // باقي
       AppSettings.enforceMaxBalance: 'تطبيق الحد الأقصى',
       AppSettings.warnOnExceed: 'تنبيه عند التجاوز',
       AppSettings.blockOnExceed: 'منع تسجيل عملية تتجاوز الحد',
@@ -437,6 +446,17 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.voicePendingAutoExpireDays: 'انتهاء صلاحية التسجيلات المعلقة',
       AppSettings.voiceFilterEmpty: 'إخفاء التسجيلات الصامتة من القائمة',
       AppSettings.voiceFilterUnclear: 'إخفاء التسجيلات غير المفهومة',
+      // 🆕 الحوار الصوتي
+      AppSettings.voiceConversationEnabled:
+          'مفعّل: يسألك عن الحقول الناقصة ويبدأ التسجيل تلقائيًا. معطّل: السلوك القديم (تسجيل واحد فقط).',
+      AppSettings.voiceAlwaysAskForItems:
+          'مفعّل: يسأل دائمًا عن البيان حتى لو الجملة كاملة. معطّل: يحفظ مباشرة إذا الجملة كاملة.',
+      AppSettings.voiceMaxConversationRounds:
+          'كم مرة يحاول السؤال قبل أن يستسلم ويحفظ في السجل؟',
+      // 🆕 الزر العائم
+      AppSettings.overlayRecordMode:
+          'ضغط مطول = اضغط واستمر للتسجيل (آمن). نقرة = اضغط مرة للبدء ومرة للإيقاف (سريع لكن قد ينقر بالخطأ).',
+      // باقي
       AppSettings.enforceMaxBalance: 'تطبيق حد الرصيد الأقصى',
       AppSettings.warnOnExceed: 'إظهار تحذير عند التجاوز',
       AppSettings.blockOnExceed: 'منع الحفظ إذا تجاوز الحد',
@@ -716,6 +736,64 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.voiceFilterEmpty),
                   _buildBoolTile(AppSettings.voiceFilterUnclear),
                 ]),
+            // 🆕 الحوار الصوتي التفاعلي
+            _buildGroup(
+                title: '💬 الحوار الصوتي التفاعلي',
+                groupName: 'الحوار',
+                keys: const [
+                  AppSettings.voiceConversationEnabled,
+                  AppSettings.voiceAlwaysAskForItems,
+                  AppSettings.voiceMaxConversationRounds,
+                ],
+                children: [
+                  _buildBoolTile(AppSettings.voiceConversationEnabled),
+                  _buildBoolTile(AppSettings.voiceAlwaysAskForItems),
+                  _buildIntTile(AppSettings.voiceMaxConversationRounds,
+                      min: 1, max: 10, suffix: 'محاولة'),
+                  const Divider(height: 1),
+                  // 🆕 رابط لشاشة نصوص الحوار
+                  ListTile(
+                    leading: const Icon(Icons.chat_bubble_outline,
+                        color: Colors.teal),
+                    title: const Text('✏️ تعديل نصوص الحوار والردود'),
+                    subtitle: const Text(
+                      'عدّل الأسئلة والردود الصوتية حسب لهجتك',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const VoicePromptsScreen(),
+                        ),
+                      ).then((_) {
+                        if (mounted) setState(() {});
+                      });
+                    },
+                  ),
+                ]),
+            // 🆕 الزر العائم
+            _buildGroup(
+                title: '🖼️ الزر العائم',
+                groupName: 'الزر العائم',
+                keys: const [
+                  AppSettings.overlayRecordMode,
+                ],
+                children: [
+                  _buildChoiceTile<String>(
+                    key: AppSettings.overlayRecordMode,
+                    currentValue: SettingsService.getString(
+                        AppSettings.overlayRecordMode,
+                        defaultValue: 'long_press'),
+                    options: const [
+                      MapEntry('long_press', 'ضغط مطول'),
+                      MapEntry('tap', 'نقرة واحدة'),
+                    ],
+                    onChanged: (v) =>
+                        _changeString(AppSettings.overlayRecordMode, v),
+                  ),
+                ]),
             _buildGroup(
                 title: '💰 الرصيد والحدود',
                 groupName: 'الرصيد',
@@ -960,3 +1038,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 // الإعدادات المتقدمة v2: إضافة خيار "الحذف النهائي يفوز دائماً" في قسم 🗑️ الحذف
 // الإعدادات المتقدمة v2.3: حصرية الإعدادين "الحذف النهائي" و"التعديل يفوز" + إضافة خيار "التعديل يفوز دائماً"
 // الإعدادات المتقدمة v2.4: إضافة قسم كامل "🔀 نظام التكرار" بـ 18 إعداداً (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
+
+// الإعدادات المتقدمة v3: إضافة قسم "💬 الحوار الصوتي التفاعلي"
+// - voiceConversationEnabled (تفعيل/تعطيل الحوار)
+// - voiceAlwaysAskForItems (السؤال عن البيان دائمًا)
+// - voiceMaxConversationRounds (عدد محاولات الحوار)
+// - رابط لشاشة VoicePromptsScreen لتعديل النصوص
+// - قسم "🖼️ الزر العائم" لاختيار وضع التسجيل (ضغط مطول / نقرة واحدة)
