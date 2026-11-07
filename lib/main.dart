@@ -36,178 +36,352 @@ import 'config/app_settings.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-void main() async {
+// ═══════════════════════════════════════════════════════════════
+// main: دفاعي — يعرض واجهة فوراً، ثم يهيئ الخدمات
+// ═══════════════════════════════════════════════════════════════
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const BootstrapApp());
+}
 
-  // ═══════════════════════════════════════════════════════
-  // 0. تهيئة الهوية والمحاسبين
-  // ═══════════════════════════════════════════════════════
-  await DeviceService.getDeviceId();
-  await AccountantsService.init();
+class BootstrapApp extends StatefulWidget {
+  const BootstrapApp({super.key});
+  @override
+  State<BootstrapApp> createState() => _BootstrapAppState();
+}
 
-  // ═══════════════════════════════════════════════════════
-  // 1. تحميل الإعدادات
-  // ═══════════════════════════════════════════════════════
-  await SettingsService.init();
+class _BootstrapAppState extends State<BootstrapApp> {
+  String? _error;
+  bool _ready = false;
+  ThemeService? _theme;
 
-  // ═══════════════════════════════════════════════════════
-  // 2. تهيئة الخدمات الأساسية
-  // ═══════════════════════════════════════════════════════
-  await NotificationService.init();
-  await ReminderService.init();
-  await PermissionService.requestAll();
-
-  final speech = SpeechService();
-  await speech.init();
-
-  await TtsService.init();
-  await KeywordsService.init();
-  await VoicePromptsService.init();
-  await CodeService.migrateCountersIfNeeded();
-
-  final theme = ThemeService();
-  await theme.load();
-
-  // ═══════════════════════════════════════════════════════
-  // 3. تهيئة قاعدة البيانات + تنظيف
-  // ═══════════════════════════════════════════════════════
-  try {
-    await DatabaseHelper.instance.database;
-
-    if (SettingsService.getBool('auto_cleanup_deleted',
-        defaultValue: true)) {
-      final days =
-          SettingsService.getInt('retention_days', defaultValue: 30);
-      final cleaned =
-          await DatabaseHelper.instance.cleanupDeleted(days: days);
-      if (cleaned['customers']! > 0 || cleaned['transactions']! > 0) {
-        debugPrint(
-            '🧹 Cleaned: ${cleaned['customers']} customers, ${cleaned['transactions']} transactions');
-      }
-    }
-
-    if (SettingsService.getBool('log_auto_cleanup',
-        defaultValue: true)) {
-      final logDays =
-          SettingsService.getInt('log_retention_days', defaultValue: 30);
-      await DatabaseHelper.instance.deleteLogsOlderThan(
-        DateTime.now()
-            .subtract(Duration(days: logDays))
-            .toIso8601String(),
-      );
-    }
-  } catch (e) {
-    debugPrint('⚠️ DB cleanup error: $e');
+  @override
+  void initState() {
+    super.initState();
+    _boot();
   }
 
-  // ═══════════════════════════════════════════════════════
-  // 4. تهيئة خدمات المزامنة والنسخ
-  // ═══════════════════════════════════════════════════════
-  await AutoBackupService.init();
-  await SyncService.init();
-  await CloudBackupService.init();
-  await AudioRecorderService.init();
+  Future<void> _boot() async {
+    try {
+      await _initializeServices();
+      if (mounted) setState(() => _ready = true);
+    } catch (e, stack) {
+      debugPrint('💥 [Bootstrap] Error: $e\n$stack');
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
 
-  // ═══════════════════════════════════════════════════════
-  // 5. إعداد رد نداء الإشعارات
-  // ═══════════════════════════════════════════════════════
-  NotificationService.onAction = (actionId, payload) async {
-    debugPrint('🔔 [Main] onAction: $actionId');
+  Future<void> _initializeServices() async {
+    // ═══════════════════════════════════════════════════════
+    // 1. الخدمات الأساسية (بدون حوارات)
+    // ═══════════════════════════════════════════════════════
+    await DeviceService.getDeviceId();
+    await AccountantsService.init();
+    await SettingsService.init();
+    await NotificationService.init();
+    await ReminderService.init();
 
-    switch (actionId) {
-      // 🎤 ابدأ التسجيل (احتياطي — عادةً يعمل عبر Background)
-      case 'overlay_record':
-        await OverlayService.startRecordingFromNotification();
-        return;
-
-      // ➕ عملية سريعة
-      case 'overlay_quick_tx':
-        _handleOverlayAction('open_quick_tx');
-        return;
-
-      // 📋 الإشعارات
-      case 'overlay_notifications':
-        _handleOverlayAction('open_notifications');
-        return;
-
-      // 👤 عميل جديد
-      case 'overlay_new_customer':
-        _handleOverlayAction('open_new_customer');
-        return;
-
-      // 📊 الإحصائيات
-      case 'overlay_stats':
-        _handleOverlayAction('open_stats');
-        return;
-
-      // ⏹️ إيقاف الزر العائم (احتياطي)
-      case 'overlay_stop':
-        await OverlayService.hide();
-        return;
+    // ═══════════════════════════════════════════════════════
+    // 2. الأذونات (في الخلفية — لا تحجب startup)
+    // ═══════════════════════════════════════════════════════
+    try {
+      await PermissionService.requestAll();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Permissions error: $e');
     }
 
-    // باقي الإجراءات (حفظ/إلغاء/حدد/تمييز)
-    NotificationActionHandler.handleAction(actionId, payload);
-  };
-
-  NotificationService.onTap = _onNotificationTap;
-
-  // ═══════════════════════════════════════════════════════
-  // 6. بدء مستمع الزر العائم
-  // ═══════════════════════════════════════════════════════
-  OverlayHandler.listen();
-
-  // 🆕 مستمع ثانٍ للأوامر التي يرسلها الـ overlay (open_xxx)
-  OverlayService.listen((data) {
-    if (data is! Map) return;
-    final action = data['action'] as String?;
-    if (action == null) return;
-
-    switch (action) {
-      case 'open_quick_tx':
-      case 'open_new_customer':
-      case 'open_stats':
-      case 'open_notifications':
-        _handleOverlayAction(action);
-        break;
+    // ═══════════════════════════════════════════════════════
+    // 3. STT + TTS + الكلمات
+    // ═══════════════════════════════════════════════════════
+    try {
+      final speech = SpeechService();
+      await speech.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Speech error: $e');
     }
-  });
 
-  // ═══════════════════════════════════════════════════════
-  // 7. تشغيل التطبيق
-  // ═══════════════════════════════════════════════════════
-  runApp(MultiProvider(
-    providers: [ChangeNotifierProvider.value(value: theme)],
-    child: const DebtApp(),
-  ));
+    try {
+      await TtsService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] TTS error: $e');
+    }
 
-  // ═══════════════════════════════════════════════════════
-  // 8. 🆕 تشغيل الزر العائم تلقائياً
-  // ═══════════════════════════════════════════════════════
-  _scheduleAutoStartOverlay();
+    try {
+      await KeywordsService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Keywords error: $e');
+    }
+
+    try {
+      await VoicePromptsService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] VoicePrompts error: $e');
+    }
+
+    try {
+      await CodeService.migrateCountersIfNeeded();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] CodeCounter error: $e');
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 4. الثيم
+    // ═══════════════════════════════════════════════════════
+    _theme = ThemeService();
+    try {
+      await _theme!.load();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Theme error: $e');
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 5. قاعدة البيانات + تنظيف
+    // ═══════════════════════════════════════════════════════
+    try {
+      await DatabaseHelper.instance.database;
+
+      if (SettingsService.getBool('auto_cleanup_deleted',
+          defaultValue: true)) {
+        final days =
+            SettingsService.getInt('retention_days', defaultValue: 30);
+        final cleaned =
+            await DatabaseHelper.instance.cleanupDeleted(days: days);
+        if (cleaned['customers']! > 0 || cleaned['transactions']! > 0) {
+          debugPrint(
+              '🧹 Cleaned: ${cleaned['customers']} customers, ${cleaned['transactions']} transactions');
+        }
+      }
+
+      if (SettingsService.getBool('log_auto_cleanup',
+          defaultValue: true)) {
+        final logDays =
+            SettingsService.getInt('log_retention_days', defaultValue: 30);
+        await DatabaseHelper.instance.deleteLogsOlderThan(
+          DateTime.now()
+              .subtract(Duration(days: logDays))
+              .toIso8601String(),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] DB cleanup error: $e');
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 6. المزامنة والنسخ
+    // ═══════════════════════════════════════════════════════
+    try {
+      await AutoBackupService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] AutoBackup error: $e');
+    }
+
+    try {
+      await SyncService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Sync error: $e');
+    }
+
+    try {
+      await CloudBackupService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] CloudBackup error: $e');
+    }
+
+    try {
+      await AudioRecorderService.init();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] AudioRecorder error: $e');
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 7. ردود نداء الإشعارات
+    // ═══════════════════════════════════════════════════════
+    NotificationService.onAction = (actionId, payload) async {
+      debugPrint('🔔 [Main] onAction: $actionId');
+
+      switch (actionId) {
+        case 'overlay_record':
+          await OverlayService.startRecordingFromNotification();
+          return;
+
+        case 'overlay_quick_tx':
+          _handleOverlayAction('open_quick_tx');
+          return;
+
+        case 'overlay_notifications':
+          _handleOverlayAction('open_notifications');
+          return;
+
+        case 'overlay_new_customer':
+          _handleOverlayAction('open_new_customer');
+          return;
+
+        case 'overlay_stats':
+          _handleOverlayAction('open_stats');
+          return;
+
+        case 'overlay_stop':
+          await OverlayService.hide();
+          return;
+      }
+
+      NotificationActionHandler.handleAction(actionId, payload);
+    };
+
+    NotificationService.onTap = _onNotificationTap;
+
+    // ═══════════════════════════════════════════════════════
+    // 8. مستمع الزر العائم
+    // ═══════════════════════════════════════════════════════
+    try {
+      OverlayHandler.listen();
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] OverlayHandler.listen error: $e');
+    }
+
+    try {
+      OverlayService.listen((data) {
+        if (data is! Map) return;
+        final action = data['action'] as String?;
+        if (action == null) return;
+
+        switch (action) {
+          case 'open_quick_tx':
+          case 'open_new_customer':
+          case 'open_stats':
+          case 'open_notifications':
+            _handleOverlayAction(action);
+            break;
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] OverlayService.listen error: $e');
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 9. 🆕 جدولة التشغيل التلقائي (مع تأخير أطول + تحقق مزدوج)
+    // ═══════════════════════════════════════════════════════
+    _scheduleAutoStartOverlay();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // ===== خطأ في التهيئة =====
+    if (_error != null) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Scaffold(
+            body: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline,
+                        color: Colors.red, size: 60),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'خطأ في التهيئة',
+                      style: TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'افتح السجل (adb logcat) لمعرفة التفاصيل',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SelectableText(
+                        _error!,
+                        style: const TextStyle(
+                            fontSize: 11, fontFamily: 'monospace'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ===== جاري التهيئة =====
+    if (!_ready || _theme == null) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 20),
+                  Text('جاري التهيئة...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ===== التطبيق جاهز =====
+    return MultiProvider(
+      providers: [ChangeNotifierProvider.value(value: _theme!)],
+      child: const DebtApp(),
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🆕 التشغيل التلقائي للزر العائم
+// 🆕 التشغيل التلقائي للزر العائم (تحقق مزدوج + تأخير أطول)
 // ═══════════════════════════════════════════════════════════════
 void _scheduleAutoStartOverlay() {
+  // تحقق أول
   final enabled = SettingsService.getBool(
     AppSettings.overlayAutoStart,
     defaultValue: true,
   );
   if (!enabled) {
-    debugPrint('🖼️ [AutoStart] Disabled by settings');
+    debugPrint('🖼️ [AutoStart] Disabled');
     return;
   }
 
-  // انتظر 3 ثوانٍ حتى تستقر Activity بعد runApp
-  Future.delayed(const Duration(seconds: 3), () async {
+  // انتظر 8 ثوانٍ (بدل 3) — حتى تستقر Activity + LockScreen
+  Future.delayed(const Duration(seconds: 8), () async {
     try {
-      if (await FlutterOverlayWindow.isActive()) {
-        debugPrint('🖼️ [AutoStart] Overlay already active — skip');
+      // تحقق ثاني (قد تغيّر الإعداد)
+      if (!SettingsService.getBool(
+        AppSettings.overlayAutoStart,
+        defaultValue: true,
+      )) {
+        debugPrint('🖼️ [AutoStart] Disabled during wait');
         return;
       }
-      debugPrint('🖼️ [AutoStart] Starting overlay automatically');
+
+      // تحقق من وجود context
+      if (navigatorKey.currentContext == null) {
+        debugPrint('🖼️ [AutoStart] No context yet — skip');
+        return;
+      }
+
+      if (await FlutterOverlayWindow.isActive()) {
+        debugPrint('🖼️ [AutoStart] Overlay already active');
+        return;
+      }
+
+      debugPrint('🖼️ [AutoStart] Starting overlay');
       await OverlayService.show();
     } catch (e) {
       debugPrint('❌ [AutoStart] Error: $e');
@@ -216,7 +390,7 @@ void _scheduleAutoStartOverlay() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🆕 معالج أوامر الإشعار الدائم (فتح الشاشات)
+// معالج أوامر الإشعار الدائم
 // ═══════════════════════════════════════════════════════════════
 void _handleOverlayAction(String action) {
   final ctx = navigatorKey.currentContext;
@@ -380,9 +554,12 @@ void overlayMain() {
 // main v3: تهيئة PendingNotificationService + ربط onAction و onTap
 // main v3.2: _onNotificationTap يفتح شاشة الإشعارات
 // main v4: ربط الحوار الصوتي التفاعلي
-// main v5: معالجة الأوامر الستة من الإشعار + التشغيل التلقائي
-// - _scheduleAutoStartOverlay: تشغيل تلقائي بعد 3 ثوانٍ
-// - _handleOverlayAction: فتح الشاشات (عملية، عميل جديد، إحصائيات، إشعارات)
-// - مستمع ثانٍ لـ OverlayService.listen (open_xxx من polling)
-// - معالجة onAction لجميع الأزرار الستة (احتياطي)
-// - استيراد: quick_transaction_dialog, stats_screen, add_account_screen, app_settings
+// main v5: معالجة الأوامر الستة + التشغيل التلقائي
+
+// main v6: BootstrapApp (إصلاح الشاشة السوداء)
+// - runApp(const BootstrapApp()) فوراً (قبل أي await)
+// - BootstrapApp.show spinner أثناء التهيئة
+// - BootstrapApp.show error screen عند فشل التهيئة
+// - كل service له try/catch منفصل (فشل واحد لا يوقف الباقي)
+// - auto-start تأخير 8 ثوانٍ (بدل 3) + تحقق مزدوج + تحقق من context
+// - لم يعد main() منتظراً للتهيئة (runApp first, initialize after)
