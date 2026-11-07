@@ -349,6 +349,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.voiceMaxConversationRounds: 'عدد محاولات الحوار',
       // 🆕 الزر العائم
       AppSettings.overlayRecordMode: 'طريقة التسجيل من الزر العائم',
+      AppSettings.overlayAutoStart: 'تشغيل الزر العائم تلقائياً',
+      AppSettings.overlayNotifBtnRecord: 'زر: 🎤 ابدأ التسجيل',
+      AppSettings.overlayNotifBtnQuickTx: 'زر: ➕ عملية سريعة',
+      AppSettings.overlayNotifBtnNotifications: 'زر: 📋 الإشعارات',
+      AppSettings.overlayNotifBtnNewCustomer: 'زر: 👤 عميل جديد',
+      AppSettings.overlayNotifBtnStats: 'زر: 📊 الإحصائيات',
+      AppSettings.overlayNotifBtnStopOverlay: 'زر: ⏹️ إيقاف الزر العائم',
       // باقي
       AppSettings.enforceMaxBalance: 'تطبيق الحد الأقصى',
       AppSettings.warnOnExceed: 'تنبيه عند التجاوز',
@@ -456,6 +463,20 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       // 🆕 الزر العائم
       AppSettings.overlayRecordMode:
           'ضغط مطول = اضغط واستمر للتسجيل (آمن). نقرة = اضغط مرة للبدء ومرة للإيقاف (سريع لكن قد ينقر بالخطأ).',
+      AppSettings.overlayAutoStart:
+          'مفعّل: يظهر الزر العائم تلقائياً بعد 3 ثوانٍ من فتح التطبيق. معطّل: تحتاج لتشغيله يدوياً من الإعدادات.',
+      AppSettings.overlayNotifBtnRecord:
+          'زر "🎤 ابدأ التسجيل" في الإشعار الدائم — يبدأ التسجيل بدون فتح التطبيق.',
+      AppSettings.overlayNotifBtnQuickTx:
+          'زر "➕ عملية" — يفتح نافذة عملية جديدة. (يفتح التطبيق)',
+      AppSettings.overlayNotifBtnNotifications:
+          'زر "📋 الإشعارات" — يفتح شاشة الإشعارات. (يفتح التطبيق)',
+      AppSettings.overlayNotifBtnNewCustomer:
+          'زر "👤 عميل جديد" — يفتح نافذة إضافة حساب. (يفتح التطبيق)',
+      AppSettings.overlayNotifBtnStats:
+          'زر "📊 الإحصائيات" — يفتح شاشة الإحصائيات. (يفتح التطبيق)',
+      AppSettings.overlayNotifBtnStopOverlay:
+          'زر "⏹️ إيقاف الزر العائم" — يغلق الزر والإشعار مباشرة.',
       // باقي
       AppSettings.enforceMaxBalance: 'تطبيق حد الرصيد الأقصى',
       AppSettings.warnOnExceed: 'إظهار تحذير عند التجاوز',
@@ -736,7 +757,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.voiceFilterEmpty),
                   _buildBoolTile(AppSettings.voiceFilterUnclear),
                 ]),
-            // 🆕 الحوار الصوتي التفاعلي
+            // 💬 الحوار الصوتي التفاعلي
             _buildGroup(
                 title: '💬 الحوار الصوتي التفاعلي',
                 groupName: 'الحوار',
@@ -751,7 +772,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildIntTile(AppSettings.voiceMaxConversationRounds,
                       min: 1, max: 10, suffix: 'محاولة'),
                   const Divider(height: 1),
-                  // 🆕 رابط لشاشة نصوص الحوار
                   ListTile(
                     leading: const Icon(Icons.chat_bubble_outline,
                         color: Colors.teal),
@@ -773,14 +793,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                     },
                   ),
                 ]),
-            // 🆕 الزر العائم
+            // 🖼️ الزر العائم (مُوسَّع)
             _buildGroup(
                 title: '🖼️ الزر العائم',
                 groupName: 'الزر العائم',
                 keys: const [
                   AppSettings.overlayRecordMode,
+                  AppSettings.overlayAutoStart,
+                  AppSettings.overlayNotifBtnRecord,
+                  AppSettings.overlayNotifBtnQuickTx,
+                  AppSettings.overlayNotifBtnNotifications,
+                  AppSettings.overlayNotifBtnNewCustomer,
+                  AppSettings.overlayNotifBtnStats,
+                  AppSettings.overlayNotifBtnStopOverlay,
                 ],
                 children: [
+                  _buildSubHeader('⚙️ تشغيل الزر'),
+                  _buildBoolTile(AppSettings.overlayAutoStart),
+                  _buildSubHeader('👆 طريقة التسجيل'),
                   _buildChoiceTile<String>(
                     key: AppSettings.overlayRecordMode,
                     currentValue: SettingsService.getString(
@@ -792,6 +822,50 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                     ],
                     onChanged: (v) =>
                         _changeString(AppSettings.overlayRecordMode, v),
+                  ),
+                  _buildSubHeader('🔘 أزرار الإشعار الدائم'),
+                  // تحذير
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: Colors.amber.withOpacity(0.4)),
+                      ),
+                      child: const Row(children: [
+                        Icon(Icons.info_outline,
+                            color: Colors.amber, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '⚠️ Android يدعم 3 أزرار كحد أقصى. إذا فعّلت أكثر من 3، ستُظهر أول 3 حسب الترتيب.',
+                            style:
+                                TextStyle(fontSize: 11, height: 1.4),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                  _buildBoolTile(AppSettings.overlayNotifBtnRecord),
+                  _buildBoolTile(AppSettings.overlayNotifBtnQuickTx),
+                  _buildBoolTile(AppSettings.overlayNotifBtnNotifications),
+                  _buildBoolTile(AppSettings.overlayNotifBtnNewCustomer),
+                  _buildBoolTile(AppSettings.overlayNotifBtnStats),
+                  _buildBoolTile(AppSettings.overlayNotifBtnStopOverlay),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      '💡 الترتيب حسب الأولوية: تسجيل → عملية → إشعارات → عميل → إحصائيات → إيقاف',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ),
                 ]),
             _buildGroup(
@@ -981,7 +1055,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     required Function(T) onChanged,
   }) {
     final isModified = SettingsService.isModified(key);
-    // تأكد من وجود القيمة الحالية في الخيارات
     final validValue = options.any((o) => o.key == currentValue)
         ? currentValue
         : options.first.key;
@@ -1037,11 +1110,11 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
 // الإعدادات المتقدمة v2: إضافة خيار "الحذف النهائي يفوز دائماً" في قسم 🗑️ الحذف
 // الإعدادات المتقدمة v2.3: حصرية الإعدادين "الحذف النهائي" و"التعديل يفوز" + إضافة خيار "التعديل يفوز دائماً"
-// الإعدادات المتقدمة v2.4: إضافة قسم كامل "🔀 نظام التكرار" بـ 18 إعداداً (تشغيل، مستوى، تطبيع، إيقاف، إشعارات، سلوك تلقائي)
+// الإعدادات المتقدمة v2.4: إضافة قسم كامل "🔀 نظام التكرار" بـ 18 إعداداً
 
-// الإعدادات المتقدمة v3: إضافة قسم "💬 الحوار الصوتي التفاعلي"
-// - voiceConversationEnabled (تفعيل/تعطيل الحوار)
-// - voiceAlwaysAskForItems (السؤال عن البيان دائمًا)
-// - voiceMaxConversationRounds (عدد محاولات الحوار)
-// - رابط لشاشة VoicePromptsScreen لتعديل النصوص
-// - قسم "🖼️ الزر العائم" لاختيار وضع التسجيل (ضغط مطول / نقرة واحدة)
+// الإعدادات المتقدمة v3: إضافة قسم "💬 الحوار الصوتي التفاعلي" + "🖼️ الزر العائم"
+// الإعدادات المتقدمة v4: توسيع قسم "🖼️ الزر العائم"
+// - overlayAutoStart (تشغيل تلقائي)
+// - 6 أزرار الإشعار الدائم (record, quick_tx, notifications, new_customer, stats, stop)
+// - تحذير بشأن حد Android (3 أزرار)
+// - ترتيب الأولويات
