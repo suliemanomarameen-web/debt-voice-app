@@ -197,36 +197,39 @@ class _BootstrapAppState extends State<BootstrapApp> {
     // 7. ردود نداء الإشعارات
     // ═══════════════════════════════════════════════════════
     NotificationService.onAction = (actionId, payload) async {
-      debugPrint('🔔 [Main] onAction: $actionId');
+  debugPrint('🔔 [Main] onAction: $actionId');
 
-      switch (actionId) {
-        case 'overlay_record':
-          await OverlayService.startRecordingFromNotification();
-          return;
+  switch (actionId) {
+    // 🆕 زر التسجيل: flag مكتوب بالفعل في _handleResponse
+    // overlay_widget polling سيقرأه ويبدأ التسجيل
+    // لا نستدعي startRecordingFromNotification() لأنها تستخدم shareData غير موثوق
+    case 'overlay_record':
+      debugPrint('🔔 [Main] overlay_record — flag already set, waiting for polling');
+      return;
 
-        case 'overlay_quick_tx':
-          _handleOverlayAction('open_quick_tx');
-          return;
+    case 'overlay_quick_tx':
+      _handleOverlayAction('open_quick_tx');
+      return;
 
-        case 'overlay_notifications':
-          _handleOverlayAction('open_notifications');
-          return;
+    case 'overlay_notifications':
+      _handleOverlayAction('open_notifications');
+      return;
 
-        case 'overlay_new_customer':
-          _handleOverlayAction('open_new_customer');
-          return;
+    case 'overlay_new_customer':
+      _handleOverlayAction('open_new_customer');
+      return;
 
-        case 'overlay_stats':
-          _handleOverlayAction('open_stats');
-          return;
+    case 'overlay_stats':
+      _handleOverlayAction('open_stats');
+      return;
 
-        case 'overlay_stop':
-          await OverlayService.hide();
-          return;
-      }
+    case 'overlay_stop':
+      await OverlayService.hide();
+      return;
+  }
 
-      NotificationActionHandler.handleAction(actionId, payload);
-    };
+  NotificationActionHandler.handleAction(actionId, payload);
+};
 
     NotificationService.onTap = _onNotificationTap;
 
