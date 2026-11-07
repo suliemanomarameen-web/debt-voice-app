@@ -67,9 +67,21 @@ class NotificationService {
     await androidImpl?.requestNotificationsPermission();
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 المعالج الأمامي — يكتب flags أيضاً
+  // ═══════════════════════════════════════════════════════════
+  //
+  // عندما التطبيق في المقدمة (أو في recent apps)، Android يستدعي
+  // هذا المعالج بدلاً من المعالج الخلفي. نكتب flag لكل action
+  // حتى يقرأه overlay_widget polling.
   static void _handleResponse(NotificationResponse resp) {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
+
+    // 🆕 اكتب flags لكل action
+    if (actionId != null && actionId.isNotEmpty) {
+      _writeFlagForAction(actionId);
+    }
 
     if (actionId != null &&
         actionId.isNotEmpty &&
@@ -81,6 +93,42 @@ class NotificationService {
 
     debugPrint('🔔 [Notif] Tap: $payload (id=${resp.id})');
     onTap?.call(payload);
+  }
+
+  // 🆕 يكتب flag في SharedPreferences حسب actionId
+  static Future<void> _writeFlagForAction(String actionId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      switch (actionId) {
+        case 'overlay_record':
+          await prefs.setBool('pending_overlay_record', true);
+          debugPrint('🔔 [Notif] Set flag: pending_overlay_record');
+          break;
+
+        case 'overlay_quick_tx':
+          await prefs.setBool('pending_quick_tx', true);
+          break;
+
+        case 'overlay_new_customer':
+          await prefs.setBool('pending_new_customer', true);
+          break;
+
+        case 'overlay_stats':
+          await prefs.setBool('pending_open_stats', true);
+          break;
+
+        case 'overlay_notifications':
+          await prefs.setBool('pending_open_notifications', true);
+          break;
+
+        case 'overlay_stop':
+          await prefs.setBool('pending_stop_overlay', true);
+          break;
+      }
+    } catch (e) {
+      debugPrint('❌ [Notif] _writeFlagForAction: $e');
+    }
   }
 
   static Future<void> show(
@@ -199,14 +247,6 @@ class NotificationService {
     );
   }
 
-  /// 🆕 إشعار دائم مع أزرار تفاعلية
-  ///
-  /// يُستخدم لإشعار الزر العائم بحيث يحتوي على أزرار تفاعلية.
-  ///
-  /// ملاحظات مهمة:
-  /// - `onlyAlertOnce: true` يمنع الصوت عند كل تحديث.
-  /// - `ongoing: true` + `autoCancel: false` يجعل الإشعار دائمًا.
-  /// - الأزرار تستخدم `cancelNotification: false` حتى لا يختفي الإشعار.
   static Future<void> showPersistentWithActions({
     required int id,
     required String title,
@@ -258,25 +298,13 @@ class NotificationService {
 // ═══════════════════════════════════════════════════════════════
 //
 // يعمل عندما التطبيق في الخلفية (مغلق أو في تطبيق آخر).
-//
-// استراتيجية التواصل مع الـ overlay:
-// 1. المستخدم يضغط "🎤 ابدأ التسجيل" في الإشعار
-// 2. Android يستدعي هذا المعالج (في isolate منفصل)
-// 3. نكتب flag في SharedPreferences
-// 4. overlay_widget (في overlay isolate) يستطلع كل 500ms
-// 5. يقرأ flag = true → يبدأ التسجيل → يمسح flag
-//
-// لماذا SharedPreferences وليس shareData؟
-// - shareData قد لا يعمل من isolate خلفي على جميع الأجهزة
-// - SharedPreferences مضمون 100% (تخزين بسيط)
+// يكتب flags في SharedPreferences ليقرأها overlay_widget polling.
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final actionId = response.actionId;
-  final payload = response.payload ?? '';
-
-  debugPrint('🔔 [Notif BG] Action: $actionId, payload: $payload');
+  debugPrint('🔔 [Notif BG] Action: $actionId');
 
   if (actionId == null || actionId.isEmpty) return;
 
@@ -285,34 +313,28 @@ void notificationTapBackground(NotificationResponse response) async {
 
     switch (actionId) {
       case 'overlay_record':
-        // علم للـ overlay بأن يبدأ التسجيل
         await prefs.setBool('pending_overlay_record', true);
         debugPrint('🔔 [Notif BG] Set pending_overlay_record = true');
         break;
 
       case 'overlay_quick_tx':
         await prefs.setBool('pending_quick_tx', true);
-        debugPrint('🔔 [Notif BG] Set pending_quick_tx = true');
         break;
 
       case 'overlay_new_customer':
         await prefs.setBool('pending_new_customer', true);
-        debugPrint('🔔 [Notif BG] Set pending_new_customer = true');
         break;
 
       case 'overlay_stats':
         await prefs.setBool('pending_open_stats', true);
-        debugPrint('🔔 [Notif BG] Set pending_open_stats = true');
         break;
 
       case 'overlay_notifications':
         await prefs.setBool('pending_open_notifications', true);
-        debugPrint('🔔 [Notif BG] Set pending_open_notifications = true');
         break;
 
       case 'overlay_stop':
         await prefs.setBool('pending_stop_overlay', true);
-        debugPrint('🔔 [Notif BG] Set pending_stop_overlay = true');
         break;
     }
   } catch (e) {
@@ -320,13 +342,12 @@ void notificationTapBackground(NotificationResponse response) async {
   }
 }
 
-// Notification Service v1: الخدمة الأساسية (show, showPersistent, cancel)
-// Notification Service v2: دعم أزرار تفاعلية + Group Summary + payloads متعددة + onAction
-// Notification Service v2.1: إضافة showsUserInterface + cancelNotification في NotificationAction
-// Notification Service v3: إضافة showPersistentWithActions لإشعار الزر العائم بزر "ابدأ التسجيل"
-
-// Notification Service v4: إصلاح المعالج الخلفي
-// - استيراد shared_preferences
-// - notificationTapBackground يكتب flags (pending_*) في SharedPreferences
-// - يدعم 6 أزرار (record/quick_tx/new_customer/stats/notifications/stop)
-// - overlay_widget سيستطلع هذه الـ flags كل 500ms
+// Notification Service v1: الخدمة الأساسية
+// Notification Service v2: أزرار تفاعلية + Group Summary + onAction
+// Notification Service v2.1: showsUserInterface + cancelNotification
+// Notification Service v3: showPersistentWithActions
+// Notification Service v4: notificationTapBackground يكتب flags
+// Notification Service v5: إصلاح زر التسجيل
+// - _handleResponse يكتب flag لكل action (قبل استدعاء onAction)
+// - _writeFlagForAction: دالة مساعدة
+// - الآن overlay_widget يستقبل الأوامر في كل الحالات (foreground + background)
