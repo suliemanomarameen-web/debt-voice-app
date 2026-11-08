@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/logger_service.dart';
-import '../services/speech_service.dart';
 
 class OverlayWidget extends StatefulWidget {
   const OverlayWidget({super.key});
@@ -14,11 +13,8 @@ class OverlayWidget extends StatefulWidget {
 }
 
 class _OverlayWidgetState extends State<OverlayWidget> {
-  final _speech = SpeechService();
-
   bool _recording = false;
-  bool _ready = false;
-  String _partialText = '';
+  bool _ready = true; // محرك الصوت الآن يعمل في main، لذا هو دائماً جاهز هنا
   String _mode = 'long_press';
 
   StreamSubscription<dynamic>? _subscription;
@@ -29,7 +25,6 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     super.initState();
     _loadMode();
     _setupListener();
-    _initSpeech();
     _startPolling();
   }
 
@@ -44,29 +39,23 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     }
   }
 
-  Future<void> _initSpeech() async {
-    await LoggerService.devInfo('overlay', 'STT init started');
-    try {
-      final ok = await _speech.init();
-      if (mounted) setState(() => _ready = ok);
-      await LoggerService.devInfo('overlay', 'STT init result: $ok');
-    } catch (e) {
-      await LoggerService.devError('overlay', 'STT init error: $e');
-      if (mounted) setState(() => _ready = false);
-    }
-  }
-
   void _setupListener() {
     try {
       _subscription = FlutterOverlayWindow.overlayListener.listen((data) async {
         if (data is! Map) return;
         final action = data['action'] as String?;
-        await LoggerService.devInfo(
-            'overlay', 'Received message: $action');
+        await LoggerService.devInfo('overlay', 'Received message: $action');
 
         switch (action) {
-          case 'speech_ready':
-            if (!_ready) _initSpeech();
+          case 'stt_result':
+            // استقبال نتيجة التعرف على الصوت من main
+            final text = data['text'] as String? ?? '';
+            if (mounted) {
+              setState(() {
+                _recording = false;
+              });
+            }
+            await LoggerService.devInfo('overlay', 'STT result received: "$text"');
             break;
 
           case 'overlay_mode':
@@ -75,8 +64,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
             break;
 
           case 'start_recording':
-            await LoggerService.devInfo(
-                'overlay', 'start_recording requested');
+            await LoggerService.devInfo('overlay', 'start_recording requested');
             _startRecording();
             break;
         }
@@ -96,7 +84,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
           await prefs.setBool('pending_overlay_record', false);
           await LoggerService.devInfo(
               'overlay', 'Poll: pending_overlay_record → start');
-          if (!_recording && _ready) _startRecording();
+          if (!_recording) _startRecording();
           return;
         }
 
@@ -151,41 +139,20 @@ class _OverlayWidgetState extends State<OverlayWidget> {
       return;
     }
 
-    if (!_ready) {
-      await LoggerService.devWarn('overlay', 'STT not ready, retrying init');
-      await _initSpeech();
-      if (!_ready) {
-        await LoggerService.devWarn(
-            'overlay', 'STT still not ready — sending need_setup');
-        FlutterOverlayWindow.shareData({'action': 'need_setup'});
-        return;
-      }
-    }
-
     if (!mounted) return;
 
     HapticFeedback.lightImpact();
     setState(() {
       _recording = true;
-      _partialText = '';
     });
 
-    await LoggerService.devInfo('overlay', 'Recording started');
+    await LoggerService.devInfo('overlay', 'Requesting STT from main isolate');
 
     try {
-      await _speech.listen(
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-        onResult: (text, isFinal) {
-          if (!mounted) return;
-          _partialText = text;
-          if (isFinal) {
-            _finishRecording();
-          }
-        },
-      );
+      // نطلب من التطبيق الرئيسي (main) تشغيل محرك الصوت
+      await FlutterOverlayWindow.shareData({'action': 'start_stt_in_main'});
     } catch (e) {
-      await LoggerService.devError('overlay', 'listen error: $e');
+      await LoggerService.devError('overlay', 'Failed to request STT: $e');
       if (mounted) setState(() => _recording = false);
     }
   }
@@ -194,42 +161,27 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     if (!_recording) return;
 
     try {
-      await _speech.stop();
-      if (!mounted) return;
-
+      if (mounted) setState(() => _recording = false);
       HapticFeedback.mediumImpact();
-      setState(() => _recording = false);
-
-      final text = _partialText.trim();
-      final finalText = text.isEmpty ? '__EMPTY__' : text;
-
-      await LoggerService.devInfo(
-          'overlay', 'Recording finished: "$finalText"');
-
-      await FlutterOverlayWindow.shareData({
-        'action': 'voice_text',
-        'text': finalText,
-      });
-
-      _partialText = '';
+      await LoggerService.devInfo('overlay', 'Requesting STT stop');
+      // نطلب من التطبيق الرئيسي إيقاف التسجيل
+      await FlutterOverlayWindow.shareData({'action': 'stop_stt_in_main'});
     } catch (e) {
       await LoggerService.devError('overlay', 'finish error: $e');
-      if (mounted) setState(() => _recording = false);
     }
   }
 
   Future<void> _cancelRecording() async {
     if (!_recording) return;
-    try {
-      await _speech.cancel();
-    } catch (_) {}
     if (!mounted) return;
     HapticFeedback.lightImpact();
     setState(() {
       _recording = false;
-      _partialText = '';
     });
     await LoggerService.devInfo('overlay', 'Recording cancelled');
+    try {
+      await FlutterOverlayWindow.shareData({'action': 'stop_stt_in_main'});
+    } catch (_) {}
   }
 
   Future<void> _handleTap() async {
@@ -366,3 +318,4 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 // Overlay Widget v3: نسخة نظيفة
 // Overlay Widget v4: Polling كل 500ms
 // Overlay Widget v5: سجلات المطور (devInfo/devWarn/devError)
+// Overlay Widget v6: نقل محرك الصوت (STT) إلى main isolate وإزالة SpeechService
