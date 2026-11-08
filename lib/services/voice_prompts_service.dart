@@ -18,6 +18,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// {name}      → "أحمد"
 /// {summary}   → "دين على محمد"
 /// {max}       → "3"
+/// {balance}   → "1000"
+/// {items}     → "دين 500، سداد 200"
 class VoicePromptsService {
   // ═══════════════════════════════════════════════════════════
   // مفاتيح التخزين
@@ -56,6 +58,33 @@ class VoicePromptsService {
   static const String rAddingNew = 'adding_new';
 
   // ═══════════════════════════════════════════════════════════
+  // 🆕 مفاتيح نطق العمليات والحسابات (TtsService)
+  // ═══════════════════════════════════════════════════════════
+  // تأكيد العملية
+  static const String tConfirmZero = 't_confirm_zero';
+  static const String tConfirmDebt = 't_confirm_debt';
+  static const String tConfirmPayment = 't_confirm_payment';
+
+  // الرصيد
+  static const String tBalanceDebt = 't_balance_debt';
+  static const String tBalanceCredit = 't_balance_credit';
+  static const String tBalanceZero = 't_balance_zero';
+
+  // إنشاء حساب
+  static const String tAccountCreated = 't_account_created';
+  static const String tExistsBefore = 't_exists_before';
+
+  // الأخطاء
+  static const String tNoAccount = 't_no_account';
+  static const String tMultipleAccounts = 't_multiple_accounts';
+  static const String tDidNotHear = 't_did_not_hear';
+  static const String tDidNotUnderstand = 't_did_not_understand';
+
+  // كشف الحساب
+  static const String tStatementHeader = 't_statement_header';
+  static const String tStatementWithItems = 't_statement_with_items';
+
+  // ═══════════════════════════════════════════════════════════
   // القيم الافتراضية للأسئلة
   // ═══════════════════════════════════════════════════════════
   static const Map<String, String> _defaultPrompts = {
@@ -90,6 +119,36 @@ class VoicePromptsService {
     rCancelled: 'تم الإلغاء',
     rChooseFromList: 'قل الرقم أو الاسم',
     rAddingNew: 'سيتم إضافة حساب جديد باسم {name}',
+
+    // 🆕 نصوص TtsService (تأكيد العمليات)
+    tConfirmZero:
+        'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency}. حِسَابُ {customer} أَصْبَحَ مُتَوَازِنًا',
+    tConfirmDebt:
+        'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency} عَلَى {customer}. الرَّصِيدُ المُتَبَقِّي هُوَ {balance} {currency}',
+    tConfirmPayment:
+        'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency} مِنْ {customer}. البَاقِي لَهُ هُوَ {balance} {currency}',
+
+    // 🆕 الرصيد
+    tBalanceDebt: '{customer} عَلَيْهِ {balance} {currency}',
+    tBalanceCredit: '{customer} بَاقِي لَهُ {balance} {currency}',
+    tBalanceZero:
+        'حِسَابُ {customer} مُتَوَازِن، لَا دُيُونَ وَلَا مُسْتَحَقَّات',
+
+    // 🆕 إنشاء حساب
+    tAccountCreated: 'تَمَّ إِنْشَاءُ حِسَابٍ بِاسْمِ {name}',
+    tExistsBefore: 'حِسَابُ {name} مَوْجُودٌ مُسْبَقًا',
+
+    // 🆕 أخطاء
+    tNoAccount: 'لَا يُوجَدُ حِسَابٌ بِاسْمِ {name}',
+    tMultipleAccounts:
+        'يُوجَدُ أَكْثَرُ مِنْ حِسَاب. حَدِّدِ الاِسْمَ بِدِقَّة',
+    tDidNotHear: 'لَمْ أَسْمَعْ شَيْئًا. تَحَدَّثْ بِوُضُوحْ',
+    tDidNotUnderstand: 'لَمْ أَفْهَمِ الجُمْلَة',
+
+    // 🆕 كشف الحساب
+    tStatementHeader: '{customer} — {balance} {currency}',
+    tStatementWithItems:
+        '{header}. آخِرُ العَمَلِيَّات: {items}',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -114,14 +173,12 @@ class VoicePromptsService {
     try {
       final sp = await SharedPreferences.getInstance();
 
-      // الأسئلة
       _promptsCache = {};
       for (final entry in _defaultPrompts.entries) {
         _promptsCache[entry.key] =
             sp.getString('$_promptPrefix${entry.key}') ?? entry.value;
       }
 
-      // الردود
       _responsesCache = {};
       for (final entry in _defaultResponses.entries) {
         _responsesCache[entry.key] =
@@ -143,7 +200,6 @@ class VoicePromptsService {
   // القراءة
   // ═══════════════════════════════════════════════════════════
 
-  /// جلب نص سؤال، مع استبدال المتغيرات
   static String getPrompt(String key, {Map<String, String>? vars}) {
     if (!_loaded) {
       return _substitute(_defaultPrompts[key] ?? '', vars);
@@ -152,7 +208,6 @@ class VoicePromptsService {
     return _substitute(text, vars);
   }
 
-  /// جلب نص رد صوتي، مع استبدال المتغيرات
   static String getResponse(String key, {Map<String, String>? vars}) {
     if (!_loaded) {
       return _substitute(_defaultResponses[key] ?? '', vars);
@@ -161,7 +216,6 @@ class VoicePromptsService {
     return _substitute(text, vars);
   }
 
-  /// استبدال المتغيرات {var} بقيمها
   static String _substitute(String text, Map<String, String>? vars) {
     if (vars == null || vars.isEmpty) return text;
     String result = text;
@@ -296,3 +350,10 @@ class VoicePromptsService {
 // - استبدال متغيرات {type}, {amount}, {customer}, {name}, {summary}, {max}
 // - تخزين في SharedPreferences
 // - تعديل فوري بدون بناء
+// VoicePromptsService v2: إضافة 14 نصاً من TtsService
+// - tConfirmZero/tConfirmDebt/tConfirmPayment (تأكيد العملية)
+// - tBalanceDebt/tBalanceCredit/tBalanceZero (الرصيد)
+// - tAccountCreated/tExistsBefore (إنشاء حساب)
+// - tNoAccount/tMultipleAccounts/tDidNotHear/tDidNotUnderstand (أخطاء)
+// - tStatementHeader/tStatementWithItems (كشف الحساب)
+// - متغيرات جديدة: {balance}, {items}, {header}
