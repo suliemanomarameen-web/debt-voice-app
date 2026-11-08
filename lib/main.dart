@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'handlers/overlay_handler.dart';
 import 'screens/add_account_screen.dart';
 import 'screens/duplicates_screen.dart';
@@ -17,6 +18,7 @@ import 'services/code_service.dart';
 import 'services/device_service.dart';
 import 'services/duplicate_detector.dart';
 import 'services/keywords_service.dart';
+import 'services/logger_service.dart';
 import 'services/notification_action_handler.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
@@ -36,9 +38,6 @@ import 'config/app_settings.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// ═══════════════════════════════════════════════════════════════
-// main: دفاعي — يعرض واجهة فوراً، ثم يهيئ الخدمات
-// ═══════════════════════════════════════════════════════════════
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const BootstrapApp());
@@ -72,27 +71,18 @@ class _BootstrapAppState extends State<BootstrapApp> {
   }
 
   Future<void> _initializeServices() async {
-    // ═══════════════════════════════════════════════════════
-    // 1. الخدمات الأساسية (بدون حوارات)
-    // ═══════════════════════════════════════════════════════
     await DeviceService.getDeviceId();
     await AccountantsService.init();
     await SettingsService.init();
     await NotificationService.init();
     await ReminderService.init();
 
-    // ═══════════════════════════════════════════════════════
-    // 2. الأذونات (في الخلفية — لا تحجب startup)
-    // ═══════════════════════════════════════════════════════
     try {
       await PermissionService.requestAll();
     } catch (e) {
       debugPrint('⚠️ [Bootstrap] Permissions error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 3. STT + TTS + الكلمات
-    // ═══════════════════════════════════════════════════════
     try {
       final speech = SpeechService();
       await speech.init();
@@ -124,9 +114,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       debugPrint('⚠️ [Bootstrap] CodeCounter error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 4. الثيم
-    // ═══════════════════════════════════════════════════════
     _theme = ThemeService();
     try {
       await _theme!.load();
@@ -134,9 +121,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       debugPrint('⚠️ [Bootstrap] Theme error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 5. قاعدة البيانات + تنظيف
-    // ═══════════════════════════════════════════════════════
     try {
       await DatabaseHelper.instance.database;
 
@@ -166,9 +150,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       debugPrint('⚠️ [Bootstrap] DB cleanup error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 6. المزامنة والنسخ
-    // ═══════════════════════════════════════════════════════
     try {
       await AutoBackupService.init();
     } catch (e) {
@@ -193,49 +174,64 @@ class _BootstrapAppState extends State<BootstrapApp> {
       debugPrint('⚠️ [Bootstrap] AudioRecorder error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 7. ردود نداء الإشعارات
-    // ═══════════════════════════════════════════════════════
     NotificationService.onAction = (actionId, payload) async {
-  debugPrint('🔔 [Main] onAction: $actionId');
+      debugPrint('🔔 [Main] onAction: $actionId');
+      await LoggerService.devInfo('main', 'onAction: $actionId');
 
-  switch (actionId) {
-    // 🆕 زر التسجيل: flag مكتوب بالفعل في _handleResponse
-    // overlay_widget polling سيقرأه ويبدأ التسجيل
-    // لا نستدعي startRecordingFromNotification() لأنها تستخدم shareData غير موثوق
-    case 'overlay_record':
-      debugPrint('🔔 [Main] overlay_record — flag already set, waiting for polling');
-      return;
+      switch (actionId) {
+        case 'overlay_record':
+          try {
+            debugPrint('🎤 [Main] Starting recording from notification');
+            await LoggerService.devInfo(
+                'main', 'overlay_record — waiting 500ms');
+            await Future.delayed(const Duration(milliseconds: 500));
 
-    case 'overlay_quick_tx':
-      _handleOverlayAction('open_quick_tx');
-      return;
+            if (!await FlutterOverlayWindow.isActive()) {
+              await LoggerService.devWarn(
+                  'main', 'Overlay not active — starting it');
+              await OverlayService.show();
+              await Future.delayed(const Duration(milliseconds: 1000));
+            }
 
-    case 'overlay_notifications':
-      _handleOverlayAction('open_notifications');
-      return;
+            await FlutterOverlayWindow.shareData({
+              'action': 'start_recording',
+              'source': 'notification_action',
+            });
+            await LoggerService.devInfo(
+                'main', 'Sent start_recording to overlay');
+          } catch (e) {
+            debugPrint('❌ [Main] start_recording error: $e');
+            await LoggerService.devError(
+                'main', 'start_recording: $e');
+          }
+          return;
 
-    case 'overlay_new_customer':
-      _handleOverlayAction('open_new_customer');
-      return;
+        case 'overlay_quick_tx':
+          _handleOverlayAction('open_quick_tx');
+          return;
 
-    case 'overlay_stats':
-      _handleOverlayAction('open_stats');
-      return;
+        case 'overlay_notifications':
+          _handleOverlayAction('open_notifications');
+          return;
 
-    case 'overlay_stop':
-      await OverlayService.hide();
-      return;
-  }
+        case 'overlay_new_customer':
+          _handleOverlayAction('open_new_customer');
+          return;
 
-  NotificationActionHandler.handleAction(actionId, payload);
-};
+        case 'overlay_stats':
+          _handleOverlayAction('open_stats');
+          return;
+
+        case 'overlay_stop':
+          await OverlayService.hide();
+          return;
+      }
+
+      NotificationActionHandler.handleAction(actionId, payload);
+    };
 
     NotificationService.onTap = _onNotificationTap;
 
-    // ═══════════════════════════════════════════════════════
-    // 8. مستمع الزر العائم
-    // ═══════════════════════════════════════════════════════
     try {
       OverlayHandler.listen();
     } catch (e) {
@@ -261,15 +257,11 @@ class _BootstrapAppState extends State<BootstrapApp> {
       debugPrint('⚠️ [Bootstrap] OverlayService.listen error: $e');
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 9. 🆕 جدولة التشغيل التلقائي (مع تأخير أطول + تحقق مزدوج)
-    // ═══════════════════════════════════════════════════════
     _scheduleAutoStartOverlay();
   }
 
   @override
   Widget build(BuildContext context) {
-    // ===== خطأ في التهيئة =====
     if (_error != null) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -317,7 +309,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       );
     }
 
-    // ===== جاري التهيئة =====
     if (!_ready || _theme == null) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -339,7 +330,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       );
     }
 
-    // ===== التطبيق جاهز =====
     return MultiProvider(
       providers: [ChangeNotifierProvider.value(value: _theme!)],
       child: const DebtApp(),
@@ -347,62 +337,54 @@ class _BootstrapAppState extends State<BootstrapApp> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 🆕 التشغيل التلقائي للزر العائم (تحقق مزدوج + تأخير أطول)
-// ═══════════════════════════════════════════════════════════════
 void _scheduleAutoStartOverlay() {
-  // تحقق أول
   final enabled = SettingsService.getBool(
     AppSettings.overlayAutoStart,
     defaultValue: true,
   );
   if (!enabled) {
-    debugPrint('🖼️ [AutoStart] Disabled');
+    LoggerService.devInfo('auto-start', 'Disabled by settings');
     return;
   }
 
-  // انتظر 8 ثوانٍ (بدل 3) — حتى تستقر Activity + LockScreen
   Future.delayed(const Duration(seconds: 8), () async {
     try {
-      // تحقق ثاني (قد تغيّر الإعداد)
       if (!SettingsService.getBool(
         AppSettings.overlayAutoStart,
         defaultValue: true,
       )) {
-        debugPrint('🖼️ [AutoStart] Disabled during wait');
+        await LoggerService.devInfo('auto-start', 'Disabled during wait');
         return;
       }
 
-      // تحقق من وجود context
       if (navigatorKey.currentContext == null) {
-        debugPrint('🖼️ [AutoStart] No context yet — skip');
+        await LoggerService.devWarn('auto-start', 'No context yet — skip');
         return;
       }
 
       if (await FlutterOverlayWindow.isActive()) {
-        debugPrint('🖼️ [AutoStart] Overlay already active');
+        await LoggerService.devInfo('auto-start', 'Overlay already active');
         return;
       }
 
-      debugPrint('🖼️ [AutoStart] Starting overlay');
+      await LoggerService.devInfo('auto-start', 'Starting overlay');
       await OverlayService.show();
     } catch (e) {
-      debugPrint('❌ [AutoStart] Error: $e');
+      await LoggerService.devError('auto-start', 'Error: $e');
     }
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// معالج أوامر الإشعار الدائم
-// ═══════════════════════════════════════════════════════════════
 void _handleOverlayAction(String action) {
   final ctx = navigatorKey.currentContext;
   if (ctx == null) {
     debugPrint('⚠️ [OverlayAction] No context for: $action');
+    LoggerService.devWarn('overlay-action', 'No context for: $action');
     return;
   }
 
   debugPrint('🖼️ [OverlayAction] Handling: $action');
+  LoggerService.devInfo('overlay-action', 'Handling: $action');
 
   switch (action) {
     case 'open_quick_tx':
@@ -429,12 +411,10 @@ void _handleOverlayAction(String action) {
 
     default:
       debugPrint('⚠️ [OverlayAction] Unknown: $action');
+      LoggerService.devWarn('overlay-action', 'Unknown: $action');
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// عند الضغط على إشعار
-// ═══════════════════════════════════════════════════════════════
 void _onNotificationTap(String? payload) {
   if (payload == null || payload.isEmpty) return;
 
@@ -553,16 +533,10 @@ void overlayMain() {
 }
 
 // main v1: الأساسية
-// main v2: فحص التكرارات عند البدء والاستئناف
-// main v3: تهيئة PendingNotificationService + ربط onAction و onTap
-// main v3.2: _onNotificationTap يفتح شاشة الإشعارات
-// main v4: ربط الحوار الصوتي التفاعلي
-// main v5: معالجة الأوامر الستة + التشغيل التلقائي
-
+// main v2: فحص التكرارات
+// main v3: PendingNotificationService + onAction + onTap
+// main v3.2: _onNotificationTap
+// main v4: الحوار الصوتي التفاعلي
+// main v5: الأوامر الستة + التشغيل التلقائي
 // main v6: BootstrapApp (إصلاح الشاشة السوداء)
-// - runApp(const BootstrapApp()) فوراً (قبل أي await)
-// - BootstrapApp.show spinner أثناء التهيئة
-// - BootstrapApp.show error screen عند فشل التهيئة
-// - كل service له try/catch منفصل (فشل واحد لا يوقف الباقي)
-// - auto-start تأخير 8 ثوانٍ (بدل 3) + تحقق مزدوج + تحقق من context
-// - لم يعد main() منتظراً للتهيئة (runApp first, initialize after)
+// main v7: سجلات المطور (devInfo/devWarn/devError)
