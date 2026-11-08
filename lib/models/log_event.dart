@@ -19,6 +19,7 @@ enum LogCategory {
   security,      // أمان (قفل/كلمة مرور)
   code,          // رموز العمليات
   system,        // عام
+  developer,     // 🆕 للمطور (تشخيص)
 }
 
 class LogEvent {
@@ -115,6 +116,8 @@ class LogEvent {
         return LogCategory.security;
       case 'code':
         return LogCategory.code;
+      case 'developer':
+        return LogCategory.developer;
       case 'system':
       default:
         return LogCategory.system;
@@ -182,6 +185,8 @@ class LogEvent {
         return 'أمان';
       case LogCategory.code:
         return 'رموز';
+      case LogCategory.developer:
+        return 'مطور';
       case LogCategory.system:
         return 'نظام';
     }
@@ -205,6 +210,8 @@ class LogEvent {
         return '🔒';
       case LogCategory.code:
         return '🔢';
+      case LogCategory.developer:
+        return '🔧';
       case LogCategory.system:
         return '📱';
     }
@@ -325,3 +332,6 @@ class LogEvent {
     }
   }
 }
+
+// Log Event v1: نموذج الحدث الأساسي
+// Log Event v2: إضافة فئة developer لوضع المطور (v8)
