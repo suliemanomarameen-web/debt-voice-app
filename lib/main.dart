@@ -188,13 +188,11 @@ class _BootstrapAppState extends State<BootstrapApp> {
             await LoggerService.devInfo(
                 'main', 'overlay_record — starting STT in main');
 
-            // فتح التطبيق إذا لم يكن مفتوحاً
             if (!await FlutterOverlayWindow.isActive()) {
               await OverlayService.show();
               await Future.delayed(const Duration(milliseconds: 1000));
             }
 
-            // تشغيل STT مباشرة من الخيط الرئيسي
             _startSTTInMain();
           } catch (e) {
             debugPrint('❌ [Main] start_recording error: $e');
@@ -340,14 +338,17 @@ class _BootstrapAppState extends State<BootstrapApp> {
   }
 }
 
-/// تشغيل STT من الخيط الرئيسي (لأن overlay isolate لا يستطيع)
+/// تشغيل STT من الخيط الرئيسي
 void _startSTTInMain() async {
   await LoggerService.devInfo('main', 'Starting STT in main isolate');
   try {
+    // 1. بدء جلسة جديدة (مهم جداً قبل استقبال النص)
+    VoiceConversationService.startSession(source: 'overlay_main');
+
     await _globalSpeech.listen(
       listenFor: const Duration(seconds: 30),
       pauseFor: const Duration(seconds: 3),
-      onResult: (text, isFinal) {
+      onResult: (text, isFinal) async {
         if (isFinal) {
           _globalSpeech.stop();
           final finalText = text.isEmpty ? '__EMPTY__' : text;
@@ -359,8 +360,18 @@ void _startSTTInMain() async {
             'text': finalText,
           });
 
-          // معالجة النص
-          VoiceConversationService().processText(finalText);
+          // 2. معالجة النص باستخدام الدالة الساكنة (بدون أقواس)
+          try {
+            final result = await VoiceConversationService.processText(finalText);
+            LoggerService.devInfo('main', 'VoiceConversationResult: ${result.step.name}');
+
+            // إذا كان الرد يتطلب قراءة صوتية
+            if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
+              TtsService.speak(result.ttsMessage!);
+            }
+          } catch (e) {
+            await LoggerService.devError('main', 'processText error: $e');
+          }
         }
       },
     );
@@ -572,7 +583,6 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
 @pragma("vm:entry-point")
 void overlayMain() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // تهيئة قاعدة البيانات للسماح للسجلات بالعمل في هذا الـ isolate
   try {
     await DatabaseHelper.instance.database;
   } catch (e) {
@@ -593,3 +603,4 @@ void overlayMain() async {
 // main v6: BootstrapApp (إصلاح الشاشة السوداء)
 // main v7: سجلات المطور (devInfo/devWarn/devError)
 // main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي (STT in Main Isolate)
+// main v9: إصلاح استدعاء VoiceConversationService (static) وبدء جلسة جديدة
