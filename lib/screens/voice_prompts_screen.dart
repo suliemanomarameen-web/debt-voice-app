@@ -32,6 +32,7 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
     required String defaultValue,
     required bool isPrompt,
     required String hint,
+    String? customVariables,
   }) async {
     final ctrl = TextEditingController(text: currentValue);
     final theme = Theme.of(context);
@@ -93,7 +94,7 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
                 // مربع التعديل
                 TextField(
                   controller: ctrl,
-                  maxLines: 3,
+                  maxLines: 4,
                   minLines: 2,
                   autofocus: true,
                   textDirection: TextDirection.rtl,
@@ -101,9 +102,10 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
                     labelText: 'النص المخصص',
                     hintText: hint,
                     border: const OutlineInputBorder(),
-                    helperText: isPrompt
-                        ? 'المتغيرات المتاحة: {name}'
-                        : 'المتغيرات: {type} {amount} {currency} {customer} {name} {summary} {max}',
+                    helperText: customVariables ??
+                        (isPrompt
+                            ? 'المتغيرات المتاحة: {name}'
+                            : 'المتغيرات: {type} {amount} {currency} {customer} {name} {summary} {max}'),
                     helperMaxLines: 3,
                   ),
                 ),
@@ -206,6 +208,7 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
     required bool isPrompt,
     required String hint,
     required ThemeData theme,
+    String? customVariables,
   }) {
     final isModified = isPrompt
         ? VoicePromptsService.isPromptModified(key)
@@ -223,6 +226,7 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
           defaultValue: defaultValue,
           isPrompt: isPrompt,
           hint: hint,
+          customVariables: customVariables,
         ),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -508,10 +512,10 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
             const SizedBox(height: 16),
 
             // ═══════════════════════════════════════════════
-            // القسم 2: الردود الصوتية
+            // القسم 2: الردود الصوتية العامة
             // ═══════════════════════════════════════════════
             _buildSectionHeader(
-              '🔊 الردود الصوتية',
+              '🔊 الردود الصوتية (الحوار)',
               'ما يُقرأ لك بصوت أثناء الحوار',
               Colors.green,
               theme,
@@ -630,6 +634,196 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
               theme: theme,
             ),
 
+            const SizedBox(height: 16),
+
+            // ═══════════════════════════════════════════════
+            // 🆕 القسم 3: نطق العمليات والحسابات
+            // ═══════════════════════════════════════════════
+            _buildSectionHeader(
+              '📢 نطق العمليات والحسابات',
+              'ما يُقرأ لك عند حفظ عملية أو عرض رصيد أو كشف',
+              Colors.purple,
+              theme,
+            ),
+
+            // تأكيد العملية
+            _buildRow(
+              key: VoicePromptsService.tConfirmZero,
+              label: 'تأكيد عملية (رصيد = 0)',
+              currentValue:
+                  responses[VoicePromptsService.tConfirmZero] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tConfirmZero),
+              isPrompt: false,
+              hint: 'مثال: تم تسجيل {type} بمبلغ {amount} {currency}. حساب {customer} متوازن',
+              theme: theme,
+              customVariables:
+                  'المتغيرات: {type} {amount} {currency} {customer}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tConfirmDebt,
+              label: 'تأكيد عملية (دين متبقٍ)',
+              currentValue:
+                  responses[VoicePromptsService.tConfirmDebt] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tConfirmDebt),
+              isPrompt: false,
+              hint: 'مثال: تم تسجيل {type} {amount} {currency} على {customer}. المتبقي {balance}',
+              theme: theme,
+              customVariables:
+                  'المتغيرات: {type} {amount} {currency} {customer} {balance}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tConfirmPayment,
+              label: 'تأكيد عملية (سداد)',
+              currentValue:
+                  responses[VoicePromptsService.tConfirmPayment] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tConfirmPayment),
+              isPrompt: false,
+              hint: 'مثال: تم تسجيل {type} {amount} {currency} من {customer}. الباقي {balance}',
+              theme: theme,
+              customVariables:
+                  'المتغيرات: {type} {amount} {currency} {customer} {balance}',
+            ),
+
+            // الرصيد
+            _buildRow(
+              key: VoicePromptsService.tBalanceDebt,
+              label: 'رصيد (عليه دين)',
+              currentValue:
+                  responses[VoicePromptsService.tBalanceDebt] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tBalanceDebt),
+              isPrompt: false,
+              hint: 'مثال: {customer} عليه {balance} {currency}',
+              theme: theme,
+              customVariables: 'المتغيرات: {customer} {balance} {currency}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tBalanceCredit,
+              label: 'رصيد (له باقي)',
+              currentValue:
+                  responses[VoicePromptsService.tBalanceCredit] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tBalanceCredit),
+              isPrompt: false,
+              hint: 'مثال: {customer} باقي له {balance} {currency}',
+              theme: theme,
+              customVariables: 'المتغيرات: {customer} {balance} {currency}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tBalanceZero,
+              label: 'رصيد (متوازن)',
+              currentValue:
+                  responses[VoicePromptsService.tBalanceZero] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tBalanceZero),
+              isPrompt: false,
+              hint: 'مثال: حساب {customer} متوازن، لا ديون ولا مستحقات',
+              theme: theme,
+              customVariables: 'المتغيرات: {customer}',
+            ),
+
+            // إنشاء حساب
+            _buildRow(
+              key: VoicePromptsService.tAccountCreated,
+              label: 'إنشاء حساب',
+              currentValue:
+                  responses[VoicePromptsService.tAccountCreated] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tAccountCreated),
+              isPrompt: false,
+              hint: 'مثال: تم إنشاء حساب باسم {name}',
+              theme: theme,
+              customVariables: 'المتغيرات: {name}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tExistsBefore,
+              label: 'حساب موجود مسبقاً',
+              currentValue:
+                  responses[VoicePromptsService.tExistsBefore] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tExistsBefore),
+              isPrompt: false,
+              hint: 'مثال: حساب {name} موجود مسبقاً',
+              theme: theme,
+              customVariables: 'المتغيرات: {name}',
+            ),
+
+            // أخطاء
+            _buildRow(
+              key: VoicePromptsService.tNoAccount,
+              label: 'لا يوجد حساب',
+              currentValue:
+                  responses[VoicePromptsService.tNoAccount] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tNoAccount),
+              isPrompt: false,
+              hint: 'مثال: لا يوجد حساب باسم {name}',
+              theme: theme,
+              customVariables: 'المتغيرات: {name}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tMultipleAccounts,
+              label: 'أكثر من حساب',
+              currentValue:
+                  responses[VoicePromptsService.tMultipleAccounts] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tMultipleAccounts),
+              isPrompt: false,
+              hint: 'مثال: يوجد أكثر من حساب، حدد الاسم بدقة',
+              theme: theme,
+            ),
+            _buildRow(
+              key: VoicePromptsService.tDidNotHear,
+              label: 'لم أسمع',
+              currentValue:
+                  responses[VoicePromptsService.tDidNotHear] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tDidNotHear),
+              isPrompt: false,
+              hint: 'مثال: لم أسمع شيئاً. تحدث بوضوح',
+              theme: theme,
+            ),
+            _buildRow(
+              key: VoicePromptsService.tDidNotUnderstand,
+              label: 'لم أفهم',
+              currentValue:
+                  responses[VoicePromptsService.tDidNotUnderstand] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tDidNotUnderstand),
+              isPrompt: false,
+              hint: 'مثال: لم أفهم الجملة',
+              theme: theme,
+            ),
+
+            // كشف الحساب
+            _buildRow(
+              key: VoicePromptsService.tStatementHeader,
+              label: 'مقدمة كشف الحساب',
+              currentValue:
+                  responses[VoicePromptsService.tStatementHeader] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tStatementHeader),
+              isPrompt: false,
+              hint: 'مثال: {customer} — {balance} {currency}',
+              theme: theme,
+              customVariables: 'المتغيرات: {customer} {balance} {currency}',
+            ),
+            _buildRow(
+              key: VoicePromptsService.tStatementWithItems,
+              label: 'كشف الحساب + عمليات',
+              currentValue:
+                  responses[VoicePromptsService.tStatementWithItems] ?? '',
+              defaultValue: VoicePromptsService.getDefaultResponse(
+                  VoicePromptsService.tStatementWithItems),
+              isPrompt: false,
+              hint: 'مثال: {header}. آخر العمليات: {items}',
+              theme: theme,
+              customVariables: 'المتغيرات: {header} {items}',
+            ),
+
             const SizedBox(height: 24),
           ],
         ),
@@ -684,3 +878,10 @@ class _VoicePromptsScreenState extends State<VoicePromptsScreen> {
 // - تعديل فوري لكل صف
 // - استعادة الافتراضي لكل صف + استعادة الكل
 // - تُطبَّق التعديلات فورًا بدون إعادة بناء
+// شاشة أسئلة الحوار الصوتي v2: إضافة قسم نطق العمليات والحسابات (14)
+// - tConfirmZero/tConfirmDebt/tConfirmPayment (تأكيد العملية)
+// - tBalanceDebt/tBalanceCredit/tBalanceZero (الرصيد)
+// - tAccountCreated/tExistsBefore (إنشاء حساب)
+// - tNoAccount/tMultipleAccounts/tDidNotHear/tDidNotUnderstand (أخطاء)
+// - tStatementHeader/tStatementWithItems (كشف الحساب)
+// - customVariables: تلميح المتغيرات المخصصة لكل حقل
