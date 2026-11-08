@@ -30,6 +30,7 @@ import 'services/speech_service.dart';
 import 'services/sync_service.dart';
 import 'services/theme_service.dart';
 import 'services/tts_service.dart';
+import 'services/voice_conversation_service.dart';
 import 'services/voice_prompts_service.dart';
 import 'tabs/tabs_screen.dart';
 import 'widgets/quick_transaction_dialog.dart';
@@ -37,6 +38,9 @@ import 'db/database_helper.dart';
 import 'config/app_settings.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// متغير عام لخدمة الصوت (نستخدمها لتشغيل STT من الخيط الرئيسي)
+final SpeechService _globalSpeech = SpeechService();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -84,8 +88,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     try {
-      final speech = SpeechService();
-      await speech.init();
+      await _globalSpeech.init();
     } catch (e) {
       debugPrint('⚠️ [Bootstrap] Speech error: $e');
     }
@@ -183,22 +186,16 @@ class _BootstrapAppState extends State<BootstrapApp> {
           try {
             debugPrint('🎤 [Main] Starting recording from notification');
             await LoggerService.devInfo(
-                'main', 'overlay_record — waiting 500ms');
-            await Future.delayed(const Duration(milliseconds: 500));
+                'main', 'overlay_record — starting STT in main');
 
+            // فتح التطبيق إذا لم يكن مفتوحاً
             if (!await FlutterOverlayWindow.isActive()) {
-              await LoggerService.devWarn(
-                  'main', 'Overlay not active — starting it');
               await OverlayService.show();
               await Future.delayed(const Duration(milliseconds: 1000));
             }
 
-            await FlutterOverlayWindow.shareData({
-              'action': 'start_recording',
-              'source': 'notification_action',
-            });
-            await LoggerService.devInfo(
-                'main', 'Sent start_recording to overlay');
+            // تشغيل STT مباشرة من الخيط الرئيسي
+            _startSTTInMain();
           } catch (e) {
             debugPrint('❌ [Main] start_recording error: $e');
             await LoggerService.devError(
@@ -245,6 +242,12 @@ class _BootstrapAppState extends State<BootstrapApp> {
         if (action == null) return;
 
         switch (action) {
+          case 'start_stt_in_main':
+            _startSTTInMain();
+            break;
+          case 'stop_stt_in_main':
+            _stopSTTInMain();
+            break;
           case 'open_quick_tx':
           case 'open_new_customer':
           case 'open_stats':
@@ -334,6 +337,49 @@ class _BootstrapAppState extends State<BootstrapApp> {
       providers: [ChangeNotifierProvider.value(value: _theme!)],
       child: const DebtApp(),
     );
+  }
+}
+
+/// تشغيل STT من الخيط الرئيسي (لأن overlay isolate لا يستطيع)
+void _startSTTInMain() async {
+  await LoggerService.devInfo('main', 'Starting STT in main isolate');
+  try {
+    await _globalSpeech.listen(
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 3),
+      onResult: (text, isFinal) {
+        if (isFinal) {
+          _globalSpeech.stop();
+          final finalText = text.isEmpty ? '__EMPTY__' : text;
+          LoggerService.devInfo('main', 'STT result: "$finalText"');
+
+          // إرسال النتيجة للـ overlay لتحديث الواجهة (إيقاف اللون الأحمر)
+          FlutterOverlayWindow.shareData({
+            'action': 'stt_result',
+            'text': finalText,
+          });
+
+          // معالجة النص
+          VoiceConversationService().processText(finalText);
+        }
+      },
+    );
+  } catch (e) {
+    await LoggerService.devError('main', 'STT listen error: $e');
+    FlutterOverlayWindow.shareData({
+      'action': 'stt_result',
+      'text': '__ERROR__',
+    });
+  }
+}
+
+/// إيقاف STT من الخيط الرئيسي
+void _stopSTTInMain() async {
+  await LoggerService.devInfo('main', 'Stopping STT in main isolate');
+  try {
+    await _globalSpeech.stop();
+  } catch (e) {
+    await LoggerService.devError('main', 'STT stop error: $e');
   }
 }
 
@@ -524,8 +570,14 @@ class _DebtAppState extends State<DebtApp> with WidgetsBindingObserver {
 }
 
 @pragma("vm:entry-point")
-void overlayMain() {
+void overlayMain() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // تهيئة قاعدة البيانات للسماح للسجلات بالعمل في هذا الـ isolate
+  try {
+    await DatabaseHelper.instance.database;
+  } catch (e) {
+    debugPrint('⚠️ [OverlayMain] DB init error: $e');
+  }
   runApp(const MaterialApp(
     debugShowCheckedModeBanner: false,
     home: OverlayWidget(),
@@ -540,3 +592,4 @@ void overlayMain() {
 // main v5: الأوامر الستة + التشغيل التلقائي
 // main v6: BootstrapApp (إصلاح الشاشة السوداء)
 // main v7: سجلات المطور (devInfo/devWarn/devError)
+// main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي (STT in Main Isolate)
