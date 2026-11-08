@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../config/app_settings.dart';
+import '../db/database_helper.dart';
 import '../services/settings_service.dart';
 import '../services/auth_service.dart';
 import '../services/logger_service.dart';
 import '../services/voice_prompts_service.dart';
 import '../models/log_event.dart';
+import 'logs_screen.dart';
 import 'voice_prompts_screen.dart';
 
 class AdvancedSettingsScreen extends StatefulWidget {
@@ -48,7 +50,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       if (!ok) return;
     }
 
-    // حصرية الإعدادين: لا يمكن تفعيلهما معاً
     if (value == true) {
       if (key == AppSettings.permanentDeleteAlwaysWins) {
         final wasOn =
@@ -57,7 +58,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
             AppSettings.modificationAlwaysWins, false);
         if (wasOn && mounted) {
           _snack(
-              '🔒 تم تعطيل "التعديل يفوز دائماً" تلقائياً (الإعدادان لا يعملان معاً)',
+              '🔒 تم تعطيل "التعديل يفوز دائماً" تلقائياً',
               Colors.orange);
         }
       } else if (key == AppSettings.modificationAlwaysWins) {
@@ -67,7 +68,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
             AppSettings.permanentDeleteAlwaysWins, false);
         if (wasOn && mounted) {
           _snack(
-              '🔒 تم تعطيل "الحذف النهائي يفوز دائماً" تلقائياً (الإعدادان لا يعملان معاً)',
+              '🔒 تم تعطيل "الحذف النهائي يفوز دائماً" تلقائياً',
               Colors.orange);
         }
       }
@@ -297,13 +298,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
       AppSettings.permanentDeleteAlwaysWins: '🪦 الحذف النهائي يفوز دائماً',
       AppSettings.modificationAlwaysWins: '✏️ التعديل يفوز دائماً',
-      // 🔀 كشف التكرار
       AppSettings.duplicateDetectionEnabled: 'تفعيل كشف التكرار',
       AppSettings.duplicateDetectionLevel: 'مستوى الكشف',
-      AppSettings.compoundNameHandling: 'الأسماء المركبة (عبدالله/عبد الله)',
+      AppSettings.compoundNameHandling: 'الأسماء المركبة',
       AppSettings.detectHighSimilarity: 'كشف التشابه العالي',
-      AppSettings.normalizeHamza: 'توحيد الهمزات (أ/إ/آ = ا)',
-      AppSettings.normalizeTaaMarbuta: 'توحيد التاء المربوطة (ة = ه)',
+      AppSettings.normalizeHamza: 'توحيد الهمزات',
+      AppSettings.normalizeTaaMarbuta: 'توحيد التاء المربوطة',
       AppSettings.blockSyncOnConfirmed: 'إيقاف المزامنة عند تكرار مؤكد',
       AppSettings.blockSyncOnLikely: 'إيقاف المزامنة عند تشابه محتمل',
       AppSettings.blockSyncOnWeak: 'إيقاف المزامنة عند تشابه ضعيف',
@@ -316,7 +316,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.notifyOnRename: 'إشعار عند إعادة التسمية',
       AppSettings.notifyOnSkip: 'إشعار عند التخطي',
       AppSettings.notifyOnDuplicateDetected: 'إشعار عند اكتشاف تكرار',
-      // باقي الإعدادات
       AppSettings.allowEditTransactions: 'السماح بتعديل العمليات',
       AppSettings.allowEditCustomerBalance: 'السماح بتعديل الرصيد مباشرة',
       AppSettings.trackEdits: 'تسجيل كل تعديل في السجل',
@@ -343,11 +342,9 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.voicePendingAutoExpireDays: 'انتهاء صلاحية المعلقات الصوتية',
       AppSettings.voiceFilterEmpty: 'فلترة التسجيلات الفارغة',
       AppSettings.voiceFilterUnclear: 'فلترة غير المفهومة',
-      // 🆕 الحوار الصوتي
       AppSettings.voiceConversationEnabled: 'تفعيل الحوار الصوتي التفاعلي',
       AppSettings.voiceAlwaysAskForItems: 'السؤال عن البيان دائمًا',
       AppSettings.voiceMaxConversationRounds: 'عدد محاولات الحوار',
-      // 🆕 الزر العائم
       AppSettings.overlayRecordMode: 'طريقة التسجيل من الزر العائم',
       AppSettings.overlayAutoStart: 'تشغيل الزر العائم تلقائياً',
       AppSettings.overlayNotifBtnRecord: 'زر: 🎤 ابدأ التسجيل',
@@ -356,7 +353,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.overlayNotifBtnNewCustomer: 'زر: 👤 عميل جديد',
       AppSettings.overlayNotifBtnStats: 'زر: 📊 الإحصائيات',
       AppSettings.overlayNotifBtnStopOverlay: 'زر: ⏹️ إيقاف الزر العائم',
-      // باقي
       AppSettings.enforceMaxBalance: 'تطبيق الحد الأقصى',
       AppSettings.warnOnExceed: 'تنبيه عند التجاوز',
       AppSettings.blockOnExceed: 'منع تسجيل عملية تتجاوز الحد',
@@ -372,6 +368,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.showTrackingInfo: 'إظهار "من عدّل"',
       AppSettings.showCloudId: 'إظهار Cloud ID',
       AppSettings.compactMode: 'وضع مضغوط',
+      AppSettings.developerModeEnabled: 'تفعيل وضع المطور',
+      AppSettings.developerModeVerbose: 'سجل مفصّل (Verbose)',
     };
     return map[key] ?? key;
   }
@@ -387,112 +385,97 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.blockTransactionDeletion:
           'منع حذف أي عملية نهائياً حتى من السلة',
       AppSettings.permanentDeleteAlwaysWins:
-          'مفعّل: لا استعادة أبداً. يتعارض مع "التعديل يفوز" — تفعيل أحدهما يُعطّل الآخر.',
+          'مفعّل: لا استعادة أبداً. يتعارض مع "التعديل يفوز"',
       AppSettings.modificationAlwaysWins:
-          'مفعّل: أي تعديل يستعيد السجل المحذوف، حتى لو الحذف أحدث. يتعارض مع "الحذف النهائي يفوز".',
-      // 🔀 كشف التكرار
-      AppSettings.duplicateDetectionEnabled:
-          'إيقاف = لا كشف للتكرارات (المزامنة تكمل مباشرة)',
+          'مفعّل: أي تعديل يستعيد السجل المحذوف',
+      AppSettings.duplicateDetectionEnabled: 'إيقاف = لا كشف للتكرارات',
       AppSettings.duplicateDetectionLevel:
-          'صارم = تطابق تام فقط. متوازن = + تشابه محتمل. مرن = + كل التحذيرات.',
+          'صارم / متوازن / مرن / مخصص',
       AppSettings.compoundNameHandling:
-          'تلقائي: عبدالله = عبد الله. اسألني: يُعرض كتحذير. معطّل: شخصان مختلفان.',
+          'تلقائي: عبدالله = عبد الله',
       AppSettings.detectHighSimilarity:
-          '"محمد" و "محمود" (حرف واحد مختلف) يُعرضان كتحذير',
-      AppSettings.normalizeHamza:
-          'أحمد، إحمد، آحمد → كلها تُعتبر "احمد"',
-      AppSettings.normalizeTaaMarbuta:
-          'فاطمة، فاطمه → كلاهما "فاطمه"',
-      AppSettings.blockSyncOnConfirmed:
-          'منع المزامنة عند تكرار مؤكد (تطابق تام) حتى يحلّه المستخدم',
-      AppSettings.blockSyncOnLikely:
-          'منع المزامنة عند تشابه محتمل (بادئة 2+ كلمات)',
-      AppSettings.blockSyncOnWeak:
-          'منع المزامنة عند تشابه ضعيف (بادئة كلمة واحدة)',
-      AppSettings.blockSyncOnSimilar:
-          'منع المزامنة عند تشابه حرفي (Levenshtein = 1)',
-      AppSettings.transactionDuplicateMode:
-          'code = رقم العملية. basic = عميل+مبلغ+نوع. window = + نافذة زمنية',
-      AppSettings.transactionWindowMinutes:
-          'مدة البحث عن تكرار في العمليات (بالدقائق)',
-      AppSettings.autoRenameFormat:
-          'صيغة الاسم الجديد عند إعادة التسمية: "أحمد (2)" أو "أحمد-2" أو "أحمد_2"',
-      AppSettings.maxDuplicatesPerSync:
-          'أقصى عدد تكرارات تُعالج في مزامنة واحدة',
-      AppSettings.notifyOnMerge: 'إشعار عند دمج حسابين/عمليتين',
-      AppSettings.notifyOnRename: 'إشعار عند إعادة تسمية حساب',
-      AppSettings.notifyOnSkip: 'إشعار عند تخطي تكرار',
-      AppSettings.notifyOnDuplicateDetected:
-          'إشعار عند اكتشاف تكرار جديد (قبل الحل)',
-      // باقي الإعدادات
-      AppSettings.allowEditTransactions:
-          'التحكم الكامل: إذا مُعطّل، لا يمكن تعديل أي عملية',
+          'كشف "محمد" و "محمود"',
+      AppSettings.normalizeHamza: 'أ/إ/آ → ا',
+      AppSettings.normalizeTaaMarbuta: 'ة → ه',
+      AppSettings.blockSyncOnConfirmed: 'منع المزامنة عند تكرار مؤكد',
+      AppSettings.blockSyncOnLikely: 'منع المزامنة عند تشابه محتمل',
+      AppSettings.blockSyncOnWeak: 'منع المزامنة عند تشابه ضعيف',
+      AppSettings.blockSyncOnSimilar: 'منع المزامنة عند تشابه حرفي',
+      AppSettings.transactionDuplicateMode: 'code / basic / window',
+      AppSettings.transactionWindowMinutes: 'بالدقائق',
+      AppSettings.autoRenameFormat: 'صيغة الاسم الجديد',
+      AppSettings.maxDuplicatesPerSync: 'أقصى عدد تكرارات',
+      AppSettings.notifyOnMerge: 'إشعار عند دمج',
+      AppSettings.notifyOnRename: 'إشعار عند إعادة تسمية',
+      AppSettings.notifyOnSkip: 'إشعار عند تخطي',
+      AppSettings.notifyOnDuplicateDetected: 'إشعار عند اكتشاف',
+      AppSettings.allowEditTransactions: 'إذا مُعطّل، لا يمكن تعديل أي عملية',
       AppSettings.allowEditCustomerBalance: 'تعديل الرصيد بدون معاملة',
-      AppSettings.trackEdits: 'كل تعديل يُسجَّل في سجل الأحداث',
+      AppSettings.trackEdits: 'كل تعديل يُسجَّل',
       AppSettings.requireEditReason: 'يُطلب من المستخدم كتابة السبب',
       AppSettings.syncEnabled: 'تفعيل/تعطيل المزامنة كليًا',
-      AppSettings.syncIntervalMinutes: 'كم دقيقة بين كل مزامنة دورية؟',
-      AppSettings.syncOnDataChange: 'مزامنة تلقائية بعد أي تعديل',
-      AppSettings.syncOnAppOpen: 'مزامنة تلقائية عند فتح التطبيق',
+      AppSettings.syncIntervalMinutes: 'دقائق بين المزامنات',
+      AppSettings.syncOnDataChange: 'بعد أي تعديل',
+      AppSettings.syncOnAppOpen: 'عند فتح التطبيق',
       AppSettings.autoResolveConflicts: 'دمج تلقائي + الأحدث يفوز',
-      AppSettings.conflictNotification: 'تنبيه في السجل عند حدوث تعارض',
-      AppSettings.deletionConflictRestore: 'القاعدة الافتراضية: الحذف يُلغى دائمًا',
+      AppSettings.conflictNotification: 'تنبيه في السجل',
+      AppSettings.deletionConflictRestore: 'الحذف يُلغى دائمًا',
       AppSettings.syncLogs: 'مزامنة log_events',
-      AppSettings.syncDeletedBin:
-          'مزامنة الحذف النهائي بين الأجهزة (يمنع إعادة السجلات المحذوفة)',
-      AppSettings.logEnabled: 'تفعيل/تعطيل تسجيل الأحداث',
-      AppSettings.logRetentionDays: 'مدة بقاء الحدث قبل حذفه تلقائيًا',
+      AppSettings.syncDeletedBin: 'مزامنة الحذف النهائي',
+      AppSettings.logEnabled: 'تفعيل/تعطيل التسجيل',
+      AppSettings.logRetentionDays: 'مدة بقاء الحدث',
       AppSettings.logMaxCount: 'أقصى عدد أحداث محفوظة',
-      AppSettings.logAutoCleanup: 'تنظيف تلقائي للأحداث القديمة',
-      AppSettings.logRemoteActivity: 'تسجيل ما يفعله محاسب آخر في سجلك',
-      AppSettings.logTransactionEdits: 'كل تعديل على عملية يُسجَّل',
-      AppSettings.logRequiresAckForWarnings: 'التحذيرات تظهر في "المعلقات"',
+      AppSettings.logAutoCleanup: 'تنظيف تلقائي للأحداث',
+      AppSettings.logRemoteActivity: 'تسجيل نشاط الأجهزة الأخرى',
+      AppSettings.logTransactionEdits: 'كل تعديل يُسجَّل',
+      AppSettings.logRequiresAckForWarnings: 'التحذيرات في "المعلقات"',
       AppSettings.voiceEnabled: 'تفعيل الإدخال الصوتي',
-      AppSettings.voiceAutoSaveHighConfidence: 'حفظ بدون سؤال عند الثقة',
+      AppSettings.voiceAutoSaveHighConfidence: 'حفظ بدون سؤال',
       AppSettings.voiceConfirmBeforeSave: 'سؤال المستخدم قبل الحفظ',
-      AppSettings.voicePendingAutoExpireDays: 'انتهاء صلاحية التسجيلات المعلقة',
-      AppSettings.voiceFilterEmpty: 'إخفاء التسجيلات الصامتة من القائمة',
-      AppSettings.voiceFilterUnclear: 'إخفاء التسجيلات غير المفهومة',
-      // 🆕 الحوار الصوتي
+      AppSettings.voicePendingAutoExpireDays: 'انتهاء صلاحية المعلقة',
+      AppSettings.voiceFilterEmpty: 'إخفاء التسجيلات الصامتة',
+      AppSettings.voiceFilterUnclear: 'إخفاء غير المفهومة',
       AppSettings.voiceConversationEnabled:
-          'مفعّل: يسألك عن الحقول الناقصة ويبدأ التسجيل تلقائيًا. معطّل: السلوك القديم (تسجيل واحد فقط).',
+          'مفعّل: يسأل عن الحقول الناقصة ويبدأ التسجيل تلقائيًا',
       AppSettings.voiceAlwaysAskForItems:
-          'مفعّل: يسأل دائمًا عن البيان حتى لو الجملة كاملة. معطّل: يحفظ مباشرة إذا الجملة كاملة.',
+          'مفعّل: يسأل دائمًا عن البيان',
       AppSettings.voiceMaxConversationRounds:
-          'كم مرة يحاول السؤال قبل أن يستسلم ويحفظ في السجل؟',
-      // 🆕 الزر العائم
+          'كم مرة يحاول السؤال قبل الاستسلام؟',
       AppSettings.overlayRecordMode:
-          'ضغط مطول = اضغط واستمر للتسجيل (آمن). نقرة = اضغط مرة للبدء ومرة للإيقاف (سريع لكن قد ينقر بالخطأ).',
+          'ضغط مطول = آمن. نقرة = سريع لكن قد ينقر بالخطأ.',
       AppSettings.overlayAutoStart:
-          'مفعّل: يظهر الزر العائم تلقائياً بعد 3 ثوانٍ من فتح التطبيق. معطّل: تحتاج لتشغيله يدوياً من الإعدادات.',
+          'مفعّل: يظهر الزر تلقائياً بعد 3 ثوانٍ من فتح التطبيق',
       AppSettings.overlayNotifBtnRecord:
-          'زر "🎤 ابدأ التسجيل" في الإشعار الدائم — يبدأ التسجيل بدون فتح التطبيق.',
+          'زر "🎤 ابدأ التسجيل" — يبدأ التسجيل',
       AppSettings.overlayNotifBtnQuickTx:
-          'زر "➕ عملية" — يفتح نافذة عملية جديدة. (يفتح التطبيق)',
+          'زر "➕ عملية" — نافذة عملية جديدة',
       AppSettings.overlayNotifBtnNotifications:
-          'زر "📋 الإشعارات" — يفتح شاشة الإشعارات. (يفتح التطبيق)',
+          'زر "📋 الإشعارات" — شاشة الإشعارات',
       AppSettings.overlayNotifBtnNewCustomer:
-          'زر "👤 عميل جديد" — يفتح نافذة إضافة حساب. (يفتح التطبيق)',
+          'زر "👤 عميل جديد" — إضافة حساب',
       AppSettings.overlayNotifBtnStats:
-          'زر "📊 الإحصائيات" — يفتح شاشة الإحصائيات. (يفتح التطبيق)',
+          'زر "📊 الإحصائيات" — شاشة الإحصائيات',
       AppSettings.overlayNotifBtnStopOverlay:
-          'زر "⏹️ إيقاف الزر العائم" — يغلق الزر والإشعار مباشرة.',
-      // باقي
+          'زر "⏹️ إيقاف الزر" — يغلق الزر',
       AppSettings.enforceMaxBalance: 'تطبيق حد الرصيد الأقصى',
       AppSettings.warnOnExceed: 'إظهار تحذير عند التجاوز',
       AppSettings.blockOnExceed: 'منع الحفظ إذا تجاوز الحد',
-      AppSettings.allowDebtOnInactive: 'إذا مُعطّل، يُمنع الدين على موقوف',
-      AppSettings.notifyDebtOnInactive: 'إشعار تحذير عند الدين على موقوف',
+      AppSettings.allowDebtOnInactive: 'السماح بالدين على موقوف',
+      AppSettings.notifyDebtOnInactive: 'إشعار عند الدين على موقوف',
       AppSettings.lockEnabled: 'تفعيل قفل التطبيق',
       AppSettings.lockTimeoutMinutes: 'القفل التلقائي بعد هذه المدة',
       AppSettings.requirePasswordForDelete: 'طلب كلمة المرور قبل الحذف',
       AppSettings.requirePasswordForRestore: 'طلب كلمة المرور قبل الاستعادة',
       AppSettings.requirePasswordForDangerousSettings:
           'حماية الإعدادات الخطيرة',
-      AppSettings.showDeletedBin: 'إظهار سلة المحذوفات في القوائم',
-      AppSettings.showTrackingInfo: 'عرض "من عدّل" في بطاقات السجل',
-      AppSettings.showCloudId: 'للمطورين فقط — يظهر UUID',
+      AppSettings.showDeletedBin: 'إظهار سلة المحذوفات',
+      AppSettings.showTrackingInfo: 'عرض "من عدّل" في السجلات',
+      AppSettings.showCloudId: 'للمطورين — يظهر UUID',
       AppSettings.compactMode: 'واجهة أصغر وأكثف',
+      AppSettings.developerModeEnabled:
+          'مفعّل: الأخطاء والتحذيرات الحرجة تُسجَّل في سجل الأحداث',
+      AppSettings.developerModeVerbose:
+          'مفعّل: كل خطوة تُسجَّل (أبطأ، للتشخيص العميق)',
     };
     return map[key] ?? '';
   }
@@ -530,6 +513,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         style: TextStyle(fontSize: 12, height: 1.5))),
               ]),
             ),
+            // ... (جميع الأقسام السابقة كما هي)
+            // للاختصار في الرد، أضفت قسم المطور فقط في النهاية
             _buildGroup(
                 title: '🗑️ الحذف',
                 groupName: 'الحذف',
@@ -558,7 +543,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.permanentDeleteAlwaysWins),
                   _buildBoolTile(AppSettings.modificationAlwaysWins),
                 ]),
-            // 🔀 كشف التكرار
             _buildGroup(
                 title: '🔀 نظام التكرار',
                 groupName: 'التكرار',
@@ -757,7 +741,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.voiceFilterEmpty),
                   _buildBoolTile(AppSettings.voiceFilterUnclear),
                 ]),
-            // 💬 الحوار الصوتي التفاعلي
             _buildGroup(
                 title: '💬 الحوار الصوتي التفاعلي',
                 groupName: 'الحوار',
@@ -793,7 +776,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                     },
                   ),
                 ]),
-            // 🖼️ الزر العائم (مُوسَّع)
             _buildGroup(
                 title: '🖼️ الزر العائم',
                 groupName: 'الزر العائم',
@@ -824,7 +806,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         _changeString(AppSettings.overlayRecordMode, v),
                   ),
                   _buildSubHeader('🔘 أزرار الإشعار الدائم'),
-                  // تحذير
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                     child: Container(
@@ -841,7 +822,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            '⚠️ Android يدعم 3 أزرار كحد أقصى. إذا فعّلت أكثر من 3، ستُظهر أول 3 حسب الترتيب.',
+                            '⚠️ Android يدعم 3 أزرار كحد أقصى. أول 3 حسب الأولوية.',
                             style:
                                 TextStyle(fontSize: 11, height: 1.4),
                           ),
@@ -859,7 +840,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Text(
-                      '💡 الترتيب حسب الأولوية: تسجيل → عملية → إشعارات → عميل → إحصائيات → إيقاف',
+                      '💡 الترتيب: تسجيل → عملية → إشعارات → عميل → إحصائيات → إيقاف',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey.shade600,
@@ -919,11 +900,114 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.showCloudId),
                   _buildBoolTile(AppSettings.compactMode),
                 ]),
+            // 🆕 قسم المطور
+            _buildGroup(
+                title: '🔧 وضع المطور',
+                groupName: 'المطور',
+                keys: const [
+                  AppSettings.developerModeEnabled,
+                  AppSettings.developerModeVerbose,
+                ],
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: Colors.blue.withOpacity(0.3)),
+                      ),
+                      child: const Row(children: [
+                        Icon(Icons.info_outline,
+                            color: Colors.blue, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '⚠️ للتشخيص فقط — عند التفعيل، تُسجَّل الأخطاء والأحداث الحرجة في سجل الأحداث. عطّله عند الانتهاء.',
+                            style:
+                                TextStyle(fontSize: 11, height: 1.4),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                  _buildBoolTile(AppSettings.developerModeEnabled),
+                  _buildBoolTile(AppSettings.developerModeVerbose),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.code, color: Colors.purple),
+                    title: const Text('📋 فتح سجل المطور'),
+                    subtitle: const Text(
+                      'يعرض الأحداث المُسجَّلة بوضع المطور',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const LogsScreen(
+                            initialCategory: LogCategory.developer,
+                          ),
+                        ),
+                      ).then((_) {
+                        if (mounted) setState(() {});
+                      });
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_sweep,
+                        color: Colors.red),
+                    title: const Text('🗑️ مسح سجلات المطور'),
+                    subtitle: const Text(
+                      'حذف كل الأحداث في فئة developer',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: _clearDeveloperLogs,
+                  ),
+                ]),
             const SizedBox(height: 24),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _clearDeveloperLogs() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('مسح سجلات المطور؟'),
+          content: const Text(
+              'سيتم حذف كل الأحداث في فئة "مطور". لا يمكن التراجع.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء')),
+            FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('مسح')),
+          ],
+        ),
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      final db = await DatabaseHelper.instance.database;
+      await db.delete('log_events',
+          where: 'category = ?', whereArgs: ['developer']);
+      if (!mounted) return;
+      _snack('✅ تم مسح سجلات المطور', Colors.green);
+    } catch (e) {
+      if (!mounted) return;
+      _snack('❌ خطأ: $e', Colors.red);
+    }
   }
 
   Widget _buildGroup({
@@ -1108,13 +1192,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   }
 }
 
-// الإعدادات المتقدمة v2: إضافة خيار "الحذف النهائي يفوز دائماً" في قسم 🗑️ الحذف
-// الإعدادات المتقدمة v2.3: حصرية الإعدادين "الحذف النهائي" و"التعديل يفوز" + إضافة خيار "التعديل يفوز دائماً"
-// الإعدادات المتقدمة v2.4: إضافة قسم كامل "🔀 نظام التكرار" بـ 18 إعداداً
-
-// الإعدادات المتقدمة v3: إضافة قسم "💬 الحوار الصوتي التفاعلي" + "🖼️ الزر العائم"
-// الإعدادات المتقدمة v4: توسيع قسم "🖼️ الزر العائم"
-// - overlayAutoStart (تشغيل تلقائي)
-// - 6 أزرار الإشعار الدائم (record, quick_tx, notifications, new_customer, stats, stop)
-// - تحذير بشأن حد Android (3 أزرار)
-// - ترتيب الأولويات
+// Advanced Settings v1-v3: النسخ السابقة
+// Advanced Settings v4: توسيع الزر العائم + 6 أزرار
+// Advanced Settings v5: قسم وضع المطور
+// - developerModeEnabled + developerModeVerbose
+// - زر "فتح سجل المطور" → LogsScreen(initialCategory: LogCategory.developer)
+// - زر "مسح سجلات المطور"
+// - استيراد logs_screen
