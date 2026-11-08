@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_settings.dart';
 import '../db/database_helper.dart';
 import '../models/log_event.dart';
 import 'accountant_service.dart';
@@ -215,6 +217,113 @@ class LoggerService {
         audioPath: audioPath,
         needsAck: needsAck,
       );
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 دوال وضع المطور (v8)
+  // ═══════════════════════════════════════════════════════════
+  //
+  // - devError: تُسجَّل دائمًا (حتى بدون وضع المطور)
+  // - devWarn:  تُسجَّل فقط عند developerModeEnabled = true
+  // - devInfo:  تُسجَّل فقط عند developerModeVerbose = true
+  //
+  // [tag] = اسم الميزة (polling، overlay، notification، إلخ)
+  //         يظهر في السجل للتمييز.
+
+  /// خطأ في وضع المطور — يُسجَّل دائمًا (حتى بدون تفعيل وضع المطور)
+  static Future<void> devError(
+    String tag,
+    String message, {
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      await log(
+        action: '🔧 [$tag] خطأ',
+        description: message,
+        level: LogLevel.error,
+        category: LogCategory.developer,
+        relatedId: relatedId,
+        metadata: {
+          'tag': tag,
+          if (metadata != null) ...metadata,
+        },
+        needsAck: false,
+      );
+    } catch (_) {}
+  }
+
+  /// تحذير في وضع المطور — يُسجَّل فقط عند تفعيل developerModeEnabled
+  static Future<void> devWarn(
+    String tag,
+    String message, {
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    if (!await _shouldLogDev()) return;
+    try {
+      await log(
+        action: '🔧 [$tag] تحذير',
+        description: message,
+        level: LogLevel.warning,
+        category: LogCategory.developer,
+        relatedId: relatedId,
+        metadata: {
+          'tag': tag,
+          if (metadata != null) ...metadata,
+        },
+        needsAck: false,
+      );
+    } catch (_) {}
+  }
+
+  /// معلومة في وضع المطور — تُسجَّل فقط عند تفعيل developerModeVerbose
+  static Future<void> devInfo(
+    String tag,
+    String message, {
+    String? relatedId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    if (!await _shouldLogDev(verbose: true)) return;
+    try {
+      await log(
+        action: '🔧 [$tag]',
+        description: message,
+        level: LogLevel.info,
+        category: LogCategory.developer,
+        relatedId: relatedId,
+        metadata: {
+          'tag': tag,
+          if (metadata != null) ...metadata,
+        },
+        needsAck: false,
+      );
+    } catch (_) {}
+  }
+
+  /// فحص حالة وضع المطور من SharedPreferences
+  /// (يستخدم SharedPreferences مباشرة — ليعمل من أي isolate)
+  static Future<bool> _shouldLogDev({bool verbose = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (verbose) {
+        return prefs.getBool(AppSettings.developerModeVerbose) ?? false;
+      }
+      return prefs.getBool(AppSettings.developerModeEnabled) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// فحص سريع من أي مكان (public)
+  static Future<bool> isDeveloperModeEnabled() async =>
+      _shouldLogDev();
+
+  static Future<bool> isDeveloperModeVerbose() async =>
+      _shouldLogDev(verbose: true);
+
+  // ═══════════════════════════════════════════════════════════
+  // نهاية دوال وضع المطور
+  // ═══════════════════════════════════════════════════════════
 
   static Future<List<LogEvent>> getLogs({
     LogLevel? level,
@@ -1032,4 +1141,10 @@ class LoggerService {
 }
 
 // Logger v1: خدمة السجل الأساسية
-// Logger v1.1: إضافة 6 دوال لأحداث الإشعارات (إنشاء، حفظ، إلغاء، تمييز، انتهاء، حذف)
+// Logger v1.1: إضافة 6 دوال لأحداث الإشعارات
+// Logger v2: إضافة دوال وضع المطور
+// - devError: يُسجَّل دائمًا (حتى بدون تفعيل وضع المطور)
+// - devWarn:  يُسجَّل عند developerModeEnabled = true
+// - devInfo:  يُسجَّل عند developerModeVerbose = true
+// - isDeveloperModeEnabled / isDeveloperModeVerbose: للفحص العام
+// - يستخدم SharedPreferences مباشرة (يعمل من أي isolate)
