@@ -1,4 +1,5 @@
 import 'package:flutter_tts/flutter_tts.dart';
+import 'voice_prompts_service.dart';
 
 class TtsService {
   static final FlutterTts _tts = FlutterTts();
@@ -139,7 +140,7 @@ class TtsService {
   }
 
   // ============================================================
-  // الجمل الجاهزة المشكّلة
+  // الجمل الجاهزة المشكّلة (تقرأ من VoicePromptsService)
   // ============================================================
 
   static Future<void> confirmTransaction({
@@ -154,91 +155,183 @@ class TtsService {
     final typeAr = _typeAr(type);
 
     if (newBalance == 0) {
-      await speak('تَمَّ تَسْجِيلُ $typeAr بِمَبْلَغِ $amountStr $cur. '
-          'حِسَابُ $customerName أَصْبَحَ مُتَوَازِنًا');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tConfirmZero,
+        vars: {
+          'type': typeAr,
+          'amount': amountStr,
+          'currency': cur,
+          'customer': customerName,
+        },
+      );
+      await speak(msg);
       return;
     }
 
     if (newBalance > 0) {
       final balStr = _numToWords(newBalance);
-      await speak('تَمَّ تَسْجِيلُ $typeAr بِمَبْلَغِ $amountStr $cur '
-          'عَلَى $customerName. '
-          'الرَّصِيدُ المُتَبَقِّي هُوَ $balStr $cur');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tConfirmDebt,
+        vars: {
+          'type': typeAr,
+          'amount': amountStr,
+          'currency': cur,
+          'customer': customerName,
+          'balance': balStr,
+        },
+      );
+      await speak(msg);
     } else {
       final balStr = _numToWords(-newBalance);
-      await speak('تَمَّ تَسْجِيلُ $typeAr بِمَبْلَغِ $amountStr $cur '
-          'مِنْ $customerName. '
-          'البَاقِي لَهُ هُوَ $balStr $cur');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tConfirmPayment,
+        vars: {
+          'type': typeAr,
+          'amount': amountStr,
+          'currency': cur,
+          'customer': customerName,
+          'balance': balStr,
+        },
+      );
+      await speak(msg);
     }
   }
 
-  /// نطق رصيد الحساب — يُستخدم في الاستعلام
   static Future<void> speakBalance({
     required String customerName,
     required double balance,
     required String currency,
   }) async {
     final cur = _currencyName(currency);
+
     if (balance > 0) {
       final balStr = _numToWords(balance);
-      await speak('$customerName عَلَيْهِ $balStr $cur');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceDebt,
+        vars: {
+          'customer': customerName,
+          'balance': balStr,
+          'currency': cur,
+        },
+      );
+      await speak(msg);
     } else if (balance < 0) {
       final balStr = _numToWords(-balance);
-      await speak('$customerName بَاقِي لَهُ $balStr $cur');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceCredit,
+        vars: {
+          'customer': customerName,
+          'balance': balStr,
+          'currency': cur,
+        },
+      );
+      await speak(msg);
     } else {
-      await speak('حِسَابُ $customerName مُتَوَازِن، '
-          'لَا دُيُونَ وَلَا مُسْتَحَقَّات');
+      final msg = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceZero,
+        vars: {'customer': customerName},
+      );
+      await speak(msg);
     }
   }
 
   static Future<void> speakAccountCreated(String name) async {
-    await speak('تَمَّ إِنْشَاءُ حِسَابٍ بِاسْمِ $name');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tAccountCreated,
+      vars: {'name': name},
+    );
+    await speak(msg);
   }
 
   static Future<void> speakNoAccount(String name) async {
-    await speak('لَا يُوجَدُ حِسَابٌ بِاسْمِ $name');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tNoAccount,
+      vars: {'name': name},
+    );
+    await speak(msg);
   }
 
   static Future<void> speakMultipleAccounts() async {
-    await speak('يُوجَدُ أَكْثَرُ مِنْ حِسَاب. حَدِّدِ الاِسْمَ بِدِقَّة');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tMultipleAccounts,
+    );
+    await speak(msg);
   }
 
   static Future<void> speakDidNotHear() async {
-    await speak('لَمْ أَسْمَعْ شَيْئًا. تَحَدِّثْ بِوُضُوحْ');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tDidNotHear,
+    );
+    await speak(msg);
   }
 
   static Future<void> speakDidNotUnderstand() async {
-    await speak('لَمْ أَفْهَمِ الجُمْلَة');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tDidNotUnderstand,
+    );
+    await speak(msg);
   }
 
   static Future<void> speakExistsBefore(String name) async {
-    await speak('حِسَابُ $name مَوْجُودٌ مُسْبَقًا');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tExistsBefore,
+      vars: {'name': name},
+    );
+    await speak(msg);
   }
 
-  /// نطق كشف حساب كامل
   static Future<void> speakStatement({
     required String customerName,
     required double balance,
     required String currency,
-    required List<String> items, // آخر 3 عمليات
+    required List<String> items,
   }) async {
     final cur = _currencyName(currency);
 
-    String intro;
+    String header;
     if (balance > 0) {
-      intro = '$customerName عَلَيْهِ ${_numToWords(balance)} $cur';
+      header = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceDebt,
+        vars: {
+          'customer': customerName,
+          'balance': _numToWords(balance),
+          'currency': cur,
+        },
+      );
     } else if (balance < 0) {
-      intro = '$customerName بَاقِي لَهُ ${_numToWords(-balance)} $cur';
+      header = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceCredit,
+        vars: {
+          'customer': customerName,
+          'balance': _numToWords(-balance),
+          'currency': cur,
+        },
+      );
     } else {
-      intro = 'حِسَابُ $customerName مُتَوَازِن';
+      header = VoicePromptsService.getResponse(
+        VoicePromptsService.tBalanceZero,
+        vars: {'customer': customerName},
+      );
     }
 
     if (items.isEmpty) {
-      await speak(intro);
+      await speak(header);
       return;
     }
 
     final joined = items.join('، ثُمَّ ');
-    await speak('$intro. آخِرُ العَمَلِيَّات: $joined');
+    final msg = VoicePromptsService.getResponse(
+      VoicePromptsService.tStatementWithItems,
+      vars: {'header': header, 'items': joined},
+    );
+    await speak(msg);
   }
 }
+
+// TtsService v1: خدمة النطق الصوتي
+// - تحويل الأرقام إلى كلمات عربية مشكّلة
+// - ترجمة العملات والأنواع
+// - 8 دوال جاهزة (confirmTransaction, speakBalance, ...)
+// TtsService v2: ربط بجدول الحوار الصوتي (VoicePromptsService)
+// - كل النصوص تُقرأ من الجدول (قابلة للتعديل من الإعدادات)
+// - دعم متغيرات {type}, {amount}, {currency}, {customer}, {balance}, {items}, {header}, {name}
