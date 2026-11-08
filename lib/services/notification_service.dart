@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'logger_service.dart';
 
 class NotificationAction {
   final String id;
@@ -67,18 +68,10 @@ class NotificationService {
     await androidImpl?.requestNotificationsPermission();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 المعالج الأمامي — يكتب flags أيضاً
-  // ═══════════════════════════════════════════════════════════
-  //
-  // عندما التطبيق في المقدمة (أو في recent apps)، Android يستدعي
-  // هذا المعالج بدلاً من المعالج الخلفي. نكتب flag لكل action
-  // حتى يقرأه overlay_widget polling.
   static void _handleResponse(NotificationResponse resp) {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
 
-    // 🆕 اكتب flags لكل action
     if (actionId != null && actionId.isNotEmpty) {
       _writeFlagForAction(actionId);
     }
@@ -87,15 +80,16 @@ class NotificationService {
         actionId.isNotEmpty &&
         actionId != 'default_action') {
       debugPrint('🔔 [Notif] Action: $actionId, payload: $payload');
+      LoggerService.devInfo('notif', '_handleResponse: $actionId');
       onAction?.call(actionId, payload);
       return;
     }
 
     debugPrint('🔔 [Notif] Tap: $payload (id=${resp.id})');
+    LoggerService.devInfo('notif', '_handleResponse: tap on $payload');
     onTap?.call(payload);
   }
 
-  // 🆕 يكتب flag في SharedPreferences حسب actionId
   static Future<void> _writeFlagForAction(String actionId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -103,7 +97,8 @@ class NotificationService {
       switch (actionId) {
         case 'overlay_record':
           await prefs.setBool('pending_overlay_record', true);
-          debugPrint('🔔 [Notif] Set flag: pending_overlay_record');
+          await LoggerService.devInfo(
+              'notif', 'Set flag: pending_overlay_record');
           break;
 
         case 'overlay_quick_tx':
@@ -127,7 +122,7 @@ class NotificationService {
           break;
       }
     } catch (e) {
-      debugPrint('❌ [Notif] _writeFlagForAction: $e');
+      await LoggerService.devError('notif', '_writeFlagForAction: $e');
     }
   }
 
@@ -254,6 +249,8 @@ class NotificationService {
     required List<NotificationAction> actions,
     String? payload,
   }) async {
+    await LoggerService.devInfo(
+        'notif', 'showPersistentWithActions: ${actions.length} actions');
     await _notif.show(
       id,
       title,
@@ -293,18 +290,13 @@ class NotificationService {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// 🆕 المعالج الخلفي لأزرار الإشعار
-// ═══════════════════════════════════════════════════════════════
-//
-// يعمل عندما التطبيق في الخلفية (مغلق أو في تطبيق آخر).
-// يكتب flags في SharedPreferences ليقرأها overlay_widget polling.
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final actionId = response.actionId;
   debugPrint('🔔 [Notif BG] Action: $actionId');
+  LoggerService.devInfo('notif-bg', 'action=$actionId');
 
   if (actionId == null || actionId.isEmpty) return;
 
@@ -314,7 +306,8 @@ void notificationTapBackground(NotificationResponse response) async {
     switch (actionId) {
       case 'overlay_record':
         await prefs.setBool('pending_overlay_record', true);
-        debugPrint('🔔 [Notif BG] Set pending_overlay_record = true');
+        await LoggerService.devInfo(
+            'notif-bg', 'Set pending_overlay_record = true');
         break;
 
       case 'overlay_quick_tx':
@@ -338,7 +331,7 @@ void notificationTapBackground(NotificationResponse response) async {
         break;
     }
   } catch (e) {
-    debugPrint('❌ [Notif BG] Error: $e');
+    await LoggerService.devError('notif-bg', 'Error: $e');
   }
 }
 
@@ -347,7 +340,5 @@ void notificationTapBackground(NotificationResponse response) async {
 // Notification Service v2.1: showsUserInterface + cancelNotification
 // Notification Service v3: showPersistentWithActions
 // Notification Service v4: notificationTapBackground يكتب flags
-// Notification Service v5: إصلاح زر التسجيل
-// - _handleResponse يكتب flag لكل action (قبل استدعاء onAction)
-// - _writeFlagForAction: دالة مساعدة
-// - الآن overlay_widget يستقبل الأوامر في كل الحالات (foreground + background)
+// Notification Service v5: _handleResponse يكتب flag لكل action
+// Notification Service v6: سجلات المطور (devInfo/devError)
