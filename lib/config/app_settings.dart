@@ -180,6 +180,16 @@ class AppSettings {
       'overlay_notif_btn_stop_overlay';
 
   // ═══════════════════════════════════════════════════════════
+  // 🔧 مجموعة المطور (v8)
+  // ═══════════════════════════════════════════════════════════
+
+  /// عند التفعيل: الأخطاء والتحذيرات في الميزات الحرجة تُسجَّل في سجل الأحداث
+  static const String developerModeEnabled = 'developer_mode_enabled';
+
+  /// عند التفعيل: كل خطوة في الميزات الحرجة تُسجَّل (Verbose)
+  static const String developerModeVerbose = 'developer_mode_verbose';
+
+  // ═══════════════════════════════════════════════════════════
   // 📋 القيم الافتراضية
   // ═══════════════════════════════════════════════════════════
 
@@ -297,6 +307,10 @@ class AppSettings {
     overlayNotifBtnNewCustomer: false,
     overlayNotifBtnStats: false,
     overlayNotifBtnStopOverlay: false,
+
+    // 🔧 المطور
+    developerModeEnabled: false,
+    developerModeVerbose: false,
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -411,6 +425,9 @@ class AppSettings {
     overlayNotifBtnNewCustomer,
     overlayNotifBtnStats,
     overlayNotifBtnStopOverlay,
+    // 🔧 المطور
+    developerModeEnabled,
+    developerModeVerbose,
   };
 
   static bool isShared(String key) => sharedSettings.contains(key);
@@ -426,3 +443,5 @@ class AppSettings {
 // الإعدادات v6: إضافة 3 إعدادات للحوار الصوتي التفاعلي + overlayRecordMode
 
 // الإعدادات v7: إضافة overlayAutoStart + 6 إعدادات لأزرار الإشعار الدائم
+
+// الإعدادات v8: إضافة developerModeEnabled + developerModeVerbose (وضع المطور)
