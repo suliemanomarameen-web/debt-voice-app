@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_settings.dart';
 import 'notification_service.dart';
+import 'logger_service.dart';
 import 'settings_service.dart';
 
 class OverlayService {
@@ -21,34 +22,36 @@ class OverlayService {
     return await FlutterOverlayWindow.isActive();
   }
 
-  /// تشغيل الزر العائم (مع معالجة Huawei)
   static Future<bool> show() async {
-    // 1) إذن الظهور فوق التطبيقات
+    await LoggerService.devInfo('overlay', 'show() called');
+
     if (!await FlutterOverlayWindow.isPermissionGranted()) {
       final granted = await FlutterOverlayWindow.requestPermission();
-      if (granted != true) return false;
+      if (granted != true) {
+        await LoggerService.devWarn('overlay', 'Overlay permission denied');
+        return false;
+      }
     }
 
-    // 2) تجاهل تحسين البطارية
     if (!await Permission.ignoreBatteryOptimizations.isGranted) {
       await Permission.ignoreBatteryOptimizations.request();
     }
 
-    // 3) إذن الإشعارات
     if (!await Permission.notification.isGranted) {
       await Permission.notification.request();
     }
 
-    // 4) إذن الميكروفون (في main isolate — Activity موجود)
     if (!await Permission.microphone.isGranted) {
       final micStatus = await Permission.microphone.request();
       if (!micStatus.isGranted) {
-        debugPrint('⚠️ [OverlayService] Microphone permission denied');
+        await LoggerService.devWarn(
+            'overlay', 'Microphone permission denied');
       }
     }
 
-    // 5) الإشعار الدائم مع أزرار ديناميكية
     final actions = _buildNotificationActions();
+    await LoggerService.devInfo(
+        'overlay', 'Building notification with ${actions.length} actions');
     await NotificationService.showPersistentWithActions(
       id: _notificationId,
       title: '✅ الزر العائم يعمل',
@@ -57,7 +60,6 @@ class OverlayService {
       payload: 'overlay_persistent',
     );
 
-    // 6) اعرض النافذة العائمة
     bool opened = false;
     if (!await FlutterOverlayWindow.isActive()) {
       try {
@@ -72,12 +74,12 @@ class OverlayService {
         );
         opened = true;
       } catch (e) {
-        debugPrint('❌ [OverlayService] showOverlay error: $e');
+        await LoggerService.devError(
+            'overlay', 'showOverlay error: $e');
         return false;
       }
     }
 
-    // 7) بعد فتح الـ overlay — انتظر ثم أرسل الحالة
     if (opened) {
       await Future.delayed(const Duration(milliseconds: 800));
 
@@ -91,22 +93,22 @@ class OverlayService {
           'mode': mode,
         });
 
-        debugPrint('✅ [OverlayService] Sent speech_ready + mode=$mode');
+        await LoggerService.devInfo(
+            'overlay', 'Sent speech_ready + mode=$mode');
       } catch (e) {
-        debugPrint('⚠️ [OverlayService] shareData error: $e');
+        await LoggerService.devError(
+            'overlay', 'shareData error: $e');
       }
     }
 
+    await LoggerService.devInfo(
+        'overlay', 'show() completed (opened=$opened)');
     return true;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 بناء الأزرار ديناميكياً حسب الإعدادات (3 كحد أقصى)
-  // ═══════════════════════════════════════════════════════════
   static List<NotificationAction> _buildNotificationActions() {
     final actions = <NotificationAction>[];
 
-    // الأولوية 1: 🎤 ابدأ التسجيل (لا يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnRecord,
       defaultValue: true,
@@ -114,12 +116,11 @@ class OverlayService {
       actions.add(const NotificationAction(
         id: 'overlay_record',
         title: '🎤 ابدأ التسجيل',
-        showsUserInterface: false,
+        showsUserInterface: true,
         cancelNotification: false,
       ));
     }
 
-    // الأولوية 2: ➕ عملية سريعة (يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnQuickTx,
       defaultValue: false,
@@ -132,7 +133,6 @@ class OverlayService {
       ));
     }
 
-    // الأولوية 3: 📋 الإشعارات (يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnNotifications,
       defaultValue: false,
@@ -145,7 +145,6 @@ class OverlayService {
       ));
     }
 
-    // الأولوية 4: 👤 عميل جديد (يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnNewCustomer,
       defaultValue: false,
@@ -158,7 +157,6 @@ class OverlayService {
       ));
     }
 
-    // الأولوية 5: 📊 الإحصائيات (يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnStats,
       defaultValue: false,
@@ -171,7 +169,6 @@ class OverlayService {
       ));
     }
 
-    // الأولوية 6: ⏹️ إيقاف الزر (لا يفتح التطبيق)
     if (SettingsService.getBool(
       AppSettings.overlayNotifBtnStopOverlay,
       defaultValue: false,
@@ -184,19 +181,15 @@ class OverlayService {
       ));
     }
 
-    // ⚠️ Android يدعم 3 أزرار كحد أقصى — نأخذ الأول 3 فقط
     if (actions.length > 3) {
-      debugPrint('⚠️ [OverlayService] ${actions.length} actions requested, '
-          'Android only supports 3 — keeping first 3');
+      LoggerService.devWarn('overlay',
+          '${actions.length} actions requested, Android only supports 3 — keeping first 3');
       return actions.sublist(0, 3);
     }
 
     return actions;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // تحديث الإشعار (عند تغيير الإعدادات)
-  // ═══════════════════════════════════════════════════════════
   static Future<void> refreshNotification() async {
     if (!await FlutterOverlayWindow.isActive()) return;
 
@@ -209,13 +202,15 @@ class OverlayService {
         actions: actions,
         payload: 'overlay_persistent',
       );
-      debugPrint('✅ [OverlayService] Notification refreshed');
+      await LoggerService.devInfo('overlay', 'Notification refreshed');
     } catch (e) {
-      debugPrint('❌ [OverlayService] refreshNotification: $e');
+      await LoggerService.devError(
+          'overlay', 'refreshNotification: $e');
     }
   }
 
   static Future<void> hide() async {
+    await LoggerService.devInfo('overlay', 'hide() called');
     if (await FlutterOverlayWindow.isActive()) {
       await FlutterOverlayWindow.closeOverlay();
     }
@@ -230,32 +225,29 @@ class OverlayService {
     await FlutterOverlayWindow.shareData(data);
   }
 
-  /// إرسال أمر بدء التسجيل للـ overlay
   static Future<void> startRecordingFromNotification() async {
     try {
       if (!await FlutterOverlayWindow.isActive()) {
-        debugPrint('⚠️ [OverlayService] Overlay not active — cannot start');
+        await LoggerService.devWarn(
+            'overlay', 'startRecordingFromNotification: overlay not active');
         return;
       }
       await FlutterOverlayWindow.shareData({
         'action': 'start_recording',
         'source': 'notification',
       });
-      debugPrint('🎤 [OverlayService] Sent start_recording');
+      await LoggerService.devInfo(
+          'overlay', 'Sent start_recording');
     } catch (e) {
-      debugPrint('❌ [OverlayService] startRecordingFromNotification: $e');
+      await LoggerService.devError(
+          'overlay', 'startRecordingFromNotification: $e');
     }
   }
 }
 
-// Overlay Service v1: النسخة الأساسية (show/hide/listen/sendData)
-// Overlay Service v2: تحسينات جذرية للزر العائم
-// - طلب إذن الميكروفون في main isolate قبل فتح الـ overlay
-// - إرسال speech_ready بعد showOverlay + تأخير 800ms
-// - إرسال وضع التسجيل (long_press / tap) للـ overlay
-// - إشعار دائم بزر "🎤 ابدأ التسجيل"
-// Overlay Service v2.1: إصلاح توافق OverlayFlag بدلًا من OverlayDefaultFlag
-// Overlay Service v3: أزرار ديناميكية
-// - _buildNotificationActions: يبني الأزرار حسب AppSettings (6 مفاتيح)
-// - Android يدعم 3 أزرار كحد أقصى — نأخذ الأول 3
-// - refreshNotification: تحديث الإشعار عند تغيير الإعدادات
+// Overlay Service v1: النسخة الأساسية
+// Overlay Service v2: تحسينات جذرية
+// Overlay Service v2.1: إصلاح توافق OverlayFlag
+// Overlay Service v3: أزرار ديناميكية + refreshNotification
+// Overlay Service v4: زر التسجيل showsUserInterface: true
+// Overlay Service v5: سجلات المطور (devInfo/devWarn/devError)
