@@ -204,7 +204,7 @@ class TtsService {
   }
 
   static Future<void> speakDidNotHear() async {
-    await speak('لَمْ أَسْمَعْ شَيْئًا. حَدِّثْ بِوُضُوح');
+    await speak('لَمْ أَسْمَعْ شَيْئًا. تَحَدِّثْ بِوُضُوحْ');
   }
 
   static Future<void> speakDidNotUnderstand() async {
