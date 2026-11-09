@@ -1552,6 +1552,37 @@ class DatabaseHelper {
     return null;
   }
 
+  // 🆕 البحث عن كل الحسابات المتطابقة بالاسم (للتعامل مع التكرار)
+  Future<List<Customer>> findAllByExactName(String name) async {
+    final db = await database;
+    final normalized = normalizeArabicName(name);
+
+    // 1. البحث العمودي (يجد كل المطابقات)
+    final r = await db.query(
+      'customers',
+      where: 'name_normalized = ? '
+          'AND (is_deleted = 0 OR is_deleted IS NULL) '
+          'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
+      whereArgs: [normalized],
+      orderBy: 'name ASC',
+    );
+
+    if (r.isNotEmpty) {
+      return r.map((e) => Customer.fromMap(e)).toList();
+    }
+
+    // 2. fallback: البحث بالنص الأصلي
+    final r2 = await db.query(
+      'customers',
+      where: 'name = ? '
+          'AND (is_deleted = 0 OR is_deleted IS NULL) '
+          'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
+      whereArgs: [name],
+      orderBy: 'name ASC',
+    );
+    return r2.map((e) => Customer.fromMap(e)).toList();
+  }
+
   // 🆕 البحث الجزئي بالتطبيع العربي
   Future<List<Customer>> findCustomersContaining(String name) async {
     final db = await database;
@@ -2470,3 +2501,4 @@ class DatabaseHelper {
 // قاعدة البيانات v15: إضافة جدول pending_notifications + 14 دالة CRUD
 // قاعدة البيانات v15.1: إعادة إدراج دوال pending_duplicates (كانت مفقودة من إصدار v15 الأصلي) + applyNotificationsRetention
 // قاعدة البيانات v16: إضافة name_normalized + التطبيع العربي للبحث عن الحسابات
+// قاعدة البيانات v16.1: إضافة findAllByExactName لجلب كل الحسابات المتطابقة بالاسم
