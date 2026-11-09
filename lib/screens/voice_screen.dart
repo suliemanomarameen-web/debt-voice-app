@@ -15,6 +15,8 @@ import '../services/tts_service.dart';
 import '../services/voice_conversation_service.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
+import 'stats_screen.dart';
+import 'add_account_screen.dart';
 
 class VoiceScreen extends StatefulWidget {
   final String? initialText;
@@ -213,16 +215,23 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
 
     try {
-      // 1. استعلام؟
-      if (QueryService.isQuery(text)) {
-        final result = await QueryService.query(text);
-        if (!mounted) return;
-        setState(() {
-          _queryResult = result;
-          _isProcessing = false;
-        });
-        TtsService.speak(result.spokenAnswer);
-        return;
+      // 1. استعلام مباشر — فقط إذا كان النص 3 كلمات أو أكثر (يحتوي على اسم عميل محتمل)
+      final wordCount = text.trim().split(RegExp(r'\s+')).length;
+      if (wordCount >= 3 && QueryService.isQuery(text)) {
+        try {
+          final result = await QueryService.query(text);
+          if (!mounted) return;
+          if (result.spokenAnswer.trim().isNotEmpty) {
+            setState(() {
+              _queryResult = result;
+              _isProcessing = false;
+            });
+            await TtsService.speak(result.spokenAnswer);
+            return;
+          }
+        } catch (e) {
+          debugPrint('⚠️ QueryService failed, falling through: $e');
+        }
       }
 
       // 2. تحليل مبدئي — لمعرفة إذا كان "إضافة حساب"
@@ -292,17 +301,25 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   void _onSaved(VoiceConversationResult result) {
     if (!mounted) return;
-    final customer = result.matchedCustomer;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '✅ تم الحفظ — ${customer?.name ?? ""}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
+
+    if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.ttsMessage!),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
         ),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+      );
+    }
+
+    // 🆕 إذا كان هناك شاشة مطلوب فتحها، افتحها
+    if (result.targetScreen != null) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        _handleTargetScreen(result);
+      });
+      return;
+    }
 
     Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
@@ -329,6 +346,160 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _sessionCompleted = false;
       _text = '';
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 فتح الشاشة المطلوبة بعد تنفيذ الأمر الصوتي
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _handleTargetScreen(VoiceConversationResult result) async {
+    if (!mounted) return;
+
+    switch (result.targetScreen) {
+      case 'stats':
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const StatsScreen()),
+        ).then((_) {
+          if (mounted) _resetSession();
+        });
+        break;
+
+      case 'edit':
+        if (result.matchedCustomer != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AddAccountScreen(existing: result.matchedCustomer),
+            ),
+          ).then((_) {
+            if (mounted) _resetSession();
+          });
+        } else {
+          if (mounted) _resetSession();
+        }
+        break;
+
+      case 'print':
+      case 'send':
+        if (result.matchedCustomer != null) {
+          await _showStatementDialog(result.matchedCustomer!);
+          if (mounted) _resetSession();
+        } else {
+          if (mounted) _resetSession();
+        }
+        break;
+
+      case 'search':
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('استخدم تبويب العملاء للبحث'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+          _resetSession();
+        }
+        break;
+
+      default:
+        if (mounted) _resetSession();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
+  // ═══════════════════════════════════════════════════════════
+  Future<void> _showStatementDialog(Customer customer) async {
+    final db = DatabaseHelper.instance;
+    final balance = await db.customerBalance(customer.id!);
+    final txList = await db.customerTransactions(customer.id!);
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Text('كشف حساب ${customer.name}'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: balance > 0
+                          ? Colors.red.withOpacity(0.1)
+                          : Colors.green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          balance > 0 ? Icons.arrow_upward : Icons.arrow_downward,
+                          color: balance > 0 ? Colors.red : Colors.green,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'الرصيد: ${balance.abs().toStringAsFixed(0)} ريال',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: balance > 0 ? Colors.red : Colors.green,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'آخر العمليات:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const Divider(),
+                  if (txList.isEmpty)
+                    const Text('لا توجد عمليات', style: TextStyle(color: Colors.grey))
+                  else
+                    ...txList.take(10).map((t) {
+                      final typeLabel = t.type == 'debt'
+                          ? 'دين'
+                          : t.type == 'payment'
+                              ? 'سداد'
+                              : 'مرتجع';
+                      final color = t.type == 'debt' ? Colors.red : Colors.green;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(Icons.circle, size: 8, color: color),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                '$typeLabel — ${t.amount.toStringAsFixed(0)} ${t.currency}',
+                                style: TextStyle(fontSize: 13, color: color),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إغلاق'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -859,6 +1030,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
       'payment': 'سداد',
       'return': 'مرتجع',
       'add_account': 'إنشاء حساب',
+      'statement': 'كشف حساب',
+      'block_account': 'إيقاف حساب',
+      'unblock_account': 'تفعيل حساب',
+      'set_limit': 'تحديد سقف',
+      'process': 'عملية',
+      'print_statement': 'طباعة',
+      'send_statement': 'إرسال',
+      'statistics': 'إحصائيات',
+      'last_transaction': 'آخر عملية',
+      'search': 'بحث',
+      'delete_customer': 'حذف حساب',
+      'edit_customer': 'تعديل حساب',
     }[intent] ?? intent;
   }
 
@@ -1020,9 +1203,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        '✅ تم الحفظ بنجاح',
-                        style: TextStyle(
+                      Text(
+                        result.ttsMessage ?? '✅ تم التنفيذ بنجاح',
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                           color: Colors.green,
@@ -1205,3 +1388,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
 // - زر "أضف حساب جديد" عند عدم وجود مرشح
 // - احتياطي: استعلام + إضافة حساب (Legacy)
 // - زر إلغاء الجلسة في الـ AppBar
+// Voice Screen v3: دعم targetScreen والنوايا الجديدة
+// - إحصائيات: فتح StatsScreen
+// - تعديل: فتح AddAccountScreen(existing)
+// - طباعة/إرسال: عرض نافذة كشف الحساب
+// - بحث: توجيه المستخدم لتبويب العملاء
+// - _intentLabel: يدعم جميع النوايا الجديدة
+// - QueryService word-count heuristic: يتخطى الاستعلامات القصيرة التي لا تحتوي على اسم
