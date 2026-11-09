@@ -14,6 +14,21 @@ class KeywordsService {
   static const String catQueryBalance = 'query_balance';
   static const String catQueryStatement = 'query_statement';
   static const String catQueryAll = 'query_all';
+  
+  // إدارة الحساب
+  static const String catBlockAccount = 'block_account';
+  static const String catUnblockAccount = 'unblock_account';
+  static const String catSetLimit = 'set_limit';
+  static const String catProcess = 'process';
+
+  // 🆕 عمليات متقدمة
+  static const String catPrintStatement = 'print_statement';
+  static const String catSendStatement = 'send_statement';
+  static const String catStatistics = 'statistics';
+  static const String catLastTransaction = 'last_transaction';
+  static const String catSearch = 'search';
+  static const String catDeleteCustomer = 'delete_customer';
+  static const String catEditCustomer = 'edit_customer';
 
   /// كل الفئات بالترتيب
   static const List<String> allCategories = [
@@ -24,6 +39,17 @@ class KeywordsService {
     catQueryBalance,
     catQueryStatement,
     catQueryAll,
+    catBlockAccount,
+    catUnblockAccount,
+    catSetLimit,
+    catProcess,
+    catPrintStatement,
+    catSendStatement,
+    catStatistics,
+    catLastTransaction,
+    catSearch,
+    catDeleteCustomer,
+    catEditCustomer,
   ];
 
   /// الأسماء العربية للعرض
@@ -35,6 +61,17 @@ class KeywordsService {
     catQueryBalance: 'كلمات الاستعلام عن رصيد',
     catQueryStatement: 'كلمات طلب كشف حساب',
     catQueryAll: 'كلمات الاستعلام الإجمالي',
+    catBlockAccount: 'كلمات إيقاف الحساب',
+    catUnblockAccount: 'كلمات تفعيل الحساب',
+    catSetLimit: 'كلمات تحديد السقف',
+    catProcess: 'كلمات بدء عملية جديدة',
+    catPrintStatement: 'كلمات طباعة كشف الحساب',
+    catSendStatement: 'كلمات إرسال كشف الحساب',
+    catStatistics: 'كلمات الإحصائيات',
+    catLastTransaction: 'كلمات آخر عملية',
+    catSearch: 'كلمات البحث',
+    catDeleteCustomer: 'كلمات حذف حساب',
+    catEditCustomer: 'كلمات تعديل حساب',
   };
 
   /// الإيموجي لكل فئة
@@ -46,6 +83,17 @@ class KeywordsService {
     catQueryBalance: '❓',
     catQueryStatement: '📄',
     catQueryAll: '📊',
+    catBlockAccount: '🚫',
+    catUnblockAccount: '✅',
+    catSetLimit: '📏',
+    catProcess: '⚡',
+    catPrintStatement: '🖨️',
+    catSendStatement: '📤',
+    catStatistics: '📈',
+    catLastTransaction: '⏮️',
+    catSearch: '🔍',
+    catDeleteCustomer: '🗑️',
+    catEditCustomer: '✏️',
   };
 
   /// الأوصاف النصية
@@ -57,6 +105,17 @@ class KeywordsService {
     catQueryBalance: 'عندما يسأل عن رصيد عميل',
     catQueryStatement: 'عندما يطلب كشف حساب',
     catQueryAll: 'عندما يسأل عن الإجمالي (كل الديون)',
+    catBlockAccount: 'عندما يطلب إيقاف حساب عميل',
+    catUnblockAccount: 'عندما يطلب تفعيل حساب عميل',
+    catSetLimit: 'عندما يطلب تحديد سقف رصيد',
+    catProcess: 'عندما يطلب بدء عملية (دين/سداد/مرتجع) دون تحديد',
+    catPrintStatement: 'عندما يطلب طباعة كشف حساب',
+    catSendStatement: 'عندما يطلب إرسال كشف حساب عبر واتساب',
+    catStatistics: 'عندما يطلب الإحصائيات أو التقارير',
+    catLastTransaction: 'عندما يطلب آخر عملية أو آخر تسجيل',
+    catSearch: 'عندما يطلب البحث عن حساب',
+    catDeleteCustomer: 'عندما يطلب حذف حساب',
+    catEditCustomer: 'عندما يطلب تعديل بيانات حساب',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -95,6 +154,60 @@ class KeywordsService {
     ],
     catQueryAll: [
       'كل الحسابات', 'كل الديون', 'إجمالي', 'اجمالي', 'المجموع',
+    ],
+    catBlockAccount: [
+      'أوقف الحساب', 'اوقف الحساب', 'أوقف حساب', 'اوقف حساب',
+      'إيقاف الحساب', 'إيقاف حساب', 'وقف الحساب', 'وقف حساب',
+      'عطل الحساب', 'عطل حساب',
+    ],
+    catUnblockAccount: [
+      'فعل الحساب', 'فعل حساب', 'فعل هذا الحساب',
+      'تفعيل الحساب', 'تفعيل حساب',
+      'نشط الحساب', 'نشط حساب', 'شغل الحساب', 'شغل حساب',
+    ],
+    catSetLimit: [
+      'حدد سقف', 'حدد السقف', 'حدد الحد الأقصى', 'حدد الحد الاقصى',
+      'سقف الحساب', 'سقف حساب', 'حد أقصى', 'حد اقصى',
+    ],
+    catProcess: [
+      'عملية', 'أضف عملية', 'اضف عملية', 'سجل عملية', 'عملية جديدة',
+    ],
+    catPrintStatement: [
+      'طباعة كشف', 'اطبع كشف', 'طباعة حساب', 'اطبع حساب',
+      'طباعة', 'اطبع', 'print',
+    ],
+    catSendStatement: [
+      'أرسل كشف', 'ارسل كشف', 'إرسال كشف',
+      'أرسل حساب', 'ارسل حساب',
+      'واتساب كشف', 'واتساب حساب',
+      'send statement', 'share statement',
+    ],
+    catStatistics: [
+      'الإحصائيات', 'الاحصائيات', 'احصائيات', 'إحصائيات',
+      'التقارير', 'تقارير', 'إجمالي', 'اجمالي',
+      'إجمالي الديون', 'اجمالي الديون',
+      'statistics', 'reports',
+    ],
+    catLastTransaction: [
+      'آخر عملية', 'اخر عملية', 'آخر تسجيل', 'اخر تسجيل',
+      'آخر حركة', 'اخر حركة', 'آخر معاملة', 'اخر معاملة',
+      'last transaction', 'last activity',
+    ],
+    catSearch: [
+      'ابحث عن', 'ابحث', 'دور على', 'بحث عن', 'بحث',
+      'وين حساب', 'وين', 'أين حساب', 'أين',
+      'search for', 'search',
+    ],
+    catDeleteCustomer: [
+      'احذف حساب', 'احذف الحساب', 'حذف حساب', 'حذف الحساب',
+      'امسح حساب', 'امسح الحساب', 'مسح حساب', 'مسح الحساب',
+      'delete customer', 'delete account',
+    ],
+    catEditCustomer: [
+      'عدل حساب', 'عدل الحساب', 'تعديل حساب', 'تعديل الحساب',
+      'غير الرقم', 'غير رقم', 'غير الاسم', 'غير اسم',
+      'تعديل رقم', 'تعديل الاسم',
+      'edit customer', 'update customer',
     ],
   };
 
@@ -313,3 +426,15 @@ class KeywordsService {
     return total;
   }
 }
+
+// Keywords Service v1: الكلمات المفتاحية القابلة للتعديل (7 فئات)
+// Keywords Service v2: إضافة كلمات إدارة الحساب (إيقاف، تفعيل، سقف، عملية)
+// Keywords Service v3: إضافة كلمات متقدمة
+// - print_statement (طباعة كشف حساب)
+// - send_statement (إرسال كشف عبر واتساب)
+// - statistics (الإحصائيات والتقارير)
+// - last_transaction (آخر عملية)
+// - search (البحث عن حساب)
+// - delete_customer (حذف حساب)
+// - edit_customer (تعديل حساب)
+// - المجموع: 18 فئة
