@@ -198,6 +198,74 @@ class DuplicateDetector {
     return found;
   }
 
+  /// 🆕 فحص التكرارات المحلية (بين حسابات الجهاز نفسه)
+  static Future<int> scanLocalDuplicates() async {
+    if (!SettingsService.getBool(
+      AppSettings.duplicateDetectionEnabled,
+      defaultValue: true,
+    )) {
+      return 0;
+    }
+
+    final db = DatabaseHelper.instance;
+    final now = DateTime.now().toIso8601String();
+    int found = 0;
+
+    final localCustomers = await db.allCustomersWithDeleted();
+    final activeCustomers = localCustomers
+        .where((c) => !c.isPermanentlyDeleted && !c.isDeleted)
+        .toList();
+
+    for (int i = 0; i < activeCustomers.length; i++) {
+      final c1 = activeCustomers[i];
+      if (c1.cloudId == null || c1.cloudId!.isEmpty) continue;
+
+      for (int j = i + 1; j < activeCustomers.length; j++) {
+        final c2 = activeCustomers[j];
+        if (c2.cloudId == null || c2.cloudId!.isEmpty) continue;
+
+        final cmp = _compareNames(c1.name, c2.name);
+        if (cmp.level == 'different') continue;
+        if (!_isLevelEnabled(cmp.level)) continue;
+
+        // التحقق من عدم وجود تكرار مسجل مسبقاً
+        final existing = await db.database.then((d) => d.query(
+              'pending_duplicates',
+              where:
+                  '((local_cloud_id = ? AND cloud_cloud_id = ?) OR (local_cloud_id = ? AND cloud_cloud_id = ?)) AND type = ? AND status IN (?, ?)',
+              whereArgs: [
+                c1.cloudId, c2.cloudId,
+                c2.cloudId, c1.cloudId,
+                'customer',
+                'pending', 'skipped'
+              ],
+              limit: 1,
+            ));
+        if (existing.isNotEmpty) continue;
+
+        await db.insertPendingDuplicate({
+          'type': 'customer',
+          'local_cloud_id': c1.cloudId,
+          'cloud_cloud_id': c2.cloudId,
+          'similarity_score': cmp.score,
+          'similarity_level': cmp.level,
+          'detected_at': now,
+          'status': 'pending',
+          'metadata': jsonEncode({
+            'local_name': c1.name,
+            'cloud_name': c2.name,
+            'local_phone': c1.phone,
+            'cloud_phone': c2.phone,
+          }),
+        });
+        found++;
+        debugPrint(
+            '🔀 [Detector] Local Duplicate: "${c1.name}" ↔ "${c2.name}" (${cmp.level})');
+      }
+    }
+    return found;
+  }
+
   /// 🆕 هل العملية مكررة بناءً على الوضع المختار؟
   static bool _isTransactionDuplicate({
     required Transaction localT,
@@ -454,3 +522,4 @@ class NameComparison {
 
 // Duplicate Detector v1: نظام الكشف عن التكرارات (تطبيع عربي + مقارنة + حظر) — المرحلة 2
 // Duplicate Detector v2: ربط transactionDuplicateMode وtransactionWindowMinutes وmaxDuplicatesPerSync
+// Duplicate Detector v3: إضافة scanLocalDuplicates لاكتشاف التكرار المحلي
