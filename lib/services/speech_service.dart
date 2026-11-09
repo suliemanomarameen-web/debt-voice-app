@@ -35,9 +35,23 @@ class SpeechService {
     _initializing = true;
     try {
       _available = await _speech.initialize(
-        onError: (e) => debugPrint('STT Error: $e'),
+        onError: (e) {
+          debugPrint('STT Error: $e');
+          // تجاهل الأخطاء المتعلقة بعدم فهم الكلام
+          if (e.errorMsg != 'error_no_match' &&
+              e.errorMsg != 'error_speech_timeout' &&
+              e.errorMsg != 'error_client') {
+            _available = false;
+          }
+        },
         onStatus: (s) => debugPrint('STT Status: $s'),
       );
+      
+      // 🆕 تأخير 400 مللي ثانية للسماح للنظام بربط المحرك (إصلاح مشكلة التشغيل الأول)
+      if (_available) {
+        await Future.delayed(const Duration(milliseconds: 400));
+      }
+      
       debugPrint('✅ [SpeechService] initialized=$_available locale=$_locale');
     } catch (e) {
       debugPrint('❌ STT Init error: $e');
@@ -119,3 +133,4 @@ class SpeechService {
 // Speech Service v1: النسخة الأساسية (STT بسيط)
 // Speech Service v2: تحسين التعرف الصوتي + try/finally
 // Speech Service v2.1: إعادة timeout كمعامل قديم للتوافق مع overlay_widget (سيُزال في v7)
+// Speech Service v2.2: إضافة تأخير 400ms بعد التهيئة وتجاهل أخطاء عدم الفهم
