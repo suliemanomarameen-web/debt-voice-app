@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/duplicate_pair.dart';
 import '../services/accountant_service.dart';
+import '../services/duplicate_detector.dart';
 import '../services/duplicate_resolver.dart';
 
 /// الشاشة الإلزامية لحل التكرارات
@@ -46,6 +47,9 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
     setState(() => _loading = true);
 
     try {
+      // 🆕 فحص التكرارات المحلية أولاً
+      await DuplicateDetector.scanLocalDuplicates();
+
       final rows = await _db.getUnresolvedDuplicatesRaw();
       final list = rows.map((r) => DuplicatePair.fromMap(r)).toList();
 
@@ -918,3 +922,4 @@ class _DuplicatesScreenState extends State<DuplicatesScreen> {
 
 // Duplicates Screen v1: الشاشة الإلزامية لحل التكرارات (المرحلة 3)
 // Duplicates Screen v1.1: إضافة forceBlock للسماح بالإغلاق عند الفتح اليدوي من الإعدادات (المرحلة 5)
+// Duplicates Screen v2: إضافة استدعاء scanLocalDuplicates في _load لفحص التكرار المحلي
