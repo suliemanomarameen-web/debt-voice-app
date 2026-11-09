@@ -20,6 +20,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// {max}       → "3"
 /// {balance}   → "1000"
 /// {items}     → "دين 500، سداد 200"
+/// {header}    → "محمد — 500 ريال"
+/// {count}     → "3"
+/// {total}     → "15000"
+/// {query}     → "محمد"
 class VoicePromptsService {
   // ═══════════════════════════════════════════════════════════
   // مفاتيح التخزين
@@ -43,6 +47,21 @@ class VoicePromptsService {
   static const String pSkipItemsWord = 'skip_items_word';
   static const String pAddNewCustomerWord = 'add_new_customer_word';
 
+  // 🆕 أسئلة إدارة الحساب
+  static const String pAskIntentForCustomer = 'ask_intent_for_customer';
+  static const String pAskProcessType = 'ask_process_type';
+  static const String pAskLimitAmount = 'ask_limit_amount';
+
+  // 🆕 أسئلة الطباعة والإرسال والبحث والحذف والتعديل
+  static const String pAskPrintCustomer = 'ask_print_customer';
+  static const String pAskSendCustomer = 'ask_send_customer';
+  static const String pAskLastTransactionCustomer = 'ask_last_transaction_customer';
+  static const String pAskSearchQuery = 'ask_search_query';
+  static const String pAskDeleteCustomer = 'ask_delete_customer';
+  static const String pConfirmDeleteCustomer = 'confirm_delete_customer';
+  static const String pAskEditCustomer = 'ask_edit_customer';
+  static const String pAskEditField = 'ask_edit_field';
+
   // ═══════════════════════════════════════════════════════════
   // مفاتيح الردود الصوتية (TTS Responses)
   // ═══════════════════════════════════════════════════════════
@@ -60,29 +79,37 @@ class VoicePromptsService {
   // ═══════════════════════════════════════════════════════════
   // 🆕 مفاتيح نطق العمليات والحسابات (TtsService)
   // ═══════════════════════════════════════════════════════════
-  // تأكيد العملية
   static const String tConfirmZero = 't_confirm_zero';
   static const String tConfirmDebt = 't_confirm_debt';
   static const String tConfirmPayment = 't_confirm_payment';
-
-  // الرصيد
   static const String tBalanceDebt = 't_balance_debt';
   static const String tBalanceCredit = 't_balance_credit';
   static const String tBalanceZero = 't_balance_zero';
-
-  // إنشاء حساب
   static const String tAccountCreated = 't_account_created';
   static const String tExistsBefore = 't_exists_before';
-
-  // الأخطاء
   static const String tNoAccount = 't_no_account';
   static const String tMultipleAccounts = 't_multiple_accounts';
   static const String tDidNotHear = 't_did_not_hear';
   static const String tDidNotUnderstand = 't_did_not_understand';
-
-  // كشف الحساب
   static const String tStatementHeader = 't_statement_header';
   static const String tStatementWithItems = 't_statement_with_items';
+
+  // 🆕 ردود إدارة الحساب والطباعة والإحصائيات
+  static const String rAccountBlocked = 'r_account_blocked';
+  static const String rAccountUnblocked = 'r_account_unblocked';
+  static const String rLimitSet = 'r_limit_set';
+  static const String rPrintingStatement = 'r_printing_statement';
+  static const String rSendingStatement = 'r_sending_statement';
+  static const String rShowingStats = 'r_showing_stats';
+  static const String rLastTransaction = 'r_last_transaction';
+
+  // 🆕 ردود الطباعة والإرسال والبحث والحذف والتعديل
+  static const String rStatementReady = 'r_statement_ready';
+  static const String rStatementSent = 'r_statement_sent';
+  static const String rStatsSummary = 'r_stats_summary';
+  static const String rSearchResults = 'r_search_results';
+  static const String rCustomerDeleted = 'r_customer_deleted';
+  static const String rEditSaved = 'r_edit_saved';
 
   // ═══════════════════════════════════════════════════════════
   // القيم الافتراضية للأسئلة
@@ -101,6 +128,21 @@ class VoicePromptsService {
     pCancelWord: 'إلغاء',
     pSkipItemsWord: 'بدون بيان',
     pAddNewCustomerWord: 'أضف جديد',
+
+    // 🆕 إدارة الحساب
+    pAskIntentForCustomer: 'ماذا تريد للحساب؟ (كشف حساب، عملية، إيقاف، تفعيل، تحديد سقف، طباعة، إرسال)',
+    pAskProcessType: 'دين أم سداد أم مرتجع؟',
+    pAskLimitAmount: 'كم السقف؟',
+
+    // 🆕 الطباعة والإرسال والبحث والحذف والتعديل
+    pAskPrintCustomer: 'طباعة كشف من؟',
+    pAskSendCustomer: 'إرسال كشف من؟',
+    pAskLastTransactionCustomer: 'آخر عملية لأي حساب؟',
+    pAskSearchQuery: 'ابحث عن ماذا؟ (اسم الحساب)',
+    pAskDeleteCustomer: 'حذف حساب من؟',
+    pConfirmDeleteCustomer: 'هل أنت متأكد من حذف حساب "{name}"؟ (قل "نعم" للتأكيد)',
+    pAskEditCustomer: 'تعديل أي حساب؟',
+    pAskEditField: 'ماذا تريد تعديل؟ (الاسم، الهاتف، السقف)',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -120,7 +162,7 @@ class VoicePromptsService {
     rChooseFromList: 'قل الرقم أو الاسم',
     rAddingNew: 'سيتم إضافة حساب جديد باسم {name}',
 
-    // 🆕 نصوص TtsService (تأكيد العمليات) — بالتشكيل الكامل
+    // 🆕 نصوص TtsService
     tConfirmZero:
         'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency}. حِسَابُ {customer} أَصْبَحَ مُتَوَازِنًا',
     tConfirmDebt:
@@ -128,27 +170,40 @@ class VoicePromptsService {
     tConfirmPayment:
         'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency} مِنْ {customer}. البَاقِي لَهُ هُوَ {balance} {currency}',
 
-    // 🆕 الرصيد
     tBalanceDebt: '{customer} عَلَيْهِ {balance} {currency}',
     tBalanceCredit: '{customer} بَاقِي لَهُ {balance} {currency}',
     tBalanceZero:
         'حِسَابُ {customer} مُتَوَازِن، لَا دُيُونَ وَلَا مُسْتَحَقَّات',
 
-    // 🆕 إنشاء حساب
     tAccountCreated: 'تَمَّ إِنْشَاءُ حِسَابٍ بِاسْمِ {name}',
     tExistsBefore: 'حِسَابُ {name} مَوْجُودٌ مُسْبَقًا',
 
-    // 🆕 أخطاء
     tNoAccount: 'لَا يُوجَدُ حِسَابٌ بِاسْمِ {name}',
     tMultipleAccounts:
         'يُوجَدُ أَكْثَرُ مِنْ حِسَاب. حَدِّدِ الاِسْمَ بِدِقَّة',
     tDidNotHear: 'لَمْ أَسْمَعْ شَيْئًا. تَحَدَّثْ بِوُضُوحْ',
     tDidNotUnderstand: 'لَمْ أَفْهَمِ الجُمْلَة',
 
-    // 🆕 كشف الحساب
     tStatementHeader: '{customer} — {balance} {currency}',
     tStatementWithItems:
         '{header}. آخِرُ العَمَلِيَّات: {items}',
+
+    // 🆕 إدارة الحساب والطباعة والإحصائيات
+    rAccountBlocked: 'تَمَّ إِيقَافُ حِسَابِ {name}',
+    rAccountUnblocked: 'تَمَّ تَفْعِيلُ حِسَابِ {name}',
+    rLimitSet: 'تَمَّ تَحْدِيدُ سَقْفِ حِسَابِ {name} بِمَبْلَغِ {amount} {currency}',
+    rPrintingStatement: 'جَارِي تَحْضِيرُ كَشْفِ حِسَابِ {name} لِلطِّبَاعَة',
+    rSendingStatement: 'جَارِي إِرْسَالُ كَشْفِ حِسَابِ {name}',
+    rShowingStats: 'جَارِي عَرْضُ الإِحْصَائِيَّات',
+    rLastTransaction: 'آخِرُ عَمَلِيَّةٍ لِلْحِسَابِ هِيَ: {summary}',
+
+    // 🆕 الطباعة والإرسال والبحث والحذف والتعديل
+    rStatementReady: 'تَمَّ تَحْضِيرُ كَشْفِ حِسَابِ {name}',
+    rStatementSent: 'تَمَّ إِرْسَالُ كَشْفِ حِسَابِ {name} عَبْرَ وَاتْسَاب',
+    rStatsSummary: 'إِجْمَالِيُّ الدُّيُونِ {total} {currency}',
+    rSearchResults: 'تَمَّ العُثُورُ عَلَى {count} نَتِيجَة',
+    rCustomerDeleted: 'تَمَّ حَذْفُ حِسَابِ {name}',
+    rEditSaved: 'تَمَّ تَحْدِيثُ بَيَانَاتِ {name}',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -351,11 +406,12 @@ class VoicePromptsService {
 // - تخزين في SharedPreferences
 // - تعديل فوري بدون بناء
 // VoicePromptsService v2: إضافة 14 نصاً من TtsService
-// - tConfirmZero/tConfirmDebt/tConfirmPayment (تأكيد العملية)
-// - tBalanceDebt/tBalanceCredit/tBalanceZero (الرصيد)
-// - tAccountCreated/tExistsBefore (إنشاء حساب)
-// - tNoAccount/tMultipleAccounts/tDidNotHear/tDidNotUnderstand (أخطاء)
-// - tStatementHeader/tStatementWithItems (كشف الحساب)
-// - متغيرات جديدة: {balance}, {items}, {header}
 // VoicePromptsService v3: تصحيح تشكيل النصوص الافتراضية
-// - جميع ردود TTS أصبحت مشكّلة بالكامل كما في TtsService الأصلي
+// VoicePromptsService v4: إضافة أسئلة وردود إدارة الحساب
+// VoicePromptsService v5: إضافة أسئلة وردود الطباعة والإحصائيات
+// VoicePromptsService v6: استكمال أسئلة وردود الطباعة والإرسال والبحث والحذف والتعديل
+// - pAskPrintCustomer, pAskSendCustomer, pAskLastTransactionCustomer
+// - pAskSearchQuery, pAskDeleteCustomer, pConfirmDeleteCustomer
+// - pAskEditCustomer, pAskEditField
+// - rStatementReady, rStatementSent, rStatsSummary
+// - rSearchResults, rCustomerDeleted, rEditSaved
