@@ -47,13 +47,20 @@ class _OverlayWidgetState extends State<OverlayWidget> {
         await LoggerService.devInfo('overlay', 'Received message: $action');
 
         switch (action) {
+          case 'stt_started': // 🆕 إضاءة الزر عند استمرار الحوار
+            if (mounted) setState(() => _recording = true);
+            break;
+
           case 'stt_result':
             // استقبال نتيجة التعرف على الصوت من main
             final text = data['text'] as String? ?? '';
-            if (mounted) {
-              setState(() {
-                _recording = false;
-              });
+            // لا نطفيء الزر إلا عند الإلغاء أو الخطأ، لكي يبدو مستمراً
+            if (text == 'cancelled' || text == '__ERROR__' || text == 'stopped') {
+              if (mounted) {
+                setState(() {
+                  _recording = false;
+                });
+              }
             }
             await LoggerService.devInfo('overlay', 'STT result received: "$text"');
             break;
@@ -178,15 +185,16 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     setState(() {
       _recording = false;
     });
-    await LoggerService.devInfo('overlay', 'Recording cancelled');
+    await LoggerService.devInfo('overlay', 'Recording cancelled by user');
     try {
-      await FlutterOverlayWindow.shareData({'action': 'stop_stt_in_main'});
+      // 🆕 إرسال أمر إلغاء كامل وليس إيقافاً مؤقتاً
+      await FlutterOverlayWindow.shareData({'action': 'cancel_stt_in_main'});
     } catch (_) {}
   }
 
   Future<void> _handleTap() async {
     if (_recording) {
-      await _finishRecording();
+      await _cancelRecording();
     } else {
       await _startRecording();
     }
@@ -231,7 +239,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
       color: Colors.transparent,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: isTapMode ? _handleTap : null,
+        onTap: _handleTap, // 🆕 يعمل في كلا الوضعين: بدء أو إلغاء
         onLongPressStart: (_) {
           if (_recording) {
             _cancelRecording();
@@ -241,7 +249,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
         },
         onLongPressEnd: (_) {
           if (!isTapMode && _recording) {
-            _finishRecording();
+            _finishRecording(); // يرسل stop فقط، الحوار يستمر
           }
         },
         child: AnimatedContainer(
@@ -319,3 +327,5 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 // Overlay Widget v4: Polling كل 500ms
 // Overlay Widget v5: سجلات المطور (devInfo/devWarn/devError)
 // Overlay Widget v6: نقل محرك الصوت (STT) إلى main isolate وإزالة SpeechService
+// Overlay Widget v7: إضافة حالة stt_started لدعم استمرار الحوار
+// Overlay Widget v8: النقر = إلغاء، رفع الإصبع = استمرار الحوار
