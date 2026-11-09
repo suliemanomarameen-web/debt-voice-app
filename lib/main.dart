@@ -41,6 +41,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // متغير عام لخدمة الصوت (نستخدمها لتشغيل STT من الخيط الرئيسي)
 final SpeechService _globalSpeech = SpeechService();
+bool _userCancelled = false;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -227,9 +228,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
     NotificationService.onTap = _onNotificationTap;
 
-    // ملاحظة: تم إزالة OverlayHandler.listen() هنا 
-    // لأنه كان يعترض الرسائل القادمة من overlay_widget قبل أن تصل إلى OverlayService.listen
-
     try {
       OverlayService.listen((data) {
         if (data is! Map) return;
@@ -242,6 +240,9 @@ class _BootstrapAppState extends State<BootstrapApp> {
             break;
           case 'stop_stt_in_main':
             _stopSTTInMain();
+            break;
+          case 'cancel_stt_in_main':
+            _cancelSTTInMain();
             break;
           case 'open_quick_tx':
           case 'open_new_customer':
@@ -335,35 +336,66 @@ class _BootstrapAppState extends State<BootstrapApp> {
   }
 }
 
-/// تشغيل STT من الخيط الرئيسي
+/// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
+  _userCancelled = false; // تصفير عند بدء جلسة جديدة
   await LoggerService.devInfo('main', 'Starting STT in main isolate');
   try {
-    VoiceConversationService.startSession(source: 'overlay_main');
+    FlutterOverlayWindow.shareData({'action': 'stt_started'});
+
+    if (!VoiceConversationService.hasActiveSession) {
+      VoiceConversationService.startSession(source: 'overlay_main');
+    }
 
     await _globalSpeech.listen(
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 3),
+      listenFor: const Duration(minutes: 5),
+      pauseFor: const Duration(seconds: 5), // صبر 5 ثوانٍ قبل اعتبار الصمت نهاية
       onResult: (text, isFinal) async {
         if (isFinal) {
-          _globalSpeech.stop();
-          final finalText = text.isEmpty ? '__EMPTY__' : text;
-          LoggerService.devInfo('main', 'STT result: "$finalText"');
+          await _globalSpeech.stop();
+          final finalText = text.trim();
 
-          FlutterOverlayWindow.shareData({
-            'action': 'stt_result',
-            'text': finalText,
-          });
+          if (_userCancelled) {
+            _userCancelled = false;
+            return;
+          }
+
+          if (finalText.isEmpty || finalText == '__EMPTY__') {
+            await LoggerService.devInfo('main', 'Empty result — restarting listen');
+            await Future.delayed(const Duration(milliseconds: 300));
+            _startSTTInMain();
+            return;
+          }
+
+          await LoggerService.devInfo('main', 'STT result: "$finalText"');
+          FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': finalText});
+
+          if (_isCancelCommand(finalText)) {
+            await LoggerService.devInfo('main', 'Cancel command detected');
+            VoiceConversationService.cancelSession();
+            await TtsService.speak(VoicePromptsService.getResponse(VoicePromptsService.rCancelled));
+            FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
+            return;
+          }
 
           try {
             final result = await VoiceConversationService.processText(finalText);
-            LoggerService.devInfo('main', 'VoiceConversationResult: ${result.step.name}');
+            await LoggerService.devInfo('main', 'VoiceConversationResult: ${result.step.name}');
 
             if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
-              TtsService.speak(result.ttsMessage!);
+              await TtsService.speak(result.ttsMessage!);
+            }
+
+            if (result.startListening) {
+              await Future.delayed(const Duration(milliseconds: 500));
+              _startSTTInMain();
+            } else {
+              VoiceConversationService.cancelSession();
             }
           } catch (e) {
             await LoggerService.devError('main', 'processText error: $e');
+            await Future.delayed(const Duration(milliseconds: 500));
+            _startSTTInMain();
           }
         }
       },
@@ -377,14 +409,43 @@ void _startSTTInMain() async {
   }
 }
 
-/// إيقاف STT من الخيط الرئيسي
+/// إيقاف مؤقت (عند رفع الإصبع من الزر العائم)
 void _stopSTTInMain() async {
-  await LoggerService.devInfo('main', 'Stopping STT in main isolate');
+  await LoggerService.devInfo('main', 'Stopping STT (temporary pause)');
   try {
     await _globalSpeech.stop();
   } catch (e) {
     await LoggerService.devError('main', 'STT stop error: $e');
   }
+}
+
+/// إلغاء كامل (عند النقر على الزر العائم أثناء التسجيل)
+void _cancelSTTInMain() async {
+  await LoggerService.devInfo('main', 'Cancelling STT (user action)');
+  _userCancelled = true;
+  try {
+    await _globalSpeech.stop();
+  } catch (e) {}
+  VoiceConversationService.cancelSession();
+  FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
+}
+
+bool _isCancelCommand(String text) {
+  final t = text.trim();
+  final cancelWord = VoicePromptsService.getPrompt(VoicePromptsService.pCancelWord).trim();
+  if (t == cancelWord) return true;
+  const singles = {'إلغاء', 'الغاء', 'الغي', 'الغى', 'ألغي', 'ألغى'};
+  if (singles.contains(t)) return true;
+  const phrases = {
+    'الغ العمليه', 'الغ العملية',
+    'الغي العمليه', 'الغي العملية',
+    'إلغاء العمليه', 'إلغاء العملية',
+    'الغاء العمليه', 'الغاء العملية',
+  };
+  for (final p in phrases) {
+    if (t.contains(p)) return true;
+  }
+  return false;
 }
 
 void _scheduleAutoStartOverlay() {
@@ -597,4 +658,5 @@ void overlayMain() async {
 // main v7: سجلات المطور (devInfo/devWarn/devError)
 // main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي (STT in Main Isolate)
 // main v9: إصلاح استدعاء VoiceConversationService (static) وبدء جلسة جديدة
-// main v10: إزالة OverlayHandler.listen() لإصلاح تعارض استماع الزر العائم
+// main v10: إزالة OverlayHandler.listen() + إصلاح استمرارية الحوار (startListening)
+// main v11: استمرارية الحوار الصوتي وإلغاء يدوي بدون توقف عند الصمت
