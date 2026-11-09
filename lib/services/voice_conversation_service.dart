@@ -249,6 +249,15 @@ class VoiceConversationService {
 
     try {
       final db = DatabaseHelper.instance;
+
+      // 🆕 التحقق من عدم وجود حساب بنفس الاسم قبل الإضافة
+      final existing = await db.findAllByExactName(name.trim());
+      if (existing.isNotEmpty) {
+        debugPrint(
+            '🎤 [VoiceConv] Cannot add — ${existing.length} existing customer(s) with same name');
+        return _handleUnknownCustomer(_session!, existing);
+      }
+
       final accountant = await AccountantService.getAccountantName();
       final now = DateTime.now().toIso8601String();
 
@@ -353,10 +362,14 @@ class VoiceConversationService {
   ) async {
     final db = DatabaseHelper.instance;
 
-    // 1. البحث الدقيق (مع تطبيع v16)
-    final exact = await db.findExactCustomer(name);
-    if (exact != null) {
-      return (exact, <Customer>[]);
+    // 🆕 البحث الدقيق: يجلب كل الحسابات المتطابقة (ليس واحداً فقط)
+    final exactList = await db.findAllByExactName(name);
+    if (exactList.length == 1) {
+      return (exactList.first, <Customer>[]);
+    }
+    if (exactList.length > 1) {
+      // يوجد أكثر من حساب بنفس الاسم — نعرضهم للاختيار
+      return (null, exactList);
     }
 
     // 2. البحث الجزئي
@@ -384,17 +397,25 @@ class VoiceConversationService {
       vars: {'name': name},
     );
 
-    final ttsMessage = VoicePromptsService.getResponse(
-      VoicePromptsService.rNoAccount,
-      vars: {'name': name},
-    );
+    // 🆕 التفريق بين "لا يوجد حساب" و"يوجد أكثر من حساب"
+    final String ttsMessage;
+    if (candidates.isEmpty) {
+      ttsMessage = VoicePromptsService.getResponse(
+        VoicePromptsService.rNoAccount,
+        vars: {'name': name},
+      );
+    } else {
+      ttsMessage = VoicePromptsService.getResponse(
+        VoicePromptsService.tMultipleAccounts,
+      );
+    }
 
     return VoiceConversationResult(
       step: ConversationStep.showCandidates,
       prompt: prompt,
       ttsMessage: ttsMessage,
       candidates: candidates,
-      startListening: false,
+      startListening: candidates.isNotEmpty, // استمر بالاستماع لاختيار الحساب
     );
   }
 
@@ -551,3 +572,7 @@ class _FakeParsed {
 // - _saveTransaction: يستخدم TransactionHandler (توافق كامل)
 // - _failAfterMaxAttempts: عند تجاوز المحاولات
 // - _findCustomerWithCandidates: يبحث ويجمع المرشحين
+// VoiceConversationService v2: منع الاختيار العشوائي عند تكرار الاسم
+// - _findCustomerWithCandidates يستخدم findAllByExactName
+// - _handleUnknownCustomer يفرّق بين "لا يوجد" و"يوجد أكثر من حساب"
+// - addNewCustomer يتحقق من عدم وجود حساب بنفس الاسم قبل الإضافة
