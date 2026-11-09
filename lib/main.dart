@@ -36,6 +36,7 @@ import 'tabs/tabs_screen.dart';
 import 'widgets/quick_transaction_dialog.dart';
 import 'db/database_helper.dart';
 import 'config/app_settings.dart';
+import 'models/customer.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -338,7 +339,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
 /// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
-  _userCancelled = false; // تصفير عند بدء جلسة جديدة
+  _userCancelled = false;
   await LoggerService.devInfo('main', 'Starting STT in main isolate');
   try {
     FlutterOverlayWindow.shareData({'action': 'stt_started'});
@@ -347,59 +348,85 @@ void _startSTTInMain() async {
       VoiceConversationService.startSession(source: 'overlay_main');
     }
 
-    await _globalSpeech.listen(
-      listenFor: const Duration(minutes: 5),
-      pauseFor: const Duration(seconds: 5), // صبر 5 ثوانٍ قبل اعتبار الصمت نهاية
-      onResult: (text, isFinal) async {
-        if (isFinal) {
-          await _globalSpeech.stop();
-          final finalText = text.trim();
+    final listenHandler = (String text, bool isFinal) async {
+      if (isFinal) {
+        await _globalSpeech.stop();
+        final finalText = text.trim();
 
-          if (_userCancelled) {
-            _userCancelled = false;
-            return;
+        if (_userCancelled) {
+          _userCancelled = false;
+          return;
+        }
+
+        if (finalText.isEmpty || finalText == '__EMPTY__') {
+          await LoggerService.devInfo(
+              'main', 'Empty result — restarting listen');
+          await Future.delayed(const Duration(milliseconds: 300));
+          _startSTTInMain();
+          return;
+        }
+
+        await LoggerService.devInfo('main', 'STT result: "$finalText"');
+        FlutterOverlayWindow.shareData(
+            {'action': 'stt_result', 'text': finalText});
+
+        if (_isCancelCommand(finalText)) {
+          await LoggerService.devInfo('main', 'Cancel command detected');
+          VoiceConversationService.cancelSession();
+          await TtsService.speak(VoicePromptsService.getResponse(
+              VoicePromptsService.rCancelled));
+          FlutterOverlayWindow.shareData(
+              {'action': 'stt_result', 'text': 'cancelled'});
+          return;
+        }
+
+        try {
+          final result =
+              await VoiceConversationService.processText(finalText);
+          await LoggerService.devInfo(
+              'main', 'VoiceConversationResult: ${result.step.name}');
+
+          if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
+            await TtsService.speak(result.ttsMessage!);
           }
 
-          if (finalText.isEmpty || finalText == '__EMPTY__') {
-            await LoggerService.devInfo('main', 'Empty result — restarting listen');
-            await Future.delayed(const Duration(milliseconds: 300));
-            _startSTTInMain();
-            return;
-          }
-
-          await LoggerService.devInfo('main', 'STT result: "$finalText"');
-          FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': finalText});
-
-          if (_isCancelCommand(finalText)) {
-            await LoggerService.devInfo('main', 'Cancel command detected');
-            VoiceConversationService.cancelSession();
-            await TtsService.speak(VoicePromptsService.getResponse(VoicePromptsService.rCancelled));
-            FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
-            return;
-          }
-
-          try {
-            final result = await VoiceConversationService.processText(finalText);
-            await LoggerService.devInfo('main', 'VoiceConversationResult: ${result.step.name}');
-
-            if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
-              await TtsService.speak(result.ttsMessage!);
-            }
-
-            if (result.startListening) {
-              await Future.delayed(const Duration(milliseconds: 500));
-              _startSTTInMain();
-            } else {
-              VoiceConversationService.cancelSession();
-            }
-          } catch (e) {
-            await LoggerService.devError('main', 'processText error: $e');
+          if (result.startListening) {
             await Future.delayed(const Duration(milliseconds: 500));
             _startSTTInMain();
+          } else if (result.targetScreen != null) {
+            await _handleVoiceTargetScreen(result);
+          } else {
+            VoiceConversationService.cancelSession();
           }
+        } catch (e) {
+          await LoggerService.devError('main', 'processText error: $e');
+          await Future.delayed(const Duration(milliseconds: 500));
+          _startSTTInMain();
         }
-      },
+      }
+    };
+
+    await _globalSpeech.listen(
+      listenFor: const Duration(minutes: 5),
+      pauseFor: const Duration(seconds: 5),
+      onResult: listenHandler,
     );
+
+    // 🆕 إصلاح مشكلة أول تثبيت: إذا لم يبدأ المحرك فعلياً بعد 800 مللي ثانية، نعيد التهيئة والمحاولة
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!_globalSpeech.isListening &&
+        VoiceConversationService.hasActiveSession) {
+      await LoggerService.devInfo(
+          'main', 'STT failed to start, resetting and retrying...');
+      await _globalSpeech.reset();
+      await _globalSpeech.init();
+      await _globalSpeech.listen(
+        listenFor: const Duration(minutes: 5),
+        pauseFor: const Duration(seconds: 5),
+        onResult: listenHandler,
+      );
+    }
+
   } catch (e) {
     await LoggerService.devError('main', 'STT listen error: $e');
     FlutterOverlayWindow.shareData({
@@ -432,7 +459,9 @@ void _cancelSTTInMain() async {
 
 bool _isCancelCommand(String text) {
   final t = text.trim();
-  final cancelWord = VoicePromptsService.getPrompt(VoicePromptsService.pCancelWord).trim();
+  final cancelWord = VoicePromptsService.getPrompt(
+    VoicePromptsService.pCancelWord,
+  ).trim();
   if (t == cancelWord) return true;
   const singles = {'إلغاء', 'الغاء', 'الغي', 'الغى', 'ألغي', 'ألغى'};
   if (singles.contains(t)) return true;
@@ -446,6 +475,152 @@ bool _isCancelCommand(String text) {
     if (t.contains(p)) return true;
   }
   return false;
+}
+
+/// 🆕 التنقل بين الشاشات من الزر العائم بعد تنفيذ الأمر الصوتي
+Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
+  final ctx = navigatorKey.currentContext;
+  if (ctx == null) return;
+
+  switch (result.targetScreen) {
+    case 'stats':
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const StatsScreen()),
+      ).then((_) => VoiceConversationService.cancelSession());
+      break;
+
+    case 'edit':
+      if (result.matchedCustomer != null) {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => AddAccountScreen(existing: result.matchedCustomer),
+          ),
+        ).then((_) => VoiceConversationService.cancelSession());
+      } else {
+        VoiceConversationService.cancelSession();
+      }
+      break;
+
+    case 'print':
+    case 'send':
+      if (result.matchedCustomer != null) {
+        await _showStatementDialog(result.matchedCustomer!);
+      }
+      VoiceConversationService.cancelSession();
+      break;
+
+    case 'search':
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(
+          content: Text('استخدم تبويب العملاء للبحث'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+      VoiceConversationService.cancelSession();
+      break;
+
+    default:
+      VoiceConversationService.cancelSession();
+  }
+}
+
+/// 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
+Future<void> _showStatementDialog(Customer customer) async {
+  final ctx = navigatorKey.currentContext;
+  if (ctx == null) return;
+  final db = DatabaseHelper.instance;
+  final balance = await db.customerBalance(customer.id!);
+  final txList = await db.customerTransactions(customer.id!);
+
+  await showDialog(
+    context: ctx,
+    builder: (c) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: Text('كشف حساب ${customer.name}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: balance > 0
+                        ? Colors.red.withOpacity(0.1)
+                        : Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        balance > 0
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        color: balance > 0 ? Colors.red : Colors.green,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'الرصيد: ${balance.abs().toStringAsFixed(0)} ريال',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: balance > 0 ? Colors.red : Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'آخر العمليات:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const Divider(),
+                if (txList.isEmpty)
+                  const Text('لا توجد عمليات',
+                      style: TextStyle(color: Colors.grey))
+                else
+                  ...txList.take(10).map((t) {
+                    final typeLabel = t.type == 'debt'
+                        ? 'دين'
+                        : t.type == 'payment'
+                            ? 'سداد'
+                            : 'مرتجع';
+                    final color =
+                        t.type == 'debt' ? Colors.red : Colors.green;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.circle, size: 8, color: color),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '$typeLabel — ${t.amount.toStringAsFixed(0)} ${t.currency}',
+                              style: TextStyle(
+                                  fontSize: 13, color: color),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 void _scheduleAutoStartOverlay() {
@@ -656,7 +831,9 @@ void overlayMain() async {
 // main v5: الأوامر الستة + التشغيل التلقائي
 // main v6: BootstrapApp (إصلاح الشاشة السوداء)
 // main v7: سجلات المطور (devInfo/devWarn/devError)
-// main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي (STT in Main Isolate)
+// main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي
 // main v9: إصلاح استدعاء VoiceConversationService (static) وبدء جلسة جديدة
-// main v10: إزالة OverlayHandler.listen() + إصلاح استمرارية الحوار (startListening)
+// main v10: إزالة OverlayHandler.listen() + إصلاح استمرارية الحوار
 // main v11: استمرارية الحوار الصوتي وإلغاء يدوي بدون توقف عند الصمت
+// main v12: إصلاح فشل تشغيل الصوت في المرة الأولى + دعم الاستعلام
+// main v13: دعم targetScreen من الزر العائم (إحصائيات، تعديل، طباعة) — بدون ضغط
