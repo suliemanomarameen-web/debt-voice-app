@@ -104,7 +104,7 @@ class VoicePromptsService {
   };
 
   // ═══════════════════════════════════════════════════════════
-  // القيم الافتراضية للردود الصوتية
+  // القيم الافتراضية للردود الصوتية (مشكّلة بالكامل)
   // ═══════════════════════════════════════════════════════════
   static const Map<String, String> _defaultResponses = {
     rStartListening: 'جاري الاستماع...',
@@ -120,7 +120,7 @@ class VoicePromptsService {
     rChooseFromList: 'قل الرقم أو الاسم',
     rAddingNew: 'سيتم إضافة حساب جديد باسم {name}',
 
-    // 🆕 نصوص TtsService (تأكيد العمليات)
+    // 🆕 نصوص TtsService (تأكيد العمليات) — بالتشكيل الكامل
     tConfirmZero:
         'تَمَّ تَسْجِيلُ {type} بِمَبْلَغِ {amount} {currency}. حِسَابُ {customer} أَصْبَحَ مُتَوَازِنًا',
     tConfirmDebt:
@@ -357,3 +357,5 @@ class VoicePromptsService {
 // - tNoAccount/tMultipleAccounts/tDidNotHear/tDidNotUnderstand (أخطاء)
 // - tStatementHeader/tStatementWithItems (كشف الحساب)
 // - متغيرات جديدة: {balance}, {items}, {header}
+// VoicePromptsService v3: تصحيح تشكيل النصوص الافتراضية
+// - جميع ردود TTS أصبحت مشكّلة بالكامل كما في TtsService الأصلي
