@@ -227,11 +227,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
     NotificationService.onTap = _onNotificationTap;
 
-    try {
-      OverlayHandler.listen();
-    } catch (e) {
-      debugPrint('⚠️ [Bootstrap] OverlayHandler.listen error: $e');
-    }
+    // ملاحظة: تم إزالة OverlayHandler.listen() هنا 
+    // لأنه كان يعترض الرسائل القادمة من overlay_widget قبل أن تصل إلى OverlayService.listen
 
     try {
       OverlayService.listen((data) {
@@ -342,7 +339,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
 void _startSTTInMain() async {
   await LoggerService.devInfo('main', 'Starting STT in main isolate');
   try {
-    // 1. بدء جلسة جديدة (مهم جداً قبل استقبال النص)
     VoiceConversationService.startSession(source: 'overlay_main');
 
     await _globalSpeech.listen(
@@ -354,18 +350,15 @@ void _startSTTInMain() async {
           final finalText = text.isEmpty ? '__EMPTY__' : text;
           LoggerService.devInfo('main', 'STT result: "$finalText"');
 
-          // إرسال النتيجة للـ overlay لتحديث الواجهة (إيقاف اللون الأحمر)
           FlutterOverlayWindow.shareData({
             'action': 'stt_result',
             'text': finalText,
           });
 
-          // 2. معالجة النص باستخدام الدالة الساكنة (بدون أقواس)
           try {
             final result = await VoiceConversationService.processText(finalText);
             LoggerService.devInfo('main', 'VoiceConversationResult: ${result.step.name}');
 
-            // إذا كان الرد يتطلب قراءة صوتية
             if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
               TtsService.speak(result.ttsMessage!);
             }
@@ -604,3 +597,4 @@ void overlayMain() async {
 // main v7: سجلات المطور (devInfo/devWarn/devError)
 // main v8: تشغيل وإيقاف التعرف على الصوت من الخيط الرئيسي (STT in Main Isolate)
 // main v9: إصلاح استدعاء VoiceConversationService (static) وبدء جلسة جديدة
+// main v10: إزالة OverlayHandler.listen() لإصلاح تعارض استماع الزر العائم
