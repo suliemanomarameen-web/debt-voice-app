@@ -376,10 +376,21 @@ class ParserService {
         .replaceAll('٨', '8')
         .replaceAll('٩', '9');
 
-    // الرقم قد يكون "500" أو "500.5" أو "500,5"
+    // 🆕 1. الأرقام الكبيرة مع فاصلات الآلاف: 1,000,000
+    // مثال: 100,000 → 100000 | 1,500,000 → 1500000
+    final bigMatch =
+        RegExp(r'\d{1,3}(?:,\d{3})+(?:\.\d+)?').firstMatch(normalized);
+    if (bigMatch != null) {
+      final raw = bigMatch.group(0)!.replaceAll(',', '');
+      return double.tryParse(raw);
+    }
+
+    // 2. الأرقام العادية (مع أو بدون عشرية)
     final m = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(normalized);
     if (m != null) {
-      return double.tryParse(m.group(0)!.replaceAll(',', '.'));
+      // استبدال الفاصلة العشرية بنقطة (500,5 → 500.5)
+      final raw = m.group(0)!.replaceAll(',', '.');
+      return double.tryParse(raw);
     }
     return null;
   }
@@ -529,7 +540,10 @@ class ParserService {
         .replaceAll('٨', '8')
         .replaceAll('٩', '9');
 
-    final digitMatch = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(normalized);
+    // 🆕 استخدام نفس regex الذي يلتقط الأرقام الكبيرة مع فاصلات الآلاف
+    final digitMatch = RegExp(
+      r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?',
+    ).firstMatch(normalized);
     if (digitMatch == null) return null;
 
     var after = text.substring(
@@ -688,7 +702,10 @@ class ParserService {
   }
 
   static String _extractItemsAfterAmount(String text) {
-    final digitMatch = RegExp(r'\d+').firstMatch(text);
+    // 🆕 استخدام نفس regex الذي يلتقط الأرقام الكبيرة مع فاصلات الآلاف
+    final digitMatch = RegExp(
+      r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?',
+    ).firstMatch(text);
     if (digitMatch == null) return '';
 
     var after = text.substring(digitMatch.end).trim();
@@ -805,3 +822,7 @@ class _NameAmount {
 // - _extractAmountOnly: لاستخراج رقم من أي نص
 // - merge(): لدمج نتائج متعددة
 // Parser Service v2.1: إصلاح استخراج اسم الحساب عند add_account (استخدام _extractAccountName)
+// Parser Service v2.2: إصلاح تحليل الأرقام الكبيرة مع فاصلات الآلاف (100,000 → 100000)
+// - _findFirstNumber: يلتقط الأرقام بصيغة "1,000,000" كفاصل آلاف
+// - _extractItemsPartial: نفس التحسين
+// - _extractItemsAfterAmount: نفس التحسين
