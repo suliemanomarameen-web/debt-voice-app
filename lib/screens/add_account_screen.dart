@@ -187,6 +187,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       final newNote =
           _note.text.trim().isEmpty ? null : _note.text.trim();
 
+      // 🆕 التحقق من عدم وجود حساب آخر بنفس الاسم
+      if (newName != oldCustomer.name) {
+        final existing = await db.findAllByExactName(newName);
+        if (existing.any((c) => c.id != oldCustomer.id)) {
+          if (mounted) setState(() => _busy = false);
+          _showDuplicateError(newName);
+          return;
+        }
+      }
+
       final changedFields = <String>[];
       if (newName != oldCustomer.name) changedFields.add('name');
       if (newPhone != oldCustomer.phone) changedFields.add('phone');
@@ -246,8 +256,18 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         );
       }
     } else {
+      final newName = _name.text.trim();
+
+      // 🆕 التحقق من عدم وجود حساب بنفس الاسم
+      final existing = await db.findAllByExactName(newName);
+      if (existing.isNotEmpty) {
+        if (mounted) setState(() => _busy = false);
+        _showDuplicateError(newName);
+        return;
+      }
+
       final newCustomer = Customer(
-        name: _name.text.trim(),
+        name: newName,
         phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
         accountType: _type,
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
@@ -271,6 +291,35 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     }
 
     if (mounted) Navigator.pop(context, true);
+  }
+
+  // 🆕 إظهار رسالة خطأ التكرار
+  void _showDuplicateError(String name) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('حساب مكرر'),
+            ],
+          ),
+          content: Text(
+            'يوجد حساب مسجل باسم "$name" مسبقاً.\n\n'
+            'لا يمكن إضافة حسابين بنفس الاسم. يرجى استخدام اسم مختلف.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('فهمت'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _delete() async {
@@ -703,3 +752,4 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
 // شاشة إضافة/تعديل الحساب v2: ربط صلاحيات المحاسب
 // شاشة إضافة/تعديل الحساب v3: ربط requirePasswordForDelete وrequireEditReason
+// شاشة إضافة/تعديل الحساب v4: منع إضافة حساب مكرر بالاسم
