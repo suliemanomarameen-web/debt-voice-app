@@ -29,7 +29,7 @@ class ParsedEntry {
 /// - `isComplete = true` → الجملة كاملة، يمكن الحفظ مباشرة
 /// - `isComplete = false` → اسأل عن `missingFields`
 class ParsedPartial {
-  final String? intent; // 'debt' | 'payment' | 'return' | 'add_account' | null
+  final String? intent; // 'debt' | 'payment' | 'return' | 'add_account' | 'statement' | 'block_account' | 'unblock_account' | 'set_limit' | 'process' | 'print_statement' | 'send_statement' | 'statistics' | 'last_transaction' | 'search' | 'delete_customer' | 'edit_customer' | null
   final String? customerName; // null إذا لم يُعرف
   final double? amount; // null إذا لم يُعرف
   final String? items; // null إذا لم يُعرف (اختياري)
@@ -50,13 +50,23 @@ class ParsedPartial {
   /// هل الجملة كاملة (يمكن الحفظ بدون أسئلة)؟
   ///
   /// نعتبر البيان اختياريًا — لا يدخل في `isComplete`.
-  bool get isComplete =>
-      intent != null &&
-      intent != 'add_account' &&
-      customerName != null &&
-      customerName!.trim().isNotEmpty &&
-      amount != null &&
-      amount! > 0;
+  bool get isComplete {
+    if (intent == null) return false;
+    
+    // الإحصائيات والبحث لا تحتاج اسم عميل ولا مبلغ
+    if (intent == 'statistics' || intent == 'search') return true;
+
+    // باقي النوايا تحتاج اسم عميل
+    if (customerName == null || customerName!.trim().isEmpty) return false;
+
+    // الدين، السداد، المرتجع، وتحديد السقف تحتاج مبلغاً
+    if (intent == 'debt' || intent == 'payment' || intent == 'return' || intent == 'set_limit') {
+      return amount != null && amount! > 0;
+    }
+
+    // كشف حساب، إيقاف، تفعيل، طباعة، إرسال، آخر عملية، حذف، تعديل، إضافة حساب
+    return true;
+  }
 
   bool get hasCustomer =>
       customerName != null && customerName!.trim().isNotEmpty;
@@ -72,9 +82,20 @@ class ParsedPartial {
   /// الحقول المفقودة (بترتيب الأولوية)
   List<String> get missingFields {
     final missing = <String>[];
-    if (intent == null) missing.add('intent');
-    if (!hasCustomer) missing.add('customerName');
-    if (!hasAmount) missing.add('amount');
+    if (intent == null) {
+      missing.add('intent');
+    }
+    
+    // الإحصائيات والبحث لا تحتاج اسم عميل
+    if (intent != 'statistics' && intent != 'search') {
+      if (!hasCustomer) missing.add('customerName');
+    }
+
+    // الدين، السداد، المرتجع، وتحديد السقف تحتاج مبلغاً
+    if (intent == 'debt' || intent == 'payment' || intent == 'return' || intent == 'set_limit') {
+      if (!hasAmount) missing.add('amount');
+    }
+
     return missing;
   }
 
@@ -106,6 +127,18 @@ class ParsedPartial {
         'payment': 'سداد',
         'return': 'مرتجع',
         'add_account': 'إنشاء حساب',
+        'statement': 'كشف حساب',
+        'block_account': 'إيقاف حساب',
+        'unblock_account': 'تفعيل حساب',
+        'set_limit': 'تحديد سقف',
+        'process': 'عملية',
+        'print_statement': 'طباعة كشف',
+        'send_statement': 'إرسال كشف',
+        'statistics': 'إحصائيات',
+        'last_transaction': 'آخر عملية',
+        'search': 'بحث',
+        'delete_customer': 'حذف حساب',
+        'edit_customer': 'تعديل حساب',
       }[intent];
       if (label != null) parts.add(label);
     }
@@ -144,6 +177,18 @@ class ParserService {
     'على', 'من', 'إلى', 'الى', 'في', 'عن', 'مع',
     'لـ', 'ل', 'من',
     'ريال', 'صنف', 'بيان', 'البيان',
+    // 🆕 كلمات النوايا الجديدة
+    'كشف', 'حساب', 'رصيد',
+    'أوقف', 'اوقف', 'إيقاف', 'ايقاف', 'وقف', 'عطل',
+    'فعل', 'تفعيل', 'نشط', 'شغل',
+    'حدد', 'سقف', 'الحد', 'الأقصى', 'الاقصى',
+    'عملية', 'أضف', 'اضف',
+    'طباعة', 'اطبع', 'أرسل', 'ارسل', 'إرسال', 'ارسال', 'واتساب',
+    'إحصائيات', 'احصائيات', 'تقارير', 'إجمالي', 'اجمالي',
+    'آخر', 'اخر', 'حركة', 'معاملة', 'تسجيل',
+    'ابحث', 'بحث', 'دور', 'وين', 'أين', 'اين',
+    'احذف', 'حذف', 'امسح', 'مسح',
+    'عدل', 'تعديل', 'غير',
   ];
 
   // ═══════════════════════════════════════════════════════════
@@ -217,6 +262,9 @@ class ParserService {
   /// - `'amount'` → المستخدم يجيب على "كم المبلغ؟"
   /// - `'items'` → المستخدم يجيب على "ما البيان؟"
   /// - `null` → تحليل كامل جزئي
+  /// - `'processType'` → المستخدم يجيب على "دين أم سداد أم مرتجع؟" بعد "عملية"
+  /// - `'intentForCustomer'` → المستخدم يجيب على "ماذا تريد للحساب؟"
+  /// - `'limitAmount'` → المستخدم يجيب على "كم السقف؟"
   static ParsedPartial parsePartial(String text, {String? expecting}) {
     final original = text.trim();
     if (original.isEmpty) return ParsedPartial(rawText: '');
@@ -228,7 +276,7 @@ class ParserService {
     // ردود سياقية (المستخدم يجيب على سؤال محدد)
     // ═══════════════════════════════════════════════════════════
 
-    if (expecting == 'amount') {
+    if (expecting == 'amount' || expecting == 'limitAmount') {
       final amount = _extractAmountOnly(original);
       return ParsedPartial(
         amount: amount,
@@ -239,8 +287,10 @@ class ParserService {
 
     if (expecting == 'customerName') {
       final name = _extractNameFromAnswer(clean);
+      final amount = _extractAmountOnly(original);
       return ParsedPartial(
         customerName: name,
+        amount: amount,
         rawText: original,
       );
     }
@@ -268,6 +318,25 @@ class ParserService {
     }
 
     if (expecting == 'intent') {
+      final intent = _detectIntent(t);
+      final amount = _extractAmountOnly(original);
+      return ParsedPartial(intent: intent, amount: amount, rawText: original);
+    }
+
+    if (expecting == 'processType') {
+      if (_containsAny(t, KeywordsService.get(KeywordsService.catDebt))) {
+        return ParsedPartial(intent: 'debt', rawText: original);
+      }
+      if (_containsAny(t, KeywordsService.get(KeywordsService.catPayment))) {
+        return ParsedPartial(intent: 'payment', rawText: original);
+      }
+      if (_containsAny(t, KeywordsService.get(KeywordsService.catReturn))) {
+        return ParsedPartial(intent: 'return', rawText: original);
+      }
+      return ParsedPartial(rawText: original);
+    }
+
+    if (expecting == 'intentForCustomer') {
       final intent = _detectIntent(t);
       return ParsedPartial(intent: intent, rawText: original);
     }
@@ -314,11 +383,28 @@ class ParserService {
   // ═══════════════════════════════════════════════════════════
 
   static String? _detectIntent(String t) {
+    // 🆕 1. النوايا الجديدة (كشف الحساب، إدارة الحساب، الطباعة، إلخ)
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement))) return 'statement';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) return 'statement';
+    
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catBlockAccount))) return 'block_account';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catUnblockAccount))) return 'unblock_account';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSetLimit))) return 'set_limit';
+    
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) return 'print_statement';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSendStatement))) return 'send_statement';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catStatistics))) return 'statistics';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catLastTransaction))) return 'last_transaction';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSearch))) return 'search';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catDeleteCustomer))) return 'delete_customer';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catEditCustomer))) return 'edit_customer';
+    
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catProcess))) return 'process';
+
+    // 2. النوايا المالية القديمة (مرتجع → دين → سداد)
     final returnKeywords = KeywordsService.get(KeywordsService.catReturn);
     final debtKeywords = KeywordsService.get(KeywordsService.catDebt);
     final paymentKeywords = KeywordsService.get(KeywordsService.catPayment);
-
-    // الأولوية: مرتجع → دين → سداد
 
     if (_containsAny(t, returnKeywords)) return 'return';
 
@@ -486,6 +572,20 @@ class ParserService {
       ...KeywordsService.get(KeywordsService.catDebt),
       ...KeywordsService.get(KeywordsService.catPayment),
       ...KeywordsService.get(KeywordsService.catReturn),
+      // 🆕 إضافة كلمات النوايا الجديدة
+      ...KeywordsService.get(KeywordsService.catQueryStatement),
+      ...KeywordsService.get(KeywordsService.catQueryBalance),
+      ...KeywordsService.get(KeywordsService.catBlockAccount),
+      ...KeywordsService.get(KeywordsService.catUnblockAccount),
+      ...KeywordsService.get(KeywordsService.catSetLimit),
+      ...KeywordsService.get(KeywordsService.catPrintStatement),
+      ...KeywordsService.get(KeywordsService.catSendStatement),
+      ...KeywordsService.get(KeywordsService.catStatistics),
+      ...KeywordsService.get(KeywordsService.catLastTransaction),
+      ...KeywordsService.get(KeywordsService.catSearch),
+      ...KeywordsService.get(KeywordsService.catDeleteCustomer),
+      ...KeywordsService.get(KeywordsService.catEditCustomer),
+      ...KeywordsService.get(KeywordsService.catProcess),
     }.toList()
       ..sort((a, b) => b.length.compareTo(a.length));
 
@@ -826,3 +926,9 @@ class _NameAmount {
 // - _findFirstNumber: يلتقط الأرقام بصيغة "1,000,000" كفاصل آلاف
 // - _extractItemsPartial: نفس التحسين
 // - _extractItemsAfterAmount: نفس التحسين
+// Parser Service v3.0: إضافة نوايا إدارة الحساب والطباعة والإحصائيات
+// - _detectIntent: يفحص جميع الفئات الجديدة في KeywordsService
+// - _stopWords: إضافة كلمات النوايا الجديدة (كشف، أوقف، حدد، طباعة، إلخ)
+// - _extractNamePartial: إضافة الفئات الجديدة لاستخراج أسماء العملاء بدقة
+// - parsePartial: دعم expecting (processType، intentForCustomer، limitAmount)
+// - ParsedPartial: تحديث isComplete و missingFields و summary للنوايا الجديدة
