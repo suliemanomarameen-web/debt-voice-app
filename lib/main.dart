@@ -1,3 +1,4 @@
+import 'dart:async'; // 🆕 مطلوب لـ Timer
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:provider/provider.dart';
@@ -36,7 +37,7 @@ import 'tabs/tabs_screen.dart';
 import 'widgets/quick_transaction_dialog.dart';
 import 'db/database_helper.dart';
 import 'config/app_settings.dart';
-import 'models/customer.dart'; // 🆕 لاستخدامه في _handleVoiceTargetScreen
+import 'models/customer.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -287,6 +288,23 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     _scheduleAutoStartOverlay();
+
+    // 🆕 التعديل (هـ): Polling احتياطي لالتقاط أوامر الزر العائم عبر SharedPreferences
+    Timer.periodic(const Duration(milliseconds: 300), (timer) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getBool('pending_stt_start') == true) {
+          await prefs.setBool('pending_stt_start', false);
+          await LoggerService.devInfo('main', 'Poll: pending_stt_start → _startSTTInMain');
+          _startSTTInMain();
+        }
+        if (prefs.getBool('pending_stt_cancel') == true) {
+          await prefs.setBool('pending_stt_cancel', false);
+          await LoggerService.devInfo('main', 'Poll: pending_stt_cancel → _cancelSTTInMain');
+          _cancelSTTInMain();
+        }
+      } catch (_) {}
+    });
   }
 
   @override
@@ -880,3 +898,4 @@ void overlayMain() async {
 // main v12: إصلاح فشل تشغيل الصوت في المرة الأولى + دعم الاستعلام
 // main v13: دعم targetScreen من الزر العائم (إحصائيات، تعديل، طباعة)
 // main v14: إصلاح شامل للزر العائم (حماية _sttStarting، مسح pending flags، قراءة المفتاح عند البدء)
+// main v15: إضافة Polling لالتقاط أوامر الزر العائم عبر SharedPreferences (pending_stt_start، pending_stt_cancel)
