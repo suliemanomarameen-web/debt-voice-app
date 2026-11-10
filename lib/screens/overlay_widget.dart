@@ -87,13 +87,16 @@ class _OverlayWidgetState extends State<OverlayWidget> {
       try {
         final prefs = await SharedPreferences.getInstance();
 
-        if (prefs.getBool('pending_overlay_record') == true) {
-          await prefs.setBool('pending_overlay_record', false);
-          await LoggerService.devInfo(
-              'overlay', 'Poll: pending_overlay_record → start');
-          if (!_recording) _startRecording();
-          return;
-        }
+        // 🆕 تم تعطيل قراءة pending_overlay_record هنا 
+        // لأن main.dart هو المسؤول عن التحقق منه عند بدء التشغيل
+        // (هذا يمنع بدء التسجيل التلقائي عند فتح التطبيق بسبب بقايا جلسة سابقة)
+        // if (prefs.getBool('pending_overlay_record') == true) {
+        //   await prefs.setBool('pending_overlay_record', false);
+        //   await LoggerService.devInfo(
+        //       'overlay', 'Poll: pending_overlay_record → start');
+        //   if (!_recording) _startRecording();
+        //   return;
+        // }
 
         if (prefs.getBool('pending_quick_tx') == true) {
           await prefs.setBool('pending_quick_tx', false);
@@ -329,3 +332,4 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 // Overlay Widget v6: نقل محرك الصوت (STT) إلى main isolate وإزالة SpeechService
 // Overlay Widget v7: إضافة حالة stt_started لدعم استمرار الحوار
 // Overlay Widget v8: النقر = إلغاء، رفع الإصبع = استمرار الحوار
+// Overlay Widget v9: تعطيل polling على pending_overlay_record (مع الحفاظ على كل الكود الأصلي)
