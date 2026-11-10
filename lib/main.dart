@@ -36,14 +36,14 @@ import 'tabs/tabs_screen.dart';
 import 'widgets/quick_transaction_dialog.dart';
 import 'db/database_helper.dart';
 import 'config/app_settings.dart';
-import 'models/customer.dart';
+import 'models/customer.dart'; // 🆕 لاستخدامه في _handleVoiceTargetScreen
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // متغير عام لخدمة الصوت (نستخدمها لتشغيل STT من الخيط الرئيسي)
 final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
-bool _sttStarting = false; // 🆕 حماية من الاستدعاء المزدوج
+bool _sttStarting = false; // 🆕 التعديل (أ): حماية من الاستدعاء المزدوج
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,20 +95,21 @@ class _BootstrapAppState extends State<BootstrapApp> {
     } catch (e) {
       debugPrint('⚠️ [Bootstrap] Speech error: $e');
     }
-        // 🆕 التحقق من وجود pending_overlay_record (لحماية الإشعارات عند إغلاق التطبيق)
-try {
-  final prefs = await SharedPreferences.getInstance();
-  final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
-  if (pendingRecord) {
-    await prefs.setBool('pending_overlay_record', false);
-    debugPrint('🔄 [Bootstrap] Pending overlay record found, will start after 3s');
-    Future.delayed(const Duration(seconds: 3), () {
-      _startSTTInMain();
-    });
-  }
-} catch (e) {
-  debugPrint('⚠️ [Bootstrap] Check pending overlay error: $e');
-} 
+
+    // 🆕 التعديل (ب): التحقق من وجود pending_overlay_record (لحماية الإشعارات عند إغلاق التطبيق)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
+      if (pendingRecord) {
+        await prefs.setBool('pending_overlay_record', false);
+        debugPrint('🔄 [Bootstrap] Pending overlay record found, will start after 3s');
+        Future.delayed(const Duration(seconds: 3), () {
+          _startSTTInMain();
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Check pending overlay error: $e');
+    }
 
     try {
       await TtsService.init();
@@ -195,67 +196,67 @@ try {
     }
 
     NotificationService.onAction = (actionId, payload) async {
-  debugPrint('🔔 [Main] onAction: $actionId');
-  await LoggerService.devInfo('main', 'onAction: $actionId');
+      debugPrint('🔔 [Main] onAction: $actionId');
+      await LoggerService.devInfo('main', 'onAction: $actionId');
 
-  // 🆕 مسح المفتاح فوراً بما أننا نعالج الأمر مباشرة هنا
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('pending_overlay_record', false);
-    await prefs.setBool('pending_quick_tx', false);
-    await prefs.setBool('pending_new_customer', false);
-    await prefs.setBool('pending_open_stats', false);
-    await prefs.setBool('pending_open_notifications', false);
-    await prefs.setBool('pending_stop_overlay', false);
-  } catch (e) {
-    debugPrint('⚠️ [Main] clear pending flags error: $e');
-  }
-
-  switch (actionId) {
-    case 'overlay_record':
+      // 🆕 التعديل (د): مسح المفتاح فوراً بما أننا نعالج الأمر مباشرة هنا
       try {
-        debugPrint('🎤 [Main] Starting recording from notification');
-        await LoggerService.devInfo(
-            'main', 'overlay_record — starting STT in main');
-
-        if (!await FlutterOverlayWindow.isActive()) {
-          await OverlayService.show();
-          await Future.delayed(const Duration(milliseconds: 1000));
-        }
-
-        _startSTTInMain();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('pending_overlay_record', false);
+        await prefs.setBool('pending_quick_tx', false);
+        await prefs.setBool('pending_new_customer', false);
+        await prefs.setBool('pending_open_stats', false);
+        await prefs.setBool('pending_open_notifications', false);
+        await prefs.setBool('pending_stop_overlay', false);
       } catch (e) {
-        debugPrint('❌ [Main] start_recording error: $e');
-        await LoggerService.devError(
-            'main', 'start_recording: $e');
+        debugPrint('⚠️ [Main] clear pending flags error: $e');
       }
-      return;
 
-    case 'overlay_quick_tx':
-      _handleOverlayAction('open_quick_tx');
-      return;
+      switch (actionId) {
+        case 'overlay_record':
+          try {
+            debugPrint('🎤 [Main] Starting recording from notification');
+            await LoggerService.devInfo(
+                'main', 'overlay_record — starting STT in main');
 
-    case 'overlay_notifications':
-      _handleOverlayAction('open_notifications');
-      return;
+            if (!await FlutterOverlayWindow.isActive()) {
+              await OverlayService.show();
+              await Future.delayed(const Duration(milliseconds: 1000));
+            }
 
-    case 'overlay_new_customer':
-      _handleOverlayAction('open_new_customer');
-      return;
+            _startSTTInMain();
+          } catch (e) {
+            debugPrint('❌ [Main] start_recording error: $e');
+            await LoggerService.devError(
+                'main', 'start_recording: $e');
+          }
+          return;
 
-    case 'overlay_stats':
-      _handleOverlayAction('open_stats');
-      return;
+        case 'overlay_quick_tx':
+          _handleOverlayAction('open_quick_tx');
+          return;
 
-    case 'overlay_stop':
-      await OverlayService.hide();
-      return;
-  }
+        case 'overlay_notifications':
+          _handleOverlayAction('open_notifications');
+          return;
 
-  NotificationActionHandler.handleAction(actionId, payload);
-};
+        case 'overlay_new_customer':
+          _handleOverlayAction('open_new_customer');
+          return;
 
-NotificationService.onTap = _onNotificationTap;
+        case 'overlay_stats':
+          _handleOverlayAction('open_stats');
+          return;
+
+        case 'overlay_stop':
+          await OverlayService.hide();
+          return;
+      }
+
+      NotificationActionHandler.handleAction(actionId, payload);
+    };
+
+    NotificationService.onTap = _onNotificationTap;
 
     try {
       OverlayService.listen((data) {
@@ -367,9 +368,17 @@ NotificationService.onTap = _onNotificationTap;
 
 /// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
-  _userCancelled = false;
-  await LoggerService.devInfo('main', 'Starting STT in main isolate');
+  // 🆕 التعديل (ج): حماية من الاستدعاء المزدوج
+  if (_sttStarting || _globalSpeech.isListening) {
+    await LoggerService.devInfo('main', 'STT already starting/listening — skipping');
+    return;
+  }
+  _sttStarting = true;
+
   try {
+    _userCancelled = false;
+    await LoggerService.devInfo('main', 'Starting STT in main isolate');
+
     FlutterOverlayWindow.shareData({'action': 'stt_started'});
 
     if (!VoiceConversationService.hasActiveSession) {
@@ -390,6 +399,7 @@ void _startSTTInMain() async {
           await LoggerService.devInfo(
               'main', 'Empty result — restarting listen');
           await Future.delayed(const Duration(milliseconds: 300));
+          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
           _startSTTInMain();
           return;
         }
@@ -420,6 +430,7 @@ void _startSTTInMain() async {
 
           if (result.startListening) {
             await Future.delayed(const Duration(milliseconds: 500));
+            _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
             _startSTTInMain();
           } else if (result.targetScreen != null) {
             await _handleVoiceTargetScreen(result);
@@ -429,6 +440,7 @@ void _startSTTInMain() async {
         } catch (e) {
           await LoggerService.devError('main', 'processText error: $e');
           await Future.delayed(const Duration(milliseconds: 500));
+          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
           _startSTTInMain();
         }
       }
@@ -461,6 +473,8 @@ void _startSTTInMain() async {
       'action': 'stt_result',
       'text': '__ERROR__',
     });
+  } finally {
+    _sttStarting = false; // 🆕 التعديل (ج): تصفير الحماية دائماً عند الخروج
   }
 }
 
@@ -864,4 +878,5 @@ void overlayMain() async {
 // main v10: إزالة OverlayHandler.listen() + إصلاح استمرارية الحوار
 // main v11: استمرارية الحوار الصوتي وإلغاء يدوي بدون توقف عند الصمت
 // main v12: إصلاح فشل تشغيل الصوت في المرة الأولى + دعم الاستعلام
-// main v13: دعم targetScreen من الزر العائم (إحصائيات، تعديل، طباعة) — بدون ضغط
+// main v13: دعم targetScreen من الزر العائم (إحصائيات، تعديل، طباعة)
+// main v14: إصلاح شامل للزر العائم (حماية _sttStarting، مسح pending flags، قراءة المفتاح عند البدء)
