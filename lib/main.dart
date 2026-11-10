@@ -43,6 +43,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // متغير عام لخدمة الصوت (نستخدمها لتشغيل STT من الخيط الرئيسي)
 final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
+bool _sttStarting = false; // 🆕 حماية من الاستدعاء المزدوج
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -94,6 +95,20 @@ class _BootstrapAppState extends State<BootstrapApp> {
     } catch (e) {
       debugPrint('⚠️ [Bootstrap] Speech error: $e');
     }
+        // 🆕 التحقق من وجود pending_overlay_record (لحماية الإشعارات عند إغلاق التطبيق)
+try {
+  final prefs = await SharedPreferences.getInstance();
+  final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
+  if (pendingRecord) {
+    await prefs.setBool('pending_overlay_record', false);
+    debugPrint('🔄 [Bootstrap] Pending overlay record found, will start after 3s');
+    Future.delayed(const Duration(seconds: 3), () {
+      _startSTTInMain();
+    });
+  }
+} catch (e) {
+  debugPrint('⚠️ [Bootstrap] Check pending overlay error: $e');
+} 
 
     try {
       await TtsService.init();
@@ -180,54 +195,67 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     NotificationService.onAction = (actionId, payload) async {
-      debugPrint('🔔 [Main] onAction: $actionId');
-      await LoggerService.devInfo('main', 'onAction: $actionId');
+  debugPrint('🔔 [Main] onAction: $actionId');
+  await LoggerService.devInfo('main', 'onAction: $actionId');
 
-      switch (actionId) {
-        case 'overlay_record':
-          try {
-            debugPrint('🎤 [Main] Starting recording from notification');
-            await LoggerService.devInfo(
-                'main', 'overlay_record — starting STT in main');
+  // 🆕 مسح المفتاح فوراً بما أننا نعالج الأمر مباشرة هنا
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pending_overlay_record', false);
+    await prefs.setBool('pending_quick_tx', false);
+    await prefs.setBool('pending_new_customer', false);
+    await prefs.setBool('pending_open_stats', false);
+    await prefs.setBool('pending_open_notifications', false);
+    await prefs.setBool('pending_stop_overlay', false);
+  } catch (e) {
+    debugPrint('⚠️ [Main] clear pending flags error: $e');
+  }
 
-            if (!await FlutterOverlayWindow.isActive()) {
-              await OverlayService.show();
-              await Future.delayed(const Duration(milliseconds: 1000));
-            }
+  switch (actionId) {
+    case 'overlay_record':
+      try {
+        debugPrint('🎤 [Main] Starting recording from notification');
+        await LoggerService.devInfo(
+            'main', 'overlay_record — starting STT in main');
 
-            _startSTTInMain();
-          } catch (e) {
-            debugPrint('❌ [Main] start_recording error: $e');
-            await LoggerService.devError(
-                'main', 'start_recording: $e');
-          }
-          return;
+        if (!await FlutterOverlayWindow.isActive()) {
+          await OverlayService.show();
+          await Future.delayed(const Duration(milliseconds: 1000));
+        }
 
-        case 'overlay_quick_tx':
-          _handleOverlayAction('open_quick_tx');
-          return;
-
-        case 'overlay_notifications':
-          _handleOverlayAction('open_notifications');
-          return;
-
-        case 'overlay_new_customer':
-          _handleOverlayAction('open_new_customer');
-          return;
-
-        case 'overlay_stats':
-          _handleOverlayAction('open_stats');
-          return;
-
-        case 'overlay_stop':
-          await OverlayService.hide();
-          return;
+        _startSTTInMain();
+      } catch (e) {
+        debugPrint('❌ [Main] start_recording error: $e');
+        await LoggerService.devError(
+            'main', 'start_recording: $e');
       }
+      return;
 
-      NotificationActionHandler.handleAction(actionId, payload);
-    };
+    case 'overlay_quick_tx':
+      _handleOverlayAction('open_quick_tx');
+      return;
 
-    NotificationService.onTap = _onNotificationTap;
+    case 'overlay_notifications':
+      _handleOverlayAction('open_notifications');
+      return;
+
+    case 'overlay_new_customer':
+      _handleOverlayAction('open_new_customer');
+      return;
+
+    case 'overlay_stats':
+      _handleOverlayAction('open_stats');
+      return;
+
+    case 'overlay_stop':
+      await OverlayService.hide();
+      return;
+  }
+
+  NotificationActionHandler.handleAction(actionId, payload);
+};
+
+NotificationService.onTap = _onNotificationTap;
 
     try {
       OverlayService.listen((data) {
