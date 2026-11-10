@@ -159,8 +159,9 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     await LoggerService.devInfo('overlay', 'Requesting STT from main isolate');
 
     try {
-      // نطلب من التطبيق الرئيسي (main) تشغيل محرك الصوت
-      await FlutterOverlayWindow.shareData({'action': 'start_stt_in_main'});
+      // 🆕 استخدام SharedPreferences بدلاً من shareData لضمان الموثوقية
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('pending_stt_start', true);
     } catch (e) {
       await LoggerService.devError('overlay', 'Failed to request STT: $e');
       if (mounted) setState(() => _recording = false);
@@ -190,8 +191,9 @@ class _OverlayWidgetState extends State<OverlayWidget> {
     });
     await LoggerService.devInfo('overlay', 'Recording cancelled by user');
     try {
-      // 🆕 إرسال أمر إلغاء كامل وليس إيقافاً مؤقتاً
-      await FlutterOverlayWindow.shareData({'action': 'cancel_stt_in_main'});
+      // 🆕 استخدام SharedPreferences بدلاً من shareData لضمان الموثوقية
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('pending_stt_cancel', true);
     } catch (_) {}
   }
 
@@ -333,3 +335,4 @@ class _OverlayWidgetState extends State<OverlayWidget> {
 // Overlay Widget v7: إضافة حالة stt_started لدعم استمرار الحوار
 // Overlay Widget v8: النقر = إلغاء، رفع الإصبع = استمرار الحوار
 // Overlay Widget v9: تعطيل polling على pending_overlay_record (مع الحفاظ على كل الكود الأصلي)
+// Overlay Widget v10: استخدام SharedPreferences لبدء وإلغاء التسجيل بدلاً من shareData
