@@ -200,7 +200,7 @@ class VoiceConversationService {
         AppSettings.voiceMaxConversationRounds,
         defaultValue: 3,
       );
-      if (session.attemptsFor(prevExpecting) >= maxRounds) {
+      if (session.attemptsFor(prevExpecting!) >= maxRounds) {
         return _failAfterMaxAttempts();
       }
 
