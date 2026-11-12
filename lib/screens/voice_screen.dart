@@ -13,6 +13,7 @@ import '../services/query_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
 import '../services/voice_conversation_service.dart';
+import '../services/pdf_service.dart';
 import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 import 'stats_screen.dart';
@@ -511,6 +512,50 @@ class _VoiceScreenState extends State<VoiceScreen> {
             TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text('إغلاق'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.picture_as_pdf),
+              label: const Text('طباعة / حفظ PDF'),
+              onPressed: () async {
+                DateTime? fromDate;
+                DateTime? toDate;
+
+                // اختيار بداية الفترة ونهايتها قبل إنشاء كشف الحساب.
+                fromDate = await showDatePicker(
+                  context: ctx,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ البداية',
+                );
+                if (fromDate == null || !ctx.mounted) return;
+
+                toDate = await showDatePicker(
+                  context: ctx,
+                  initialDate: DateTime.now().isBefore(fromDate!)
+                      ? fromDate!
+                      : DateTime.now(),
+                  firstDate: fromDate!,
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ النهاية',
+                );
+                if (toDate == null || !ctx.mounted) return;
+
+                Navigator.pop(ctx);
+                try {
+                  final file = await PdfService.generateStatement(
+                    customer,
+                    fromDate: fromDate,
+                    toDate: toDate,
+                  );
+                  await PdfService.share(file, customer.name);
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('تعذر إنشاء كشف PDF: $e')),
+                  );
+                }
+              },
             ),
           ],
         ),
