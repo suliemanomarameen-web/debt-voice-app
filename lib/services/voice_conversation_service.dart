@@ -148,14 +148,9 @@ class VoiceConversationService {
 
     final prevExpecting = session.expectingField ?? expecting;
     if (prevExpecting != null) {
+      // نسجل المحاولة، لكن لا نرفض الإجابة قبل تحليلها؛ فقد تكون الإجابة
+      // الصحيحة هي المحاولة الثالثة.
       session.incrementAttempt(prevExpecting);
-      final maxRounds = SettingsService.getInt(
-        AppSettings.voiceMaxConversationRounds,
-        defaultValue: 3,
-      );
-      if (session.attemptsFor(prevExpecting) >= maxRounds) {
-        return _failAfterMaxAttempts();
-      }
     }
 
     // 🆕 2. معالجة تأكيد الحذف
@@ -180,6 +175,18 @@ class VoiceConversationService {
     );
     session.merge(partial);
     session.expectingField = null;
+
+    // لا نلغي إلا بعد ثلاث إجابات غير مفهومة فعلاً، وليس قبل تحليل الإجابة.
+    if (prevExpecting != null &&
+        !_hasAnswerForField(session, prevExpecting)) {
+      final maxRounds = SettingsService.getInt(
+        AppSettings.voiceMaxConversationRounds,
+        defaultValue: 3,
+      );
+      if (session.attemptsFor(prevExpecting) >= maxRounds) {
+        return _failAfterMaxAttempts();
+      }
+    }
 
     debugPrint('🎤 [VoiceConv] After merge: ${session.summary}');
 
@@ -634,6 +641,28 @@ class VoiceConversationService {
       candidates: candidates,
       startListening: candidates.isNotEmpty,
     );
+  }
+
+  /// يحدد هل فهم المحلل الإجابة الخاصة بالحقل المطلوب.
+  static bool _hasAnswerForField(VoiceSession session, String field) {
+    switch (field) {
+      case 'intent':
+      case 'intentForCustomer':
+      case 'processType':
+        return session.hasIntent;
+      case 'customerName':
+        return session.hasCustomer;
+      case 'amount':
+      case 'limitAmount':
+        return session.hasAmount;
+      case 'items':
+        // النص الفارغ مقبول عند قول المستخدم "بدون بيان".
+        return session.items != null;
+      case 'searchQuery':
+        return true;
+      default:
+        return true;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
