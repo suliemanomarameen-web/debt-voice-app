@@ -112,7 +112,7 @@ class SpeechService {
         onStatus: (status) {
           debugPrint('STT Status: $status');
           if (status == 'done' || status == 'notListening') {
-            if (_lastText.isEmpty && !silenceDelivered) {
+            if (_lastText.isEmpty && !silenceDelivered && !finalResultDelivered) {
               silenceDelivered = true;
               onSilence?.call();
             } else if (_lastText.isNotEmpty && !finalResultDelivered) {
