@@ -107,6 +107,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     await _speech.listen(
       pauseFor: const Duration(seconds: 3),
+      onSilence: () {
+        if (!mounted) return;
+        setState(() => _listening = false);
+        if (VoiceConversationService.hasActiveSession) {
+          _processConversation('');
+        }
+      },
       onResult: (text, isFinal) {
         if (!mounted) return;
         setState(() => _text = text);
