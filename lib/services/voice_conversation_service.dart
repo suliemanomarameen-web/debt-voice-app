@@ -743,6 +743,31 @@ class VoiceConversationService {
       );
     }
 
+    // أوامر إدارة الحساب لا تنشئ إشعارات "عملية معلقة" عند غياب الحساب.
+    // نوضح للمستخدم أن الحساب غير موجود وننهي الطلب دون تغيير أي بيانات.
+    const accountManagementIntents = {
+      'block_account',
+      'unblock_account',
+      'set_limit',
+      'remove_limit',
+      'delete_customer',
+      'edit_customer',
+      'rename_customer',
+      'statement',
+      'print_statement',
+      'send_statement',
+      'last_transaction',
+    };
+    if (candidates.isEmpty && accountManagementIntents.contains(session.intent)) {
+      final message = 'لا يوجد حساب باسم $name';
+      cancelSession();
+      return VoiceConversationResult(
+        step: ConversationStep.failed,
+        ttsMessage: message,
+        errorMessage: message,
+      );
+    }
+
     final ttsMessage = candidates.isEmpty
         ? VoicePromptsService.getResponse(VoicePromptsService.rNoAccount, vars: {'name': name})
         : VoicePromptsService.getResponse(VoicePromptsService.tMultipleAccounts);
