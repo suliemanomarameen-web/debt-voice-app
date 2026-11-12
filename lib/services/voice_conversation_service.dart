@@ -498,7 +498,8 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeBlock(VoiceSession session, Customer customer) async {
-    await DatabaseHelper.instance.setCustomerActive(customer.id!, false);
+    final changed = await DatabaseHelper.instance.setCustomerActive(customer.id!, false);
+    if (changed <= 0) return _fail('تعذر إيقاف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
@@ -507,7 +508,8 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeUnblock(VoiceSession session, Customer customer) async {
-    await DatabaseHelper.instance.setCustomerActive(customer.id!, true);
+    final changed = await DatabaseHelper.instance.setCustomerActive(customer.id!, true);
+    if (changed <= 0) return _fail('تعذر تفعيل الحساب');
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
@@ -587,7 +589,8 @@ class VoiceConversationService {
   static Future<VoiceConversationResult> _executeDelete(VoiceSession session) async {
     if (session.matchedCustomer == null) return _fail('لم يتم تحديد الحساب');
     final customer = Customer.fromMap(session.matchedCustomer!);
-    await DatabaseHelper.instance.softDeleteCustomer(customer.id!);
+    final changed = await DatabaseHelper.instance.softDeleteCustomer(customer.id!);
+    if (changed <= 0) return _fail('تعذر حذف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
