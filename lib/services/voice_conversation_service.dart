@@ -412,6 +412,7 @@ class VoiceConversationService {
           startListening: true,
         );
       case 'edit_customer': return _executeEdit(_session!, chosen);
+      case 'rename_customer': return _askForField(_session!, 'renameTo');
       default:
         final askItems = SettingsService.getBool(
           AppSettings.voiceAlwaysAskForItems,
