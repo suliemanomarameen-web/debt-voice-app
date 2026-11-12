@@ -19,6 +19,7 @@ class KeywordsService {
   static const String catBlockAccount = 'block_account';
   static const String catUnblockAccount = 'unblock_account';
   static const String catSetLimit = 'set_limit';
+  static const String catRemoveLimit = 'remove_limit';
   static const String catProcess = 'process';
 
   // 🆕 عمليات متقدمة
@@ -42,6 +43,7 @@ class KeywordsService {
     catBlockAccount,
     catUnblockAccount,
     catSetLimit,
+    catRemoveLimit,
     catProcess,
     catPrintStatement,
     catSendStatement,
@@ -64,6 +66,7 @@ class KeywordsService {
     catBlockAccount: 'كلمات إيقاف الحساب',
     catUnblockAccount: 'كلمات تفعيل الحساب',
     catSetLimit: 'كلمات تحديد السقف',
+    catRemoveLimit: 'كلمات إلغاء سقف الحساب',
     catProcess: 'كلمات بدء عملية جديدة',
     catPrintStatement: 'كلمات طباعة كشف الحساب',
     catSendStatement: 'كلمات إرسال كشف الحساب',
@@ -86,6 +89,7 @@ class KeywordsService {
     catBlockAccount: '🚫',
     catUnblockAccount: '✅',
     catSetLimit: '📏',
+    catRemoveLimit: '🧹',
     catProcess: '⚡',
     catPrintStatement: '🖨️',
     catSendStatement: '📤',
@@ -108,6 +112,7 @@ class KeywordsService {
     catBlockAccount: 'عندما يطلب إيقاف حساب عميل',
     catUnblockAccount: 'عندما يطلب تفعيل حساب عميل',
     catSetLimit: 'عندما يطلب تحديد سقف رصيد',
+    catRemoveLimit: 'عندما يطلب إلغاء أو إزالة سقف الحساب',
     catProcess: 'عندما يطلب بدء عملية (دين/سداد/مرتجع) دون تحديد',
     catPrintStatement: 'عندما يطلب طباعة كشف حساب',
     catSendStatement: 'عندما يطلب إرسال كشف حساب عبر واتساب',
@@ -168,6 +173,12 @@ class KeywordsService {
     catSetLimit: [
       'حدد سقف', 'حدد السقف', 'حدد الحد الأقصى', 'حدد الحد الاقصى',
       'سقف الحساب', 'سقف حساب', 'حد أقصى', 'حد اقصى',
+    ],
+    catRemoveLimit: [
+      'إلغاء السقف', 'الغاء السقف', 'إلغاء سقف', 'الغاء سقف',
+      'إزالة السقف', 'ازالة السقف', 'احذف السقف', 'حذف السقف',
+      'إلغاء الحد الأقصى', 'الغاء الحد الاقصى', 'إزالة الحد الأقصى',
+      'ازالة الحد الاقصى', 'بدون سقف', 'إلغاء حد الحساب', 'الغاء حد الحساب',
     ],
     catProcess: [
       'عملية', 'أضف عملية', 'اضف عملية', 'سجل عملية', 'عملية جديدة',
