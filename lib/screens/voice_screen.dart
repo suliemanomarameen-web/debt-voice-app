@@ -205,7 +205,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // معالجة النص
   // ═══════════════════════════════════════════════════════════
   Future<void> _process(String text) async {
-    if (text.isEmpty) return;
+    if (text.trim().isEmpty) return;
+
+    // أمر الإلغاء له أولوية مطلقة: لا نمرره إلى الاستعلام أو إضافة الحساب.
+    if (VoiceConversationService.isCancelCommand(text)) {
+      await _processConversation(text);
+      return;
+    }
 
     setState(() {
       _isProcessing = true;
