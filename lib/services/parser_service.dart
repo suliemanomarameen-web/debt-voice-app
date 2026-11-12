@@ -441,21 +441,58 @@ class ParserService {
   // ═══════════════════════════════════════════════════════════
 
   static double? _extractAmountOnly(String text) {
-    // 1. جرّب الأرقام
+    // حافظ على استخراج الأرقام الرقمية كما هو.
     final digitMatch = _findFirstNumber(text);
     if (digitMatch != null) return digitMatch;
 
-    // 2. جرّب الأرقام المكتوبة
+    // اجمع كلمات العدد المتتابعة بدلاً من أخذ أول كلمة فقط.
     final words = text.split(RegExp(r'\s+'));
-    for (final w in words) {
-      final cleaned = w.replaceAll(RegExp(r'[،,.!؟?:;]+$'), '').trim();
-      final wordNum = _tryParseWordNumber(cleaned);
-      if (wordNum != null) return wordNum;
+    for (var i = 0; i < words.length; i++) {
+      final parsed = _parseWordNumberSequence(words, i);
+      if (parsed != null) return parsed;
     }
-
     return null;
   }
 
+  static double? _parseWordNumberSequence(List<String> words, int start) {
+    var total = 0.0;
+    var current = 0.0;
+    var consumed = false;
+    for (var i = start; i < words.length; i++) {
+      var token = words[i].replaceAll(RegExp(r'[،,.!؟?:;]+$'), '').trim();
+      if (token.isEmpty) break;
+      if (token.startsWith('و') && token.length > 1 &&
+          _numberWordValue(token.substring(1)) != null) {
+        token = token.substring(1);
+      }
+      final value = _numberWordValue(token);
+      if (value == null) break;
+      consumed = true;
+      if (value == 1000 || value == 2000 || value == 1000000 || value == 2000000) {
+        current = (current == 0 ? 1 : current) * value;
+        total += current;
+        current = 0;
+      } else if (value == 100) {
+        current = (current == 0 ? 1 : current) * value;
+      } else {
+        current += value;
+      }
+    }
+    return consumed ? total + current : null;
+  }
+
+  static double? _numberWordValue(String token) {
+    final normalized = token.replaceAll('آ', 'ا').replaceAll('أ', 'ا').replaceAll('إ', 'ا').toLowerCase();
+    if (normalized == 'الاف' || normalized == 'الالاف' || normalized == 'الف' || normalized == 'آلاف') return 1000;
+    if (normalized == 'الفين' || normalized == 'الفان') return 2000;
+    if (normalized == 'مليون' || normalized == 'ملايين') return 1000000;
+    if (normalized == 'مليونين') return 2000000;
+    return _tryParseWordNumber(token);
+  }
+
+  static bool _isNumberWord(String token) =>
+      _numberWordValue(token) != null ||
+      (token.startsWith('و') && token.length > 1 && _numberWordValue(token.substring(1)) != null);
   static double? _findFirstNumber(String text) {
     // الأرقام العربية
     final normalized = text
@@ -559,8 +596,8 @@ class ParserService {
       final cleaned = w.replaceAll(RegExp(r'[،,.!؟?:;]+$'), '').trim();
       if (cleaned.isEmpty) continue;
 
-      // إذا وصلنا إلى رقم → توقف
-      if (_findFirstNumber(cleaned) != null) break;
+      // أوقف الاسم عند بداية المبلغ المكتوب بالحروف أيضاً.
+      if (_findFirstNumber(cleaned) != null || _isNumberWord(cleaned)) break;
 
       // إذا كانت كلمة توقف في البداية → تجاهلها
       if (nameWords.isEmpty && _isStopWord(cleaned)) continue;
@@ -621,8 +658,8 @@ class ParserService {
         final cleaned = w.replaceAll(RegExp(r'[،,.!؟?:;]+$'), '').trim();
         if (cleaned.isEmpty) continue;
 
-        // توقف عند أول رقم
-        if (_findFirstNumber(cleaned) != null) break;
+        // لا تخلط كلمات المبلغ المكتوبة بالحروف مع اسم الحساب.
+        if (_findFirstNumber(cleaned) != null || _isNumberWord(cleaned)) break;
 
         // توقف عند كلمة توقف
         if (_isStopWord(cleaned)) break;
