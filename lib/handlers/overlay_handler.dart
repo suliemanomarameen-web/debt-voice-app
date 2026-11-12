@@ -51,18 +51,33 @@ class OverlayHandler {
       audioPath = AudioRecorderService().currentRecordingPath;
     } catch (_) {}
 
-    // ===== نص فارغ =====
-    if (text == '__EMPTY__') {
-      await PendingNotificationService.create(
-        PendingNotification.unclear(
-          text: '',
-          audioPath: audioPath,
-        ),
+    // ===== الصمت أثناء الحوار النشط =====
+    // الصمت لا ينشئ إشعار عملية غير مفهومة؛ بل يُحتسب محاولة
+    // ويعيد السؤال نفسه حتى بلوغ الحد المسموح من المحاولات.
+    if (text == '__EMPTY__' || text.trim().isEmpty) {
+      final conversationEnabled = SettingsService.getBool(
+        AppSettings.voiceConversationEnabled,
+        defaultValue: true,
       );
-      await TtsService.speakDidNotHear();
+      if (conversationEnabled && VoiceConversationService.hasActiveSession) {
+        await _handleConversation('', audioPath);
+      } else {
+        await PendingNotificationService.create(
+          PendingNotification.unclear(
+            text: '',
+            audioPath: audioPath,
+          ),
+        );
+        await TtsService.speakDidNotHear();
+      }
       return;
     }
-    if (text.isEmpty) return;
+
+    // الإلغاء له أولوية على الاستعلامات والتحليل العام.
+    if (VoiceConversationService.isCancelCommand(text)) {
+      await _handleConversation(text, audioPath);
+      return;
+    }
 
     // ===== استعلام؟ =====
     if (QueryService.isQuery(text)) {
