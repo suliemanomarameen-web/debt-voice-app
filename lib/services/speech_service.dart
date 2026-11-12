@@ -73,6 +73,7 @@ class SpeechService {
 
   Future<void> listen({
     required void Function(String text, bool isFinal) onResult,
+    void Function()? onSilence,
     Duration listenFor = const Duration(seconds: 30),
     Duration pauseFor = const Duration(seconds: 5),
     @Deprecated('استخدم listenFor بدلًا منه')
@@ -92,6 +93,9 @@ class SpeechService {
 
     await Future.delayed(const Duration(milliseconds: 150));
 
+    var finalResultDelivered = false;
+    var silenceDelivered = false;
+
     try {
       await _speech.listen(
         localeId: _locale,
@@ -101,9 +105,22 @@ class SpeechService {
         onResult: (r) {
           final text = r.recognizedWords.trim();
           _lastText = text;
+          if (r.finalResult) finalResultDelivered = true;
           onResult(text, r.finalResult);
         },
         onSoundLevelChange: (level) {},
+        onStatus: (status) {
+          debugPrint('STT Status: $status');
+          if (status == 'done' || status == 'notListening') {
+            if (_lastText.isEmpty && !silenceDelivered) {
+              silenceDelivered = true;
+              onSilence?.call();
+            } else if (_lastText.isNotEmpty && !finalResultDelivered) {
+              finalResultDelivered = true;
+              onResult(_lastText, true);
+            }
+          }
+        },
       );
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
