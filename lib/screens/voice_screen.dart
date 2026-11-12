@@ -105,14 +105,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _listening = true;
     });
 
-    await _speech.listen(onResult: (text, isFinal) {
-      if (!mounted) return;
-      setState(() => _text = text);
-      if (isFinal) {
-        setState(() => _listening = false);
-        _process(text);
-      }
-    });
+    await _speech.listen(
+      pauseFor: const Duration(seconds: 3),
+      onResult: (text, isFinal) {
+        if (!mounted) return;
+        setState(() => _text = text);
+        if (isFinal) {
+          setState(() => _listening = false);
+
+          // إذا انتهت مهلة الصمت أثناء سؤال من أسئلة الحوار، نعيد معالجة
+          // الإجابة الفارغة ليُعاد السؤال وتُحتسب محاولة غير مفهومة.
+          if (text.trim().isEmpty) {
+            if (VoiceConversationService.hasActiveSession) {
+              _processConversation('');
+            }
+            return;
+          }
+          _process(text);
+        }
+      },
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
