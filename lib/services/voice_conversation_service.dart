@@ -516,11 +516,22 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeSetLimit(VoiceSession session, Customer customer) async {
-    await DatabaseHelper.instance.updateCustomerFields(customer.id!, {'max_balance': session.amount});
+    final changed = await DatabaseHelper.instance.updateCustomerFields(
+      customer.id!,
+      {'max_balance': session.amount},
+    );
+    if (changed <= 0) return _fail('تعذر تحديد سقف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
-      ttsMessage: VoicePromptsService.getResponse(VoicePromptsService.rLimitSet, vars: {'name': customer.name, 'amount': session.amount!.toStringAsFixed(0), 'currency': session.currency}),
+      ttsMessage: VoicePromptsService.getResponse(
+        VoicePromptsService.rLimitSet,
+        vars: {
+          'name': customer.name,
+          'amount': session.amount!.toStringAsFixed(0),
+          'currency': session.currency,
+        },
+      ),
     );
   }
 
