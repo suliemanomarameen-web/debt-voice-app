@@ -102,7 +102,6 @@ class KeywordsService {
     catDeleteCustomer: '🗑️',
     catEditCustomer: '✏️',
     catRenameCustomer: '🔤',
-    catRenameCustomer: '🔤',
   };
 
   /// الأوصاف النصية
