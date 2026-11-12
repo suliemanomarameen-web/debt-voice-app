@@ -389,6 +389,7 @@ class VoiceConversationService {
       case 'block_account': return _executeBlock(_session!, chosen);
       case 'unblock_account': return _executeUnblock(_session!, chosen);
       case 'set_limit': return _executeSetLimit(_session!, chosen);
+      case 'remove_limit': return _executeRemoveLimit(_session!, chosen);
       case 'print_statement': return _executePrint(_session!, chosen);
       case 'send_statement': return _executeSend(_session!, chosen);
       case 'last_transaction': return _executeLastTransaction(_session!, chosen);
