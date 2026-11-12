@@ -770,6 +770,8 @@ class VoiceConversationService {
       case 'items':
         // النص الفارغ مقبول عند قول المستخدم "بدون بيان".
         return session.items != null;
+      case 'renameTo':
+        return session.items != null && session.items!.trim().isNotEmpty;
       case 'searchQuery':
         return true;
       default:
