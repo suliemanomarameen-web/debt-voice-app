@@ -587,6 +587,7 @@ class ParserService {
       ...KeywordsService.get(KeywordsService.catBlockAccount),
       ...KeywordsService.get(KeywordsService.catUnblockAccount),
       ...KeywordsService.get(KeywordsService.catSetLimit),
+      ...KeywordsService.get(KeywordsService.catRemoveLimit),
       ...KeywordsService.get(KeywordsService.catPrintStatement),
       ...KeywordsService.get(KeywordsService.catSendStatement),
       ...KeywordsService.get(KeywordsService.catStatistics),
