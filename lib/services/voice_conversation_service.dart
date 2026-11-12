@@ -281,6 +281,7 @@ class VoiceConversationService {
       'last_transaction',
       'delete_customer',
       'edit_customer',
+      'rename_customer',
     ];
     if (needsCustomerOnly.contains(session.intent) && !session.hasCustomer) {
       return _askForField(session, 'customerName');
@@ -350,6 +351,11 @@ class VoiceConversationService {
         );
       case 'edit_customer':
         return _executeEdit(session, customer!);
+      case 'rename_customer':
+        if (session.items == null || session.items!.trim().isEmpty) {
+          return _askForField(session, 'renameTo');
+        }
+        return _executeRename(session, customer!, session.items!.trim());
       case 'debt':
       case 'payment':
       case 'return':
@@ -577,6 +583,34 @@ class VoiceConversationService {
     );
   }
 
+  static Future<VoiceConversationResult> _executeRename(
+    VoiceSession session,
+    Customer customer,
+    String newName,
+  ) async {
+    final normalizedName = newName.trim();
+    if (normalizedName.isEmpty) {
+      return _askForField(session, 'renameTo');
+    }
+
+    final matches = await DatabaseHelper.instance.findAllByExactName(normalizedName);
+    if (matches.any((item) => item.id != customer.id)) {
+      return _fail('يوجد حساب آخر بهذا الاسم بالفعل');
+    }
+
+    final changed = await DatabaseHelper.instance.updateCustomerFields(
+      customer.id!,
+      {'name': normalizedName},
+    );
+    if (changed <= 0) return _fail('تعذر تغيير اسم الحساب');
+
+    session.markCompleted();
+    return VoiceConversationResult(
+      step: ConversationStep.saved,
+      ttsMessage: 'تم تغيير اسم الحساب من ${customer.name} إلى $normalizedName',
+    );
+  }
+
   static Future<VoiceConversationResult> _executeEdit(VoiceSession session, Customer customer) async {
     session.markCompleted();
     return VoiceConversationResult(
@@ -770,7 +804,7 @@ class VoiceConversationService {
       case 'customerName':
         if (session.intent == 'statement' || session.intent == 'print_statement' || session.intent == 'send_statement') {
            prompt = 'أي حساب تريد؟'; // يمكن تعديلها من VoicePromptsService لاحقاً
-        } else if (session.intent == 'block_account' || session.intent == 'unblock_account' || session.intent == 'delete_customer' || session.intent == 'edit_customer') {
+        } else if (session.intent == 'block_account' || session.intent == 'unblock_account' || session.intent == 'delete_customer' || session.intent == 'edit_customer' || session.intent == 'rename_customer') {
            prompt = 'أي حساب تريد؟';
         } else if (session.intent == 'payment') {
           prompt = VoicePromptsService.getPrompt(VoicePromptsService.pAskCustomerPayment);
@@ -793,6 +827,10 @@ class VoiceConversationService {
 
       case 'items':
         prompt = VoicePromptsService.getPrompt(VoicePromptsService.pAskItems);
+        break;
+
+      case 'renameTo':
+        prompt = 'ما الاسم الجديد للحساب؟';
         break;
 
       case 'searchQuery':
