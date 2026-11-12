@@ -30,6 +30,7 @@ class KeywordsService {
   static const String catSearch = 'search';
   static const String catDeleteCustomer = 'delete_customer';
   static const String catEditCustomer = 'edit_customer';
+  static const String catRenameCustomer = 'rename_customer';
 
   /// كل الفئات بالترتيب
   static const List<String> allCategories = [
@@ -52,6 +53,7 @@ class KeywordsService {
     catSearch,
     catDeleteCustomer,
     catEditCustomer,
+    catRenameCustomer,
   ];
 
   /// الأسماء العربية للعرض
@@ -75,6 +77,7 @@ class KeywordsService {
     catSearch: 'كلمات البحث',
     catDeleteCustomer: 'كلمات حذف حساب',
     catEditCustomer: 'كلمات تعديل حساب',
+    catRenameCustomer: 'كلمات تغيير اسم الحساب',
   };
 
   /// الإيموجي لكل فئة
@@ -98,6 +101,7 @@ class KeywordsService {
     catSearch: '🔍',
     catDeleteCustomer: '🗑️',
     catEditCustomer: '✏️',
+    catRenameCustomer: '🔤',
   };
 
   /// الأوصاف النصية
@@ -121,6 +125,7 @@ class KeywordsService {
     catSearch: 'عندما يطلب البحث عن حساب',
     catDeleteCustomer: 'عندما يطلب حذف حساب',
     catEditCustomer: 'عندما يطلب تعديل بيانات حساب',
+    catRenameCustomer: 'عندما يطلب تغيير اسم حساب موجود',
   };
 
   // ═══════════════════════════════════════════════════════════
@@ -213,6 +218,11 @@ class KeywordsService {
       'احذف حساب', 'احذف الحساب', 'حذف حساب', 'حذف الحساب',
       'امسح حساب', 'امسح الحساب', 'مسح حساب', 'مسح الحساب',
       'delete customer', 'delete account',
+    ],
+    catRenameCustomer: [
+      'غير اسم الحساب', 'غيّر اسم الحساب', 'غير اسم حساب', 'غيّر اسم حساب',
+      'تغيير اسم الحساب', 'تغيير اسم حساب', 'بدل اسم الحساب', 'بدّل اسم الحساب',
+      'استبدل اسم الحساب', 'تعديل اسم الحساب', 'غير اسم العميل', 'تغيير اسم العميل',
     ],
     catEditCustomer: [
       'عدل حساب', 'عدل الحساب', 'تعديل حساب', 'تعديل الحساب',
