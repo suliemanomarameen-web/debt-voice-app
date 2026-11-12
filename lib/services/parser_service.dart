@@ -529,6 +529,14 @@ class ParserService {
     String clean = text.trim();
     if (clean.isEmpty) return null;
 
+    // عند الإجابة عن سؤال اسم الحساب قد يقول المستخدم: "باسم يونس".
+    // كلمة "باسم" أداة تعريف وليست جزءاً من اسم العميل.
+    clean = clean.replaceFirst(
+      RegExp(r'^(?:باسم|اسمه|اسمها|اسم)\\s+', caseSensitive: false),
+      '',
+    ).trim();
+    if (clean.isEmpty) return null;
+
     // إذا كان رقمًا فقط → ليس اسمًا
     if (_findFirstNumber(clean) != null &&
         !RegExp(r'[a-zA-Z\u0600-\u06FF]').hasMatch(clean.replaceAll(RegExp(r'\d'), ''))) {
