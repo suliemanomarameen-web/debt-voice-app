@@ -272,14 +272,9 @@ class ParserService {
     final clean = _stripTashkeel(original);
     final t = clean.toLowerCase();
 
-    // ═══════════════════════════════════════════════════════════
-    // ردود سياقية (المستخدم يجيب على سؤال محدد)
-    // ═══════════════════════════════════════════════════════════
-
     if (expecting == 'amount' || expecting == 'limitAmount') {
-      final amount = _extractAmountOnly(original);
       return ParsedPartial(
-        amount: amount,
+        amount: _extractAmountOnly(original),
         currency: _extractCurrency(t),
         rawText: original,
       );
@@ -290,22 +285,18 @@ class ParserService {
     }
 
     if (expecting == 'customerName') {
-      final name = _extractNameFromAnswer(clean);
-      final amount = _extractAmountOnly(original);
       return ParsedPartial(
-        customerName: name,
-        amount: amount,
+        customerName: _extractNameFromAnswer(clean),
+        amount: _extractAmountOnly(original),
         rawText: original,
       );
     }
 
     if (expecting == 'items') {
-      // تحقق من كلمة التخطي
       final skipWord =
           VoicePromptsService.getPrompt(VoicePromptsService.pSkipItemsWord);
       final normalizedT = _normalizeForCompare(t);
       final normalizedSkip = _normalizeForCompare(skipWord);
-
       final isSkip = normalizedT.contains(normalizedSkip) ||
           normalizedT.contains('بدون') ||
           normalizedT.contains('تخطي') ||
@@ -314,7 +305,6 @@ class ParserService {
           normalizedT.contains('حفظ') ||
           normalizedT.contains('لا شيء') ||
           normalizedT.contains('لاشيء');
-
       return ParsedPartial(
         items: isSkip ? '' : clean.trim(),
         rawText: original,
@@ -322,9 +312,11 @@ class ParserService {
     }
 
     if (expecting == 'intent') {
-      final intent = _detectIntent(t);
-      final amount = _extractAmountOnly(original);
-      return ParsedPartial(intent: intent, amount: amount, rawText: original);
+      return ParsedPartial(
+        intent: _detectIntent(t),
+        amount: _extractAmountOnly(original),
+        rawText: original,
+      );
     }
 
     if (expecting == 'processType') {
@@ -341,40 +333,32 @@ class ParserService {
     }
 
     if (expecting == 'intentForCustomer') {
-      final intent = _detectIntent(t);
-      return ParsedPartial(intent: intent, rawText: original);
+      return ParsedPartial(intent: _detectIntent(t), rawText: original);
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // تحليل كامل جزئي
-    // ═══════════════════════════════════════════════════════════
-
-    // 1. النية
     String? intent = _detectIntent(t);
-
-    // فحص إضافة الحساب
     if (intent == null && _isAddAccount(t)) {
       intent = 'add_account';
     }
 
-    // 2. المبلغ
     final amount = _extractAmountOnly(original);
-
-    // 3. اسم الحساب
-    // ✅ إصلاح: عند add_account، استخدم _extractAccountName (تعرف "باسم...")
     String? customerName;
+    String? items;
+
     if (intent == 'add_account') {
       customerName = _extractAccountName(original);
+    } else if (intent == 'rename_customer') {
+      final renameMatch = RegExp(r'(?:إلى|الى)\s+(.+)$').firstMatch(clean);
+      final beforeNewName = renameMatch == null
+          ? clean
+          : clean.substring(0, renameMatch.start).trim();
+      customerName = _extractNamePartial(beforeNewName);
+      items = renameMatch?.group(1)?.trim();
     } else {
       customerName = _extractNamePartial(clean);
+      items = _extractItemsPartial(clean, amount);
     }
 
-    // 4. الأصناف
-    String? items = _extractItemsPartial(clean, amount);
-
-    // عند تغيير اسم الحساب، استخرج الاسم الجديد من نفس الجملة إن ذُكر بعد "إلى".
-    if (intent == 'rename_customer') {
-      final renameMatch = RegExp(r'(?:إلى|الى)\\s+(.+)
     return ParsedPartial(
       intent: intent,
       customerName: customerName,
@@ -384,10 +368,6 @@ class ParserService {
       rawText: original,
     );
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // كشف النية
-  // ═══════════════════════════════════════════════════════════
 
   static String? _detectIntent(String t) {
     // أوامر الطباعة والإرسال أكثر تحديداً من عبارة "كشف حساب"،
