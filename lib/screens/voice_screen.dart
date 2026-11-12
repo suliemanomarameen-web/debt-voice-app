@@ -252,18 +252,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
         }
       }
 
-      // 2. تحليل مبدئي — لمعرفة إذا كان "إضافة حساب"
-      final check = ParserService.parsePartial(text);
-      if (check.intent == 'add_account') {
-        if (!mounted) return;
-        setState(() {
-          _addAccountParsed = check;
-          _isProcessing = false;
-        });
-        return;
-      }
-
-      // 3. الحوار التفاعلي
+      // 2. مرّر أمر إضافة الحساب إلى الحوار التفاعلي أيضاً؛
+      // حتى يسأل التطبيق عن الاسم إذا لم يذكره المستخدم في الأمر.
+      // كما يبقى الإلغاء وأوامر المتابعة ضمن جلسة واحدة متسقة.
       await _processConversation(text);
     } catch (e) {
       debugPrint('❌ _process error: $e');
