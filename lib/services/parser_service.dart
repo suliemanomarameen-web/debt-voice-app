@@ -532,7 +532,7 @@ class ParserService {
     // عند الإجابة عن سؤال اسم الحساب قد يقول المستخدم: "باسم يونس".
     // كلمة "باسم" أداة تعريف وليست جزءاً من اسم العميل.
     clean = clean.replaceFirst(
-      RegExp(r'^(?:باسم|اسمه|اسمها|اسم)\\s+', caseSensitive: false),
+      RegExp(r'^(?:باسم|اسمه|اسمها|اسم)\s+', caseSensitive: false),
       '',
     ).trim();
     if (clean.isEmpty) return null;
