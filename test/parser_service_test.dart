@@ -28,5 +28,19 @@ void main() {
       final result = ParserService.parsePartial('5000', expecting: 'amount');
       expect(result.amount, 5000);
     });
+
+    test('parses a complete debt sentence with amount and item', () {
+      final result = ParserService.parsePartial('سجل على أحمد ٥٠٠٠ بضاعة');
+      expect(result.intent, 'debt');
+      expect(result.customerName, 'أحمد');
+      expect(result.amount, 5000);
+      expect(result.items, 'بضاعة');
+    });
+
+    test('parses a complete add-account command and extracts only the name', () {
+      final result = ParserService.parsePartial('أضف حساب باسم أحمد');
+      expect(result.intent, 'add_account');
+      expect(result.customerName, 'أحمد');
+    });
   });
 }
