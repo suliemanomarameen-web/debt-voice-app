@@ -400,6 +400,7 @@ class ParserService {
     if (_containsAny(t, KeywordsService.get(KeywordsService.catLastTransaction))) return 'last_transaction';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catSearch))) return 'search';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catDeleteCustomer))) return 'delete_customer';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catRenameCustomer))) return 'rename_customer';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catEditCustomer))) return 'edit_customer';
     
     if (_containsAny(t, KeywordsService.get(KeywordsService.catProcess))) return 'process';
@@ -597,6 +598,7 @@ class ParserService {
       ...KeywordsService.get(KeywordsService.catSearch),
       ...KeywordsService.get(KeywordsService.catDeleteCustomer),
       ...KeywordsService.get(KeywordsService.catEditCustomer),
+      ...KeywordsService.get(KeywordsService.catRenameCustomer),
       ...KeywordsService.get(KeywordsService.catProcess),
     }.toList()
       ..sort((a, b) => b.length.compareTo(a.length));
