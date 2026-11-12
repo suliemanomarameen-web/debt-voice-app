@@ -156,7 +156,7 @@ class VoicePromptsService {
         'تم تسجيل {type} {amount} {currency} على {customer}',
     rSavedSuccess: 'تم الحفظ بنجاح',
     rUnknownMax:
-        'لم أفهمك بعد {max} محاولات. تم حفظ التسجيل في السجل.',
+        'لم أتمكن من فهمك بعد {max} محاولات. تم إلغاء العملية ولم يتم حفظ أي شيء.',
     rNoAccount: 'لا يوجد حساب باسم {name}',
     rCancelled: 'تم الإلغاء',
     rChooseFromList: 'قل الرقم أو الاسم',
