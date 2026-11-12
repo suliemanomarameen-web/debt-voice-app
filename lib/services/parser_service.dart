@@ -285,6 +285,10 @@ class ParserService {
       );
     }
 
+    if (expecting == 'renameTo') {
+      return ParsedPartial(items: clean.trim(), rawText: original);
+    }
+
     if (expecting == 'customerName') {
       final name = _extractNameFromAnswer(clean);
       final amount = _extractAmountOnly(original);
