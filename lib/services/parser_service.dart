@@ -389,6 +389,7 @@ class ParserService {
     
     if (_containsAny(t, KeywordsService.get(KeywordsService.catBlockAccount))) return 'block_account';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catUnblockAccount))) return 'unblock_account';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catRemoveLimit))) return 'remove_limit';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catSetLimit))) return 'set_limit';
     
     if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) return 'print_statement';
