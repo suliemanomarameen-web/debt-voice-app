@@ -275,6 +275,7 @@ class VoiceConversationService {
       'statement',
       'block_account',
       'unblock_account',
+      'remove_limit',
       'print_statement',
       'send_statement',
       'last_transaction',
@@ -327,6 +328,8 @@ class VoiceConversationService {
         return _executeUnblock(session, customer!);
       case 'set_limit':
         return _executeSetLimit(session, customer!);
+      case 'remove_limit':
+        return _executeRemoveLimit(session, customer!);
       case 'print_statement':
         return _executePrint(session, customer!);
       case 'send_statement':
@@ -510,6 +513,19 @@ class VoiceConversationService {
     return VoiceConversationResult(
       step: ConversationStep.saved,
       ttsMessage: VoicePromptsService.getResponse(VoicePromptsService.rLimitSet, vars: {'name': customer.name, 'amount': session.amount!.toStringAsFixed(0), 'currency': session.currency}),
+    );
+  }
+
+  static Future<VoiceConversationResult> _executeRemoveLimit(VoiceSession session, Customer customer) async {
+    final changed = await DatabaseHelper.instance.updateCustomerFields(
+      customer.id!,
+      {'max_balance': null},
+    );
+    if (changed <= 0) return _fail('تعذر إلغاء سقف الحساب');
+    session.markCompleted();
+    return VoiceConversationResult(
+      step: ConversationStep.saved,
+      ttsMessage: 'تم إلغاء سقف الحساب ${customer.name}',
     );
   }
 
