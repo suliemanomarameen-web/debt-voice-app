@@ -1029,6 +1029,7 @@ class _FakeParsed {
       'statement',
       'block_account',
       'unblock_account',
+      'remove_limit',
       'print_statement',
       'send_statement',
       'last_transaction',
@@ -1081,6 +1082,8 @@ class _FakeParsed {
         return _executeUnblock(session, customer!);
       case 'set_limit':
         return _executeSetLimit(session, customer!);
+      case 'remove_limit':
+        return _executeRemoveLimit(session, customer!);
       case 'print_statement':
         return _executePrint(session, customer!);
       case 'send_statement':
