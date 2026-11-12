@@ -12,6 +12,10 @@ class SpeechService {
   String _locale = 'ar_YE';
 
   String _lastText = '';
+  void Function()? _onSilence;
+  void Function(String text, bool isFinal)? _onResult;
+  bool _finalResultDelivered = false;
+  bool _silenceDelivered = false;
 
   bool get isListening => _speech.isListening;
   bool get isAvailable => _available;
@@ -44,7 +48,20 @@ class SpeechService {
             _available = false;
           }
         },
-        onStatus: (s) => debugPrint('STT Status: $s'),
+        onStatus: (status) {
+          debugPrint('STT Status: $status');
+          if (status == 'done' || status == 'notListening') {
+            if (_lastText.isEmpty &&
+                !_silenceDelivered &&
+                !_finalResultDelivered) {
+              _silenceDelivered = true;
+              _onSilence?.call();
+            } else if (_lastText.isNotEmpty && !_finalResultDelivered) {
+              _finalResultDelivered = true;
+              _onResult?.call(_lastText, true);
+            }
+          }
+        },
       );
       
       // 🆕 تأخير 400 مللي ثانية للسماح للنظام بربط المحرك (إصلاح مشكلة التشغيل الأول)
@@ -90,11 +107,12 @@ class SpeechService {
     }
 
     _lastText = '';
+    _onSilence = onSilence;
+    _onResult = onResult;
+    _finalResultDelivered = false;
+    _silenceDelivered = false;
 
     await Future.delayed(const Duration(milliseconds: 150));
-
-    var finalResultDelivered = false;
-    var silenceDelivered = false;
 
     try {
       await _speech.listen(
@@ -105,22 +123,10 @@ class SpeechService {
         onResult: (r) {
           final text = r.recognizedWords.trim();
           _lastText = text;
-          if (r.finalResult) finalResultDelivered = true;
+          if (r.finalResult) _finalResultDelivered = true;
           onResult(text, r.finalResult);
         },
         onSoundLevelChange: (level) {},
-        onStatus: (status) {
-          debugPrint('STT Status: $status');
-          if (status == 'done' || status == 'notListening') {
-            if (_lastText.isEmpty && !silenceDelivered && !finalResultDelivered) {
-              silenceDelivered = true;
-              onSilence?.call();
-            } else if (_lastText.isNotEmpty && !finalResultDelivered) {
-              finalResultDelivered = true;
-              onResult(_lastText, true);
-            }
-          }
-        },
       );
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
