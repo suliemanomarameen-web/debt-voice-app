@@ -165,35 +165,56 @@ class VoiceConversationService {
     }
 
     // تأكيد إضافة حساب جديد عندما لا يوجد حساب بالاسم المنطوق.
-    if (prevExpecting == 'confirmAddAccount') {
+    if (prevExpecting == 'confirmAddAccount' ||
+        prevExpecting == 'confirmDelete') {
       final answer = text.trim().toLowerCase();
-      const yes = ['نعم', 'ايوه', 'أيوه', 'اي', 'أجل', 'اجل', 'أكيد', 'اكيد', 'نعم أضف', 'اضف'];
-      const no = ['لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف'];
-      if (yes.contains(answer)) return _addNewCustomer(session);
+      const yes = [
+        'نعم', 'ايوه', 'أيوه', 'اي', 'أجل', 'اجل', 'أكيد', 'اكيد',
+        'نعم أضف', 'اضف', 'موافق', 'تمام',
+      ];
+      const no = [
+        'لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف', 'غير موافق',
+      ];
+
+      if (yes.contains(answer)) {
+        if (prevExpecting == 'confirmAddAccount') {
+          return _addNewCustomer(session);
+        }
+        return _executeDelete(session);
+      }
+
       if (no.contains(answer)) {
         cancelSession();
+        final message = prevExpecting == 'confirmAddAccount'
+            ? 'تم إلغاء إضافة الحساب'
+            : 'تم إلغاء الحذف';
         return VoiceConversationResult(
           step: ConversationStep.failed,
-          ttsMessage: 'تم إلغاء إضافة الحساب',
-          errorMessage: 'تم إلغاء إضافة الحساب',
+          ttsMessage: message,
+          errorMessage: message,
         );
       }
-      return _askForField(session, 'confirmAddAccount');
-    }
 
-    // 🆕 2. معالجة تأكيد الحذف
-    if (prevExpecting == 'confirmDelete') {
-      final normalized = text.trim().toLowerCase();
-      if (normalized == 'نعم' ||
-          normalized == 'ايوه' ||
-          normalized == 'أيوه' ||
-          normalized == 'اكيد' ||
-          normalized == 'أكيد') {
-        return _executeDelete(session);
-      } else {
-        session.expectingField = null;
-        return _fail('تم إلغاء الحذف');
+      // الصمت أو الإجابة غير الواضحة لا تعني الرفض؛ أعد السؤال حتى 3 مرات.
+      final maxRounds = SettingsService.getInt(
+        AppSettings.voiceMaxConversationRounds,
+        defaultValue: 3,
+      );
+      if (session.attemptsFor(prevExpecting) >= maxRounds) {
+        return _failAfterMaxAttempts();
       }
+
+      final message = prevExpecting == 'confirmAddAccount'
+          ? 'هل تريد إضافة الحساب؟ قل نعم أو لا'
+          : 'هل أنت متأكد من حذف الحساب؟ قل نعم أو لا';
+      session.expectingField = prevExpecting;
+      session.lastPrompt = message;
+      return VoiceConversationResult(
+        step: ConversationStep.askQuestion,
+        prompt: message,
+        ttsMessage: message,
+        startListening: true,
+      );
     }
 
     // 3. تحليل النص
