@@ -110,8 +110,19 @@ class VoiceConversationService {
         .trim()
         .toLowerCase();
     return RegExp(
-      r'^(?:الغاء|إلغاء|الغي|ألغ|الغى|cancel|cancel operation|stop)(?:\s+(?:العملية|عمليه|operation))?
-  // ═══════════════════════════════════════════════════════════
+      r'^(?:الغاء|إلغاء|الغي|ألغ|الغى|cancel|cancel operation|stop)(?:\s+(?:العملية|عمليه|operation))?$',
+    ).hasMatch(normalized);
+  }
+
+  /// إلغاء الجلسة بالكامل وإرجاع رسالة واضحة دون حفظ أي بيانات.
+  static VoiceConversationResult cancelFromVoice() {
+    cancelSession();
+    return VoiceConversationResult(
+      step: ConversationStep.failed,
+      ttsMessage: 'تم إلغاء العملية',
+      errorMessage: 'تم إلغاء العملية',
+    );
+  }
 
   static Future<VoiceConversationResult> processText(
     String text, {
