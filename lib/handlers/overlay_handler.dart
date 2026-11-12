@@ -75,12 +75,10 @@ class OverlayHandler {
       return;
     }
 
-    // ===== تحليل مبدئي (للكشف عن add_account فقط) =====
+    // ===== تحليل مبدئي =====
+    // لا نعالج إضافة الحساب كاختصار منفصل؛ يجب أن تمر عبر الحوار
+    // حتى نسأل عن الاسم أو نؤكد إنشاء الحساب عند عدم وجوده.
     final check = ParserService.parsePartial(text);
-    if (check.intent == 'add_account') {
-      await _handleAddAccount(check, text, audioPath);
-      return;
-    }
 
     // ===== الحوار التفاعلي أو السلوك القديم =====
     final conversationEnabled = SettingsService.getBool(
