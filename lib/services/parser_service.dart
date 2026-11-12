@@ -383,17 +383,19 @@ class ParserService {
   // ═══════════════════════════════════════════════════════════
 
   static String? _detectIntent(String t) {
-    // 🆕 1. النوايا الجديدة (كشف الحساب، إدارة الحساب، الطباعة، إلخ)
+    // أوامر الطباعة والإرسال أكثر تحديداً من عبارة "كشف حساب"،
+    // لذلك يجب فحصها أولاً حتى لا تتحول بالخطأ إلى مجرد عرض كشف.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) return 'print_statement';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSendStatement))) return 'send_statement';
+
+    // 🆕 النوايا العامة وإدارة الحساب
     if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement))) return 'statement';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) return 'statement';
-    
+
     if (_containsAny(t, KeywordsService.get(KeywordsService.catBlockAccount))) return 'block_account';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catUnblockAccount))) return 'unblock_account';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catRemoveLimit))) return 'remove_limit';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catSetLimit))) return 'set_limit';
-    
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) return 'print_statement';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catSendStatement))) return 'send_statement';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catStatistics))) return 'statistics';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catLastTransaction))) return 'last_transaction';
     if (_containsAny(t, KeywordsService.get(KeywordsService.catSearch))) return 'search';
