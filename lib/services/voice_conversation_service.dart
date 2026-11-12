@@ -164,6 +164,23 @@ class VoiceConversationService {
       session.incrementAttempt(prevExpecting);
     }
 
+    // تأكيد إضافة حساب جديد عندما لا يوجد حساب بالاسم المنطوق.
+    if (prevExpecting == 'confirmAddAccount') {
+      final answer = text.trim().toLowerCase();
+      const yes = ['نعم', 'ايوه', 'أيوه', 'اي', 'أجل', 'اجل', 'أكيد', 'اكيد', 'نعم أضف', 'اضف'];
+      const no = ['لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف'];
+      if (yes.contains(answer)) return _addNewCustomer(session);
+      if (no.contains(answer)) {
+        cancelSession();
+        return VoiceConversationResult(
+          step: ConversationStep.failed,
+          ttsMessage: 'تم إلغاء إضافة الحساب',
+          errorMessage: 'تم إلغاء إضافة الحساب',
+        );
+      }
+      return _askForField(session, 'confirmAddAccount');
+    }
+
     // 🆕 2. معالجة تأكيد الحذف
     if (prevExpecting == 'confirmDelete') {
       final normalized = text.trim().toLowerCase();
@@ -641,6 +658,18 @@ class VoiceConversationService {
       vars: {'name': name},
     );
 
+    if (candidates.isEmpty && session.intent == 'add_account') {
+      final prompt = 'لا يوجد حساب باسم $name، هل تريد إضافة حساب جديد باسم $name؟';
+      session.expectingField = 'confirmAddAccount';
+      session.lastPrompt = prompt;
+      return VoiceConversationResult(
+        step: ConversationStep.askQuestion,
+        prompt: prompt,
+        ttsMessage: prompt,
+        startListening: true,
+      );
+    }
+
     final ttsMessage = candidates.isEmpty
         ? VoicePromptsService.getResponse(VoicePromptsService.rNoAccount, vars: {'name': name})
         : VoicePromptsService.getResponse(VoicePromptsService.tMultipleAccounts);
@@ -730,6 +759,10 @@ class VoiceConversationService {
 
       case 'searchQuery':
         prompt = VoicePromptsService.getPrompt(VoicePromptsService.pAskSearchQuery);
+        break;
+
+      case 'confirmAddAccount':
+        prompt = 'هل تريد إضافة الحساب؟ قل نعم أو لا';
         break;
 
       default:
