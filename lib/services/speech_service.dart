@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'tts_service.dart';
 
 /// Shared speech engine used by VoiceScreen and the floating overlay.
 ///
@@ -149,6 +150,17 @@ class SpeechService {
     Duration? timeout,
   }) async {
     final effectiveListenFor = timeout ?? listenFor;
+
+    // Wait until any prompt/confirmation spoken by the app has fully ended.
+    var ttsWaits = 0;
+    while (TtsService.isSpeaking && ttsWaits < 100) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      ttsWaits++;
+    }
+    if (TtsService.isSpeaking) {
+      debugPrint('⚠️ [SpeechService] skipped listen while TTS is speaking');
+      return;
+    }
 
     if (!_available) {
       final ok = await init();
