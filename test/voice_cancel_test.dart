@@ -24,6 +24,17 @@ void main() {
       expect(VoiceConversationService.isCancelCommand('  إلغاء   العملية! '), isTrue);
       expect(VoiceConversationService.isCancelCommand('CANCEL.'), isTrue);
     });
+
+    test('voice cancellation clears the active session', () {
+      VoiceConversationService.startSession(source: 'voice_screen');
+      expect(VoiceConversationService.hasActiveSession, isTrue);
+
+      final result = VoiceConversationService.cancelFromVoice();
+
+      expect(result.step, ConversationStep.failed);
+      expect(result.ttsMessage, 'تم إلغاء العملية');
+      expect(VoiceConversationService.hasActiveSession, isFalse);
+    });
   });
 
   group('Voice session retry state', () {
