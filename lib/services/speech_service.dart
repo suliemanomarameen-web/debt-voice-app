@@ -104,12 +104,23 @@ class SpeechService {
         },
         onStatus: (status) {
           debugPrint('STT Status: $status');
-          if (status == 'listening' && _sessionActive && !_suppressCallbacks) {
+          // Status notifications are global to the native recognizer and
+          // may arrive late after cancel/restart. Confirm the plugin's actual
+          // state before attributing a status to the current session.
+          if (status == 'listening' &&
+              _sessionActive &&
+              !_suppressCallbacks &&
+              _speech.isListening) {
             _engineStarted = true;
             _lastStartedGeneration = _generation;
           }
           if (status == 'done' || status == 'notListening') {
-            if (_suppressCallbacks || !_sessionActive || !_engineStarted) return;
+            if (_suppressCallbacks ||
+                !_sessionActive ||
+                !_engineStarted ||
+                _speech.isListening) {
+              return;
+            }
             if (_lastText.isEmpty) {
               _deliverSilence(_generation);
             } else {
@@ -238,9 +249,21 @@ class SpeechService {
       while (generation == _generation &&
           _sessionActive &&
           !_engineStarted &&
-          startupWaits < 15) {
+          startupWaits < 20) {
+        if (_speech.isListening) {
+          _engineStarted = true;
+          _lastStartedGeneration = generation;
+          break;
+        }
         await Future.delayed(const Duration(milliseconds: 100));
         startupWaits++;
+      }
+      if (generation == _generation &&
+          _sessionActive &&
+          !_engineStarted &&
+          _speech.isListening) {
+        _engineStarted = true;
+        _lastStartedGeneration = generation;
       }
       if (generation == _generation && _sessionActive && !_engineStarted) {
         _sessionActive = false;
@@ -267,6 +290,10 @@ class SpeechService {
   /// final recognized words can still be delivered.
   Future<void> stop({bool suppressCallbacks = true}) async {
     if (suppressCallbacks) {
+      // Invalidate a listen request that is still waiting for TTS/init/startup.
+      // Otherwise the microphone could open after the user has pressed Stop.
+      _listenRequestGeneration++;
+      _generation++;
       _suppressCallbacks = true;
       _sessionActive = false;
       _engineStarted = false;
