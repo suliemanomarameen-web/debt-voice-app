@@ -22,6 +22,7 @@ class TransactionHandler {
     required DatabaseHelper db,
     required String source,
     String? audioPath,
+    bool Function()? canCommit,
   }) async {
     try {
       final normalizedType = CodeService.normalizeType(parsed.intent);
@@ -151,6 +152,14 @@ class TransactionHandler {
         code = await CodeService.generateCode(normalizedType);
       } catch (e) {
         debugPrint('❌ Code generation error: $e');
+      }
+
+      // Cancellation/session ownership is checked immediately before the
+      // irreversible database insert. A cancelled voice session must never
+      // commit a transaction even if async validation was already running.
+      if (canCommit != null && !canCommit()) {
+        debugPrint('⛔ [TransactionHandler] transaction commit aborted: voice session cancelled');
+        return false;
       }
 
       // 6. إدراج العملية
