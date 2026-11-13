@@ -45,6 +45,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
 bool _sttStarting = false; // 🆕 التعديل (أ): حماية من الاستدعاء المزدوج
+int _mainSttGeneration = 0;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -399,6 +400,7 @@ void _startSTTInMain() async {
     return;
   }
   _sttStarting = true;
+  final generation = ++_mainSttGeneration;
 
   try {
     _userCancelled = false;
@@ -413,6 +415,7 @@ void _startSTTInMain() async {
     }
 
     Future<void> handleConversationInput(String rawText) async {
+      if (generation != _mainSttGeneration) return;
       if (_userCancelled) {
         _userCancelled = false;
         return;
@@ -468,7 +471,7 @@ void _startSTTInMain() async {
     }
 
     final listenHandler = (String text, bool isFinal) async {
-      if (!isFinal) return;
+      if (generation != _mainSttGeneration || !isFinal) return;
       await _globalSpeech.stop();
       await handleConversationInput(text);
     };
@@ -478,6 +481,7 @@ void _startSTTInMain() async {
       pauseFor: const Duration(seconds: 5),
       onResult: listenHandler,
       onSilence: () async {
+        if (generation != _mainSttGeneration) return;
         await handleConversationInput('');
       },
     );
@@ -505,7 +509,9 @@ void _startSTTInMain() async {
       'text': '__ERROR__',
     });
   } finally {
-    _sttStarting = false; // 🆕 التعديل (ج): تصفير الحماية دائماً عند الخروج
+    // An older async invocation must not clear the startup lock belonging
+    // to a newer listening generation.
+    if (generation == _mainSttGeneration) _sttStarting = false;
   }
 }
 
@@ -524,6 +530,8 @@ void _stopSTTInMain() async {
 /// إلغاء كامل (عند النقر على الزر العائم أثناء التسجيل)
 void _cancelSTTInMain() async {
   await LoggerService.devInfo('main', 'Cancelling STT (user action)');
+  _mainSttGeneration++;
+  _sttStarting = false;
   _userCancelled = true;
   try {
     await _globalSpeech.stop();
