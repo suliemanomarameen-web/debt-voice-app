@@ -134,26 +134,24 @@ class VoiceConversationService {
 
   /// قبول إجابات الموافقة الواضحة فقط في تأكيد الإضافة والحذف.
   static bool isAffirmativeConfirmation(String text) {
-    final answer = _normalizeConfirmationAnswer(text);
-    const exactAnswers = {
+    const accepted = {
       'نعم', 'ايوه', 'أيوه', 'اي', 'أجل', 'اجل', 'أكيد', 'اكيد',
       'موافق', 'تمام', 'yes', 'ok', 'okay',
+      'نعم أضف', 'نعم اضف', 'نعم احذف', 'نعم احذف الحساب',
+      'أيوه احذف الحساب', 'ايوه احذف الحساب', 'موافق احذف',
+      'نعم نفذ', 'نعم أكمل', 'نعم اكمل',
     };
-    if (exactAnswers.contains(answer)) return true;
-    return RegExp(
-      r'^(?:نعم|ايوه|أيوه|اي|أجل|اجل|أكيد|اكيد|موافق|تمام)\s+(?:أضف|اضف|احذف|احذف الحساب|نفذ|نفّذ|أكمل|اكمل|الحساب|الحذف)$',
-    ).hasMatch(answer);
+    return accepted.contains(_normalizeConfirmationAnswer(text));
   }
 
   /// قبول إجابات الرفض الواضحة فقط في تأكيد الإضافة والحذف.
   static bool isNegativeConfirmation(String text) {
-    final answer = _normalizeConfirmationAnswer(text);
-    const exactAnswers = {
-      'لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف', 'غير موافق',
-      'no', 'nope',
+    const rejected = {
+      'لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف', 'لا تحذف',
+      'لا تحذف الحساب', 'كلا لا تحذف', 'كلا لا تحذف الحساب',
+      'غير موافق', 'no', 'nope',
     };
-    return exactAnswers.contains(answer) ||
-        RegExp(r'^(?:لا|كلا)\s+(?:تحذف|تحذف الحساب|تضف|تضيف|تنفذ|تكمل)
+    return rejected.contains(_normalizeConfirmationAnswer(text));
   }
 
   /// إلغاء الجلسة بالكامل وإرجاع رسالة واضحة دون حفظ أي بيانات.
