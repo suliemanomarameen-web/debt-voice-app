@@ -227,6 +227,8 @@ class VoiceSession {
       amount: amount,
       items: items,
       currency: currency,
+      fromDate: fromDate,
+      toDate: toDate,
       accountType: accountType,
       totalAttempts: totalAttempts,
       fieldAttempts: Map<String, int>.from(fieldAttempts),
