@@ -175,7 +175,7 @@ class SpeechService {
     // The speech_to_text plugin exposes one native recognizer. A new
     // source takes ownership explicitly and cancels any previous session,
     // preventing VoiceScreen and the overlay from listening concurrently.
-    if (_speech.isListening) {
+    if (_sessionActive || _speech.isListening) {
       _generation++;
       _suppressCallbacks = true;
       _sessionActive = false;
