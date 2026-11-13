@@ -69,7 +69,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
   void dispose() {
     _listenGeneration++;
     _audioService.stopPlayback();
-    VoiceConversationService.cancelSession();
+    // This screen may have been replaced while the overlay took ownership
+    // of the shared conversation. Never cancel another source's session.
+    if (VoiceConversationService.currentSession?.source == 'voice_screen') {
+      VoiceConversationService.cancelSession();
+    }
     super.dispose();
   }
 
@@ -284,7 +288,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // الحوار التفاعلي
   // ═══════════════════════════════════════════════════════════
   Future<void> _processConversation(String text) async {
-    if (!VoiceConversationService.hasActiveSession) {
+    final activeSession = VoiceConversationService.currentSession;
+    if (activeSession == null || activeSession.source != 'voice_screen') {
+      // Do not mix an overlay/notification conversation with this screen.
+      VoiceConversationService.cancelSession();
       VoiceConversationService.startSession(source: 'voice_screen');
     }
 
@@ -361,7 +368,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   void _resetSession() {
-    VoiceConversationService.cancelSession();
+    if (VoiceConversationService.currentSession?.source == 'voice_screen') {
+      VoiceConversationService.cancelSession();
+    }
     if (!mounted) return;
     setState(() {
       _lastResult = null;
