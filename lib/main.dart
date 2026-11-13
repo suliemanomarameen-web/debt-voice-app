@@ -462,8 +462,10 @@ void _startSTTInMain() async {
         return;
       }
 
+      final processingSession = VoiceConversationService.currentSession;
+      if (processingSession == null) return;
+
       try {
-        final processingSession = VoiceConversationService.currentSession;
         final result =
             await VoiceConversationService.processText(finalText);
         if (generation != _mainSttGeneration ||
@@ -500,6 +502,12 @@ void _startSTTInMain() async {
               {'action': 'stt_result', 'text': 'conversation_finished'});
         }
       } catch (e) {
+        // An exception from an obsolete callback must not cancel a newer
+        // conversation that has since taken ownership of the shared service.
+        if (generation != _mainSttGeneration ||
+            !identical(VoiceConversationService.currentSession, processingSession)) {
+          return;
+        }
         await LoggerService.devError('main', 'processText error: $e');
         VoiceConversationService.cancelSession();
         await TtsService.speak('حدث خطأ أثناء معالجة الأمر، حاول مرة أخرى');
