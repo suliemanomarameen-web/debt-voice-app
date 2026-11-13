@@ -727,7 +727,6 @@ class ParserService {
   static String? _extractItemsPartial(String text, double? amount) {
     if (amount == null) return null;
 
-    // ابحث عن أول رقم في النص
     final normalized = text
         .replaceAll('٠', '0')
         .replaceAll('١', '1')
@@ -740,37 +739,45 @@ class ParserService {
         .replaceAll('٨', '8')
         .replaceAll('٩', '9');
 
-    // 🆕 استخدام نفس regex الذي يلتقط الأرقام الكبيرة مع فاصلات الآلاف
     final digitMatch = RegExp(
       r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?',
     ).firstMatch(normalized);
 
     String after;
     if (digitMatch != null) {
-      after = text.substring(
-        _originalIndexForDigit(text, normalized, digitMatch.end),
-      ).trim();
+      after = text.substring(digitMatch.end).trim();
     } else {
-      // دعم المبالغ المكتوبة بالحروف، مثل:
-      // "خمسة آلاف بضاعة" و"خمسة آلاف ومئتين قطع غيار".
+      // ابحث عن تسلسل كلمات العدد بالكامل، بما فيها الآلاف والملايين.
       final words = text.split(RegExp(r'\s+'));
       var found = false;
       after = '';
       for (var i = 0; i < words.length; i++) {
-        String cleanToken(String value) => value.replaceAll(
-              RegExp(r'^[،,.!؟?:;]+|[،,.!؟?:;]+
+        String cleanToken(String value) => value
+            .replaceAll(RegExp(r'^[،,.!؟?:;]+|[،,.!؟?:;]+$'), '')
+            .trim();
 
-    // احذف كلمة العملة
+        final first = cleanToken(words[i]);
+        if (!_isNumberWord(first)) continue;
+
+        var end = i;
+        while (end < words.length && _isNumberWord(cleanToken(words[end]))) {
+          end++;
+        }
+        after = words.skip(end).join(' ').trim();
+        found = true;
+        break;
+      }
+      if (!found) return null;
+    }
+
     after = after.replaceFirst(
-        RegExp(r'^(?:ريال|دولار|درهم|سعودي|riyal|dollar|sar|aed|yer)\s*'),
-        '');
-
-    // احذف كلمة "أصناف"
+      RegExp(r'^(?:ريال|دولار|درهم|سعودي|riyal|dollar|sar|aed|yer)\s*'),
+      '',
+    );
     after = after.replaceFirst(
-        RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]*'),
-        '');
-
-    // احذف علامات الترقيم من البداية
+      RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]*'),
+      '',
+    );
     after = after.replaceAll(RegExp(r'^[،,.!؟?:;\s]+'), '');
 
     return after.isEmpty ? null : after.trim();
