@@ -99,6 +99,7 @@ class NotificationService {
       switch (actionId) {
         case 'overlay_record':
           await prefs.setBool('pending_overlay_record', true);
+          await prefs.setInt('pending_overlay_record_at', DateTime.now().millisecondsSinceEpoch);
           await LoggerService.devInfo(
               'notif', 'Set flag: pending_overlay_record');
           break;
@@ -308,6 +309,7 @@ void notificationTapBackground(NotificationResponse response) async {
     switch (actionId) {
       case 'overlay_record':
         await prefs.setBool('pending_overlay_record', true);
+        await prefs.setInt('pending_overlay_record_at', DateTime.now().millisecondsSinceEpoch);
         await LoggerService.devInfo(
             'notif-bg', 'Set pending_overlay_record = true');
         break;
