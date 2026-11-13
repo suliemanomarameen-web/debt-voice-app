@@ -72,6 +72,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
     // This screen may have been replaced while the overlay took ownership
     // of the shared conversation. Never cancel another source's session.
     if (VoiceConversationService.currentSession?.source == 'voice_screen') {
+      // Release the native recognizer only when this screen still owns it.
+      _speech.cancel();
       VoiceConversationService.cancelSession();
     }
     super.dispose();
@@ -161,8 +163,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
 
     if (_listening) {
+      // Invalidate the pending listen() completion as well as its callbacks.
+      _listenGeneration++;
       await _speech.stop();
-      setState(() => _listening = false);
+      if (mounted) setState(() => _listening = false);
     }
 
     if (_recording) {
@@ -332,8 +336,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     // بدء التسجيل تلقائيًا للسؤال التالي
     if (result.startListening) {
+      final listenGenerationBeforeDelay = _listenGeneration;
       await Future.delayed(const Duration(milliseconds: 300));
       if (mounted &&
+          !_listening &&
+          _listenGeneration == listenGenerationBeforeDelay &&
           identical(VoiceConversationService.currentSession, ownedSession)) {
         _toggleSpeech();
       }
@@ -389,6 +396,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   void _resetSession() {
+    _listenGeneration++;
     if (VoiceConversationService.currentSession?.source == 'voice_screen') {
       VoiceConversationService.cancelSession();
     }
