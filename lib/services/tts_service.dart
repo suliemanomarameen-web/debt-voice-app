@@ -56,7 +56,7 @@ class TtsService {
     } catch (e) {
       print('TTS speak error: $e');
     } finally {
-      _activeSpeeches = (_activeSpeeches - 1).clamp(0, 1000000);
+      if (_activeSpeeches > 0) _activeSpeeches--;
     }
   }
 
