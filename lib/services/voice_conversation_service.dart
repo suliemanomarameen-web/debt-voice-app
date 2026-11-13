@@ -4,14 +4,12 @@ import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/voice_session.dart';
 import '../services/accountant_service.dart';
-import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/parser_service.dart';
 import '../services/settings_service.dart';
 import '../handlers/transaction_handler.dart';
 import '../services/voice_prompts_service.dart';
 import '../services/query_service.dart'; // 🆕 لمعالجة الاستعلامات
-import '../models/transaction.dart'; // 🆕 لآخر عملية
 
 /// 🆕 نوع الخطوة التالية في الحوار
 enum ConversationStep {
@@ -637,7 +635,6 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeStatistics(VoiceSession session) async {
-    final total = await DatabaseHelper.instance.totalDebts();
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
