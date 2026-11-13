@@ -673,12 +673,17 @@ class VoiceConversationService {
         items: session.items ?? '',
       );
 
+      // Capture the exact session object. If the user cancels while any
+      // asynchronous validation is running, _session becomes null and the
+      // transaction handler will refuse the final database insert.
       final ok = await TransactionHandler.save(
         customer: customer,
         parsed: fakeParsed,
         db: db,
         source: session.source,
         audioPath: null,
+        canCommit: () =>
+            identical(_session, session) && !session.isCompleted,
       );
 
       if (!ok) {
