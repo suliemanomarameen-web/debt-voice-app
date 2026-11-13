@@ -1,12 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debt_voice_app/services/query_service.dart';
-import 'package:debt_voice_app/services/keywords_service.dart';
 
 void main() {
-  setUp(() async {
-    await KeywordsService.resetAll();
-  });
-
   group('QueryService command routing', () {
     test('does not classify add-account commands as account queries', () {
       expect(QueryService.isQuery('أضف حساب'), isFalse);
