@@ -48,9 +48,12 @@ class TtsService {
 
   static Future<void> speak(String text) async {
     if (text.isEmpty) return;
-    if (!_initialized) await init();
+
+    // Mark speech as active before initialization as well: otherwise the
+    // first TTS prompt can race with STT startup and be captured by the mic.
     _activeSpeeches++;
     try {
+      if (!_initialized) await init();
       await _tts.stop();
       await _tts.speak(text);
     } catch (e) {
