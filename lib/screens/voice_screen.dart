@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
-import '../models/log_event.dart';
 import '../models/voice_session.dart';
 import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
-import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
@@ -576,10 +574,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
                 toDate = await showDatePicker(
                   context: ctx,
-                  initialDate: DateTime.now().isBefore(fromDate!)
-                      ? fromDate!
+                  initialDate: DateTime.now().isBefore(fromDate)
+                      ? fromDate
                       : DateTime.now(),
-                  firstDate: fromDate!,
+                  firstDate: fromDate,
                   lastDate: DateTime(2100),
                   helpText: 'اختر تاريخ النهاية',
                 );
