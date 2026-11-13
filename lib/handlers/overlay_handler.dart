@@ -59,7 +59,7 @@ class OverlayHandler {
         AppSettings.voiceConversationEnabled,
         defaultValue: true,
       );
-      if (conversationEnabled && VoiceConversationService.hasActiveSession) {
+      if (conversationEnabled && VoiceConversationService.hasActiveSessionFor('overlay_handler')) {
         await _handleConversation('', audioPath);
       } else {
         await PendingNotificationService.create(
@@ -116,7 +116,7 @@ class OverlayHandler {
     String? audioPath,
   ) async {
     try {
-      final result = await VoiceConversationService.processText(text);
+      final result = await VoiceConversationService.processText(text, source: 'overlay_handler');
 
       switch (result.step) {
         case ConversationStep.askQuestion:
@@ -138,7 +138,7 @@ class OverlayHandler {
     } catch (e) {
       debugPrint('❌ [OverlayHandler] conversation error: $e');
       await TtsService.speak('حدث خطأ');
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_handler');
     }
   }
 
@@ -188,7 +188,7 @@ class OverlayHandler {
     }
 
     final candidates = result.candidates ?? [];
-    final session = VoiceConversationService.currentSession;
+    final session = VoiceConversationService.sessionFor('overlay_handler');
 
     if (candidates.isEmpty) {
       // لا مرشحين — اطلب إضافة حساب جديد عبر إشعار
@@ -203,7 +203,7 @@ class OverlayHandler {
           audioPath: audioPath,
         ),
       );
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_handler');
       return;
     }
 
@@ -231,7 +231,7 @@ class OverlayHandler {
       ),
     );
 
-    VoiceConversationService.cancelSession();
+    VoiceConversationService.cancelSession(source: 'overlay_handler');
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -240,7 +240,7 @@ class OverlayHandler {
   static Future<void> _onSaved(VoiceConversationResult result) async {
     // TransactionHandler.save يُظهر إشعار نجاح بالفعل + TTS تأكيد
     // لا نحتاج فعل شيء إضافي، فقط إنهاء الجلسة
-    VoiceConversationService.cancelSession();
+    VoiceConversationService.cancelSession(source: 'overlay_handler');
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -259,7 +259,7 @@ class OverlayHandler {
       result.errorMessage ?? 'فشل التعرف على العملية',
     );
 
-    VoiceConversationService.cancelSession();
+    VoiceConversationService.cancelSession(source: 'overlay_handler');
   }
 
   // ═══════════════════════════════════════════════════════════

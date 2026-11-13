@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +23,7 @@ class NotificationService {
   static int _idCounter = 100000;
 
   static void Function(String? payload)? onTap;
-  static void Function(String actionId, String? payload)? onAction;
+  static FutureOr<void> Function(String actionId, String? payload)? onAction;
 
   static const String channelId = 'debt_channel';
   static const String channelName = 'دفتر الديون';
@@ -68,20 +67,24 @@ class NotificationService {
     await androidImpl?.requestNotificationsPermission();
   }
 
-  static void _handleResponse(NotificationResponse resp) {
+  static Future<void> _handleResponse(NotificationResponse resp) async {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
-
-    if (actionId != null && actionId.isNotEmpty) {
-      _writeFlagForAction(actionId);
-    }
 
     if (actionId != null &&
         actionId.isNotEmpty &&
         actionId != 'default_action') {
       debugPrint('🔔 [Notif] Action: $actionId, payload: $payload');
-      LoggerService.devInfo('notif', '_handleResponse: $actionId');
-      onAction?.call(actionId, payload);
+      await LoggerService.devInfo('notif', '_handleResponse: $actionId');
+
+      // Exactly one delivery path: dispatch immediately when the app has
+      // installed its handler, otherwise persist for cold-start bootstrap.
+      final handler = onAction;
+      if (handler != null) {
+        await handler(actionId, payload);
+      } else {
+        await _writeFlagForAction(actionId);
+      }
       return;
     }
 
@@ -97,6 +100,7 @@ class NotificationService {
       switch (actionId) {
         case 'overlay_record':
           await prefs.setBool('pending_overlay_record', true);
+          await prefs.setInt('pending_overlay_record_at', DateTime.now().millisecondsSinceEpoch);
           await LoggerService.devInfo(
               'notif', 'Set flag: pending_overlay_record');
           break;
@@ -306,6 +310,7 @@ void notificationTapBackground(NotificationResponse response) async {
     switch (actionId) {
       case 'overlay_record':
         await prefs.setBool('pending_overlay_record', true);
+        await prefs.setInt('pending_overlay_record_at', DateTime.now().millisecondsSinceEpoch);
         await LoggerService.devInfo(
             'notif-bg', 'Set pending_overlay_record = true');
         break;

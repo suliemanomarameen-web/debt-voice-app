@@ -4,7 +4,11 @@ import 'voice_prompts_service.dart';
 class TtsService {
   static final FlutterTts _tts = FlutterTts();
   static bool _initialized = false;
+  static int _activeSpeeches = 0;
   static String? _arabicVoice;
+
+  /// True while any queued/current speech is active; STT must not capture it.
+  static bool get isSpeaking => _activeSpeeches > 0;
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -44,16 +48,24 @@ class TtsService {
 
   static Future<void> speak(String text) async {
     if (text.isEmpty) return;
-    if (!_initialized) await init();
+
+    // Mark speech as active before initialization as well: otherwise the
+    // first TTS prompt can race with STT startup and be captured by the mic.
+    _activeSpeeches++;
     try {
+      if (!_initialized) await init();
       await _tts.stop();
       await _tts.speak(text);
     } catch (e) {
       print('TTS speak error: $e');
+    } finally {
+      if (_activeSpeeches > 0) _activeSpeeches--;
     }
   }
 
-  static Future<void> stop() async => _tts.stop();
+  static Future<void> stop() async {
+    await _tts.stop();
+  }
 
   // ============================================================
   // تحويل الأرقام إلى كلمات عربية مشكّلة

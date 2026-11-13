@@ -30,6 +30,10 @@ class VoiceSession {
   /// العملة
   String currency;
 
+  /// نطاق تاريخ كشف الحساب عند طلب الطباعة
+  DateTime? fromDate;
+  DateTime? toDate;
+
   /// نوع الحساب
   String accountType;
 
@@ -69,6 +73,8 @@ class VoiceSession {
     this.amount,
     this.items,
     this.currency = 'YER',
+    this.fromDate,
+    this.toDate,
     this.accountType = 'customer',
     this.totalAttempts = 0,
     Map<String, int>? fieldAttempts,
@@ -175,6 +181,8 @@ class VoiceSession {
     if (partial.currency != 'YER') {
       currency = partial.currency;
     }
+    if (partial.fromDate != null) fromDate = partial.fromDate;
+    if (partial.toDate != null) toDate = partial.toDate;
     if (partial.accountType != 'customer') {
       accountType = partial.accountType;
     }
@@ -189,6 +197,8 @@ class VoiceSession {
       amount: amount,
       items: items,
       currency: currency,
+      fromDate: fromDate,
+      toDate: toDate,
       accountType: accountType,
       rawText: collectedTexts.isEmpty ? '' : collectedTexts.last,
     );
@@ -217,6 +227,8 @@ class VoiceSession {
       amount: amount,
       items: items,
       currency: currency,
+      fromDate: fromDate,
+      toDate: toDate,
       accountType: accountType,
       totalAttempts: totalAttempts,
       fieldAttempts: Map<String, int>.from(fieldAttempts),

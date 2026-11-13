@@ -35,6 +35,8 @@ class ParsedPartial {
   final String? items; // null إذا لم يُعرف (اختياري)
   final String currency;
   final String accountType;
+  final DateTime? fromDate;
+  final DateTime? toDate;
   final String rawText;
 
   ParsedPartial({
@@ -44,6 +46,8 @@ class ParsedPartial {
     this.items,
     this.currency = 'YER',
     this.accountType = 'customer',
+    this.fromDate,
+    this.toDate,
     required this.rawText,
   });
 
@@ -114,6 +118,8 @@ class ParsedPartial {
       accountType: newer.accountType != 'customer'
           ? newer.accountType
           : accountType,
+      fromDate: newer.fromDate ?? fromDate,
+      toDate: newer.toDate ?? toDate,
       rawText: '${rawText.trim()} ${newer.rawText.trim()}'.trim(),
     );
   }
@@ -280,6 +286,9 @@ class ParserService {
       final amount = _extractAmountOnly(original);
       return ParsedPartial(
         amount: amount,
+        items: expecting == 'amount'
+            ? _extractItemsPartial(clean, amount)
+            : null,
         currency: _extractCurrency(t),
         rawText: original,
       );
@@ -388,8 +397,10 @@ class ParserService {
       }
     }
 
-    // 2. المبلغ
-    final amount = _extractAmountOnly(original);
+    // 2. المبلغ (أرقام التاريخ ليست مبالغ في أوامر الطباعة والإرسال).
+    final amount = intent == 'print_statement' || intent == 'send_statement'
+        ? null
+        : _extractAmountOnly(original);
 
     // 3. اسم الحساب
     // ✅ إصلاح: عند add_account، استخدم _extractAccountName (تعرف "باسم...")
@@ -400,8 +411,9 @@ class ParserService {
       customerName = _extractNamePartial(clean);
     }
 
-    // 4. الأصناف
+    // 4. الأصناف والتواريخ (تستخدم التواريخ في أمر طباعة كشف الحساب).
     String? items = _extractItemsPartial(clean, amount);
+    final dateRange = _extractDateRange(clean);
 
     return ParsedPartial(
       intent: intent,
@@ -409,6 +421,8 @@ class ParserService {
       amount: amount,
       items: items,
       currency: _extractCurrency(t),
+      fromDate: dateRange.$1,
+      toDate: dateRange.$2,
       rawText: original,
     );
   }
@@ -713,7 +727,6 @@ class ParserService {
   static String? _extractItemsPartial(String text, double? amount) {
     if (amount == null) return null;
 
-    // ابحث عن أول رقم في النص
     final normalized = text
         .replaceAll('٠', '0')
         .replaceAll('١', '1')
@@ -726,27 +739,45 @@ class ParserService {
         .replaceAll('٨', '8')
         .replaceAll('٩', '9');
 
-    // 🆕 استخدام نفس regex الذي يلتقط الأرقام الكبيرة مع فاصلات الآلاف
     final digitMatch = RegExp(
       r'\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?',
     ).firstMatch(normalized);
-    if (digitMatch == null) return null;
 
-    var after = text.substring(
-      _originalIndexForDigit(text, normalized, digitMatch.end),
-    ).trim();
+    String after;
+    if (digitMatch != null) {
+      after = text.substring(digitMatch.end).trim();
+    } else {
+      // ابحث عن تسلسل كلمات العدد بالكامل، بما فيها الآلاف والملايين.
+      final words = text.split(RegExp(r'\s+'));
+      var found = false;
+      after = '';
+      for (var i = 0; i < words.length; i++) {
+        String cleanToken(String value) => value
+            .replaceAll(RegExp(r'^[،,.!؟?:;]+|[،,.!؟?:;]+$'), '')
+            .trim();
 
-    // احذف كلمة العملة
+        final first = cleanToken(words[i]);
+        if (!_isNumberWord(first)) continue;
+
+        var end = i;
+        while (end < words.length && _isNumberWord(cleanToken(words[end]))) {
+          end++;
+        }
+        after = words.skip(end).join(' ').trim();
+        found = true;
+        break;
+      }
+      if (!found) return null;
+    }
+
     after = after.replaceFirst(
-        RegExp(r'^(?:ريال|دولار|درهم|سعودي|riyal|dollar|sar|aed|yer)\s*'),
-        '');
-
-    // احذف كلمة "أصناف"
+      RegExp(r'^(?:ريال|دولار|درهم|سعودي|riyal|dollar|sar|aed|yer)\s*'),
+      '',
+    );
     after = after.replaceFirst(
-        RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]*'),
-        '');
-
-    // احذف علامات الترقيم من البداية
+      RegExp(r'^(?:أصناف|الأصناف|اصناف|items)[:\s]*'),
+      '',
+    );
     after = after.replaceAll(RegExp(r'^[،,.!؟?:;\s]+'), '');
 
     return after.isEmpty ? null : after.trim();
@@ -878,6 +909,53 @@ class ParserService {
       }
     }
     return n.trim();
+  }
+
+  /// يقرأ نطاق تاريخ رقمي بصيغ مثل 13/11/2026 إلى 20/11/2026
+  /// أو 2026-11-13 إلى 2026-11-20. لا يفسر تاريخاً واحداً كنطاق.
+  static (DateTime?, DateTime?) _extractDateRange(String text) {
+    final normalized = text
+        .replaceAll('٠', '0')
+        .replaceAll('١', '1')
+        .replaceAll('٢', '2')
+        .replaceAll('٣', '3')
+        .replaceAll('٤', '4')
+        .replaceAll('٥', '5')
+        .replaceAll('٦', '6')
+        .replaceAll('٧', '7')
+        .replaceAll('٨', '8')
+        .replaceAll('٩', '9');
+    final matches = RegExp(
+      r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b',
+    ).allMatches(normalized).toList();
+    if (matches.length < 2) return (null, null);
+
+    DateTime? parseDate(String value) {
+      final parts = value.split(RegExp(r'[-/]'));
+      if (parts.length != 3) return null;
+      late int year;
+      late int month;
+      late int day;
+      if (parts[0].length == 4) {
+        year = int.parse(parts[0]);
+        month = int.parse(parts[1]);
+        day = int.parse(parts[2]);
+      } else {
+        day = int.parse(parts[0]);
+        month = int.parse(parts[1]);
+        year = int.parse(parts[2]);
+      }
+      if (year < 100) year += 2000;
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+      final date = DateTime(year, month, day);
+      if (date.year != year || date.month != month || date.day != day) return null;
+      return date;
+    }
+
+    final from = parseDate(matches[0].group(0)!);
+    final to = parseDate(matches[1].group(0)!);
+    if (from == null || to == null || to.isBefore(from)) return (null, null);
+    return (from, to);
   }
 
   static String _extractCurrency(String t) {

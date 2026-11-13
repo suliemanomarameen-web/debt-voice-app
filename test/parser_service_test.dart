@@ -37,6 +37,47 @@ void main() {
       expect(result.items, 'بضاعة');
     });
 
+    test('parses item after an amount written in Arabic words', () {
+      final result = ParserService.parsePartial('سجل على أحمد خمسة آلاف بضاعة');
+      expect(result.intent, 'debt');
+      expect(result.customerName, 'أحمد');
+      expect(result.amount, 5000);
+      expect(result.items, 'بضاعة');
+    });
+
+    test('parses item after a multi-part Arabic word amount', () {
+      final result = ParserService.parsePartial(
+        'سجل على أحمد خمسة آلاف ومئتين قطع غيار',
+      );
+      expect(result.intent, 'debt');
+      expect(result.customerName, 'أحمد');
+      expect(result.amount, 5200);
+      expect(result.items, 'قطع غيار');
+    });
+
+    test('keeps item when amount and item are supplied in a follow-up answer', () {
+      final result = ParserService.parsePartial(
+        'خمسة آلاف بضاعة',
+        expecting: 'amount',
+      );
+      expect(result.amount, 5000);
+      expect(result.items, 'بضاعة');
+    });
+
+    test('recognizes add-account intent when the user has not said a name yet', () {
+      final result = ParserService.parsePartial('أضف حساب');
+      expect(result.intent, 'add_account');
+      expect(result.customerName, isNull);
+    });
+
+    test('extracts the name from a contextual add-account answer', () {
+      final result = ParserService.parsePartial(
+        'باسم يونس',
+        expecting: 'customerName',
+      );
+      expect(result.customerName, 'يونس');
+    });
+
     test('parses a complete add-account command and extracts only the name', () {
       final result = ParserService.parsePartial('أضف حساب باسم أحمد');
       expect(result.intent, 'add_account');
@@ -67,6 +108,25 @@ void main() {
       final result = ParserService.parsePartial('طباعة كشف حساب أحمد');
       expect(result.intent, 'print_statement');
       expect(result.customerName, 'أحمد');
+    });
+
+    test('parses numeric date range in a print statement command', () {
+      final result = ParserService.parsePartial(
+        'طباعة كشف حساب أحمد من تاريخ 01/11/2026 إلى 13/11/2026',
+      );
+      expect(result.intent, 'print_statement');
+      expect(result.customerName, 'أحمد');
+      expect(result.fromDate, DateTime(2026, 11, 1));
+      expect(result.toDate, DateTime(2026, 11, 13));
+      expect(result.amount, isNull, reason: 'Date numbers must not be treated as transaction amounts');
+    });
+
+    test('parses ISO date range with Arabic digits', () {
+      final result = ParserService.parsePartial(
+        'اطبع كشف حساب محمد من ٢٠٢٦-١١-٠١ إلى ٢٠٢٦-١١-١٣',
+      );
+      expect(result.fromDate, DateTime(2026, 11, 1));
+      expect(result.toDate, DateTime(2026, 11, 13));
     });
 
     test('parses send statement command', () {

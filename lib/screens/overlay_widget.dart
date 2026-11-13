@@ -55,7 +55,7 @@ class _OverlayWidgetState extends State<OverlayWidget> {
             // استقبال نتيجة التعرف على الصوت من main
             final text = data['text'] as String? ?? '';
             // لا نطفيء الزر إلا عند الإلغاء أو الخطأ، لكي يبدو مستمراً
-            if (text == 'cancelled' || text == '__ERROR__' || text == 'stopped') {
+            if (text == 'cancelled' || text == '__ERROR__' || text == 'stopped' || text == 'conversation_finished') {
               if (mounted) {
                 setState(() {
                   _recording = false;
@@ -162,6 +162,10 @@ class _OverlayWidgetState extends State<OverlayWidget> {
       // 🆕 استخدام SharedPreferences بدلاً من shareData لضمان الموثوقية
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('pending_stt_start', true);
+      await prefs.setInt(
+        'pending_stt_start_at',
+        DateTime.now().millisecondsSinceEpoch,
+      );
     } catch (e) {
       await LoggerService.devError('overlay', 'Failed to request STT: $e');
       if (mounted) setState(() => _recording = false);
@@ -194,6 +198,10 @@ class _OverlayWidgetState extends State<OverlayWidget> {
       // 🆕 استخدام SharedPreferences بدلاً من shareData لضمان الموثوقية
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('pending_stt_cancel', true);
+      await prefs.setInt(
+        'pending_stt_cancel_at',
+        DateTime.now().millisecondsSinceEpoch,
+      );
     } catch (_) {}
   }
 

@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
-import '../models/log_event.dart';
 import '../models/voice_session.dart';
 import '../services/accountant_service.dart';
 import '../services/audio_recorder_service.dart';
-import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/parser_service.dart';
 import '../services/query_service.dart';
@@ -48,6 +46,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   VoiceConversationResult? _lastResult;
   List<Customer> _candidates = [];
   bool _sessionCompleted = false;
+  int _listenGeneration = 0;
 
   // ─── خطأ ───
   String? _errorMessage;
@@ -66,8 +65,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   @override
   void dispose() {
+    _listenGeneration++;
     _audioService.stopPlayback();
-    VoiceConversationService.cancelSession();
+    // This screen may have been replaced while the overlay took ownership
+    // of the shared conversation. Never cancel another source's session.
+    if (VoiceConversationService.sessionFor('voice_screen')?.source == 'voice_screen') {
+      // Release the native recognizer only when this screen still owns it.
+      _speech.cancel();
+      VoiceConversationService.cancelSession(source: 'voice_screen');
+    }
     super.dispose();
   }
 
@@ -93,11 +99,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
 
     if (_listening) {
+      // إيقاف المستخدم صريح: لا نرسل صمتاً للحوار ولا نسمح لنتيجة متأخرة
+      // من جلسة الشاشة بأن تغيّر حالة الواجهة أو تنفّذ أمراً.
+      _listenGeneration++;
       await _speech.stop();
-      setState(() => _listening = false);
+      if (mounted) setState(() => _listening = false);
       return;
     }
 
+    final generation = ++_listenGeneration;
     setState(() {
       _text = '';
       _errorMessage = null;
@@ -106,25 +116,25 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _listening = true;
     });
 
-    await _speech.listen(
+    final started = await _speech.listen(
       pauseFor: const Duration(seconds: 3),
       onSilence: () {
-        if (!mounted) return;
+        if (!mounted || generation != _listenGeneration) return;
         setState(() => _listening = false);
-        if (VoiceConversationService.hasActiveSession) {
+        if (VoiceConversationService.hasActiveSessionFor('voice_screen')) {
           _processConversation('');
         }
       },
       onResult: (text, isFinal) {
-        if (!mounted) return;
+        if (!mounted || generation != _listenGeneration) return;
         setState(() => _text = text);
         if (isFinal) {
           setState(() => _listening = false);
 
-          // إذا انتهت مهلة الصمت أثناء سؤال من أسئلة الحوار، نعيد معالجة
-          // الإجابة الفارغة ليُعاد السؤال وتُحتسب محاولة غير مفهومة.
+          // الصمت هنا صادر عن نهاية استماع حقيقية فقط؛ الإيقاف اليدوي
+          // يلغي generation ويمنع الوصول إلى هذا المسار.
           if (text.trim().isEmpty) {
-            if (VoiceConversationService.hasActiveSession) {
+            if (VoiceConversationService.hasActiveSessionFor('voice_screen')) {
               _processConversation('');
             }
             return;
@@ -133,6 +143,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
         }
       },
     );
+    if (!started && mounted && generation == _listenGeneration) {
+      setState(() {
+        _listening = false;
+        _errorMessage = 'تعذر بدء الاستماع. تحقق من إذن الميكروفون وخدمة التعرف على الكلام.';
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -145,8 +161,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
 
     if (_listening) {
+      // Invalidate the pending listen() completion as well as its callbacks.
+      _listenGeneration++;
       await _speech.stop();
-      setState(() => _listening = false);
+      if (mounted) setState(() => _listening = false);
     }
 
     if (_recording) {
@@ -278,12 +296,27 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // الحوار التفاعلي
   // ═══════════════════════════════════════════════════════════
   Future<void> _processConversation(String text) async {
-    if (!VoiceConversationService.hasActiveSession) {
+    final activeSession = VoiceConversationService.sessionFor('voice_screen');
+    if (activeSession == null || activeSession.source != 'voice_screen') {
+      // Do not mix an overlay/notification conversation with this screen.
+      VoiceConversationService.cancelSession(source: 'voice_screen');
       VoiceConversationService.startSession(source: 'voice_screen');
     }
 
-    final result = await VoiceConversationService.processText(text);
-    if (!mounted) return;
+    final ownedSession = VoiceConversationService.sessionFor('voice_screen');
+    final result = await VoiceConversationService.processText(text, source: 'voice_screen');
+    final sessionStillOwned = ownedSession != null &&
+        identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession);
+    // الإلغاء وبلوغ الحد الأقصى للمحاولات ينهيان الجلسة عمداً؛
+    // يجب مع ذلك إظهار/نطق الرسالة النهائية للمستخدم.
+    final terminalFailure = result.step == ConversationStep.failed &&
+        (VoiceConversationService.isCancelCommand(text) ||
+            (result.errorMessage?.startsWith('تجاوز ') ?? false) ||
+            (result.errorMessage?.startsWith('لا يوجد حساب باسم ') ?? false) ||
+            (result.errorMessage?.startsWith('تم إلغاء') ?? false));
+    if (!mounted || (!sessionStillOwned && !terminalFailure)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
@@ -292,6 +325,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _sessionCompleted = result.step == ConversationStep.saved;
     });
 
+    // Snapshot before speaking. A manual stop during TTS must invalidate the
+    // pending auto-listen instead of being overwritten when speech completes.
+    final listenGenerationBeforeSpeech = _listenGeneration;
+
     // TTS
     if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
       try {
@@ -299,10 +336,24 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
+    // If another source cancelled/replaced this conversation while TTS was
+    // speaking, do not reopen the microphone for the obsolete screen session.
+    if (!mounted) return;
+    if (!identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      // لا نعيد فتح الميكروفون بعد الإلغاء أو انتهاء المحاولات.
+      if (terminalFailure) _onFailed(result);
+      return;
+    }
+
     // بدء التسجيل تلقائيًا للسؤال التالي
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      if (mounted &&
+          !_listening &&
+          _listenGeneration == listenGenerationBeforeSpeech &&
+          identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
     // نجاح
@@ -355,7 +406,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   void _resetSession() {
-    VoiceConversationService.cancelSession();
+    _listenGeneration++;
+    if (VoiceConversationService.sessionFor('voice_screen')?.source == 'voice_screen') {
+      VoiceConversationService.cancelSession(source: 'voice_screen');
+    }
     if (!mounted) return;
     setState(() {
       _lastResult = null;
@@ -399,7 +453,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
       case 'print':
       case 'send':
         if (result.matchedCustomer != null) {
-          await _showStatementDialog(result.matchedCustomer!);
+          await _showStatementDialog(
+            result.matchedCustomer!,
+            fromDate: result.fromDate,
+            toDate: result.toDate,
+          );
           if (mounted) _resetSession();
         } else {
           if (mounted) _resetSession();
@@ -426,7 +484,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // ═══════════════════════════════════════════════════════════
   // 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
   // ═══════════════════════════════════════════════════════════
-  Future<void> _showStatementDialog(Customer customer) async {
+  Future<void> _showStatementDialog(
+    Customer customer, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(customer.id!);
     final txList = await db.customerTransactions(customer.id!);
@@ -517,36 +579,38 @@ class _VoiceScreenState extends State<VoiceScreen> {
               icon: const Icon(Icons.picture_as_pdf),
               label: const Text('طباعة / حفظ PDF'),
               onPressed: () async {
-                DateTime? fromDate;
-                DateTime? toDate;
+                DateTime? selectedFromDate = fromDate;
+                DateTime? selectedToDate = toDate;
 
-                // اختيار بداية الفترة ونهايتها قبل إنشاء كشف الحساب.
-                fromDate = await showDatePicker(
-                  context: ctx,
-                  initialDate: DateTime.now(),
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(2100),
-                  helpText: 'اختر تاريخ البداية',
-                );
-                if (fromDate == null || !ctx.mounted) return;
+                // إذا نطق المستخدم الفترة، نستخدمها مباشرة؛ وإلا نطلب اختيارها.
+                if (selectedFromDate == null || selectedToDate == null) {
+                  selectedFromDate = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                    helpText: 'اختر تاريخ البداية',
+                  );
+                  if (selectedFromDate == null || !ctx.mounted) return;
 
-                toDate = await showDatePicker(
-                  context: ctx,
-                  initialDate: DateTime.now().isBefore(fromDate!)
-                      ? fromDate!
-                      : DateTime.now(),
-                  firstDate: fromDate!,
-                  lastDate: DateTime(2100),
-                  helpText: 'اختر تاريخ النهاية',
-                );
-                if (toDate == null || !ctx.mounted) return;
+                  selectedToDate = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.now().isBefore(selectedFromDate)
+                        ? selectedFromDate
+                        : DateTime.now(),
+                    firstDate: selectedFromDate,
+                    lastDate: DateTime(2100),
+                    helpText: 'اختر تاريخ النهاية',
+                  );
+                  if (selectedToDate == null || !ctx.mounted) return;
+                }
 
                 Navigator.pop(ctx);
                 try {
                   final file = await PdfService.generateStatement(
                     customer,
-                    fromDate: fromDate,
-                    toDate: toDate,
+                    fromDate: selectedFromDate,
+                    toDate: selectedToDate,
                   );
                   await PdfService.share(file, customer.name);
                 } catch (e) {
@@ -567,10 +631,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // اختيار مرشح
   // ═══════════════════════════════════════════════════════════
   Future<void> _selectCandidate(int index) async {
+    final operationGeneration = _listenGeneration;
+    final ownedSession = VoiceConversationService.sessionFor('voice_screen');
+    if (ownedSession == null || ownedSession.source != 'voice_screen') return;
+
     setState(() => _isProcessing = true);
 
-    final result = await VoiceConversationService.selectCandidate(index);
-    if (!mounted) return;
+    final result = await VoiceConversationService.selectCandidate(index, source: 'voice_screen');
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
@@ -585,20 +656,37 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      // Do not let a delayed candidate callback reclaim the shared microphone
+      // after the user stopped this screen or another source took ownership.
+      if (mounted &&
+          operationGeneration == _listenGeneration &&
+          identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
     if (result.step == ConversationStep.saved) _onSaved(result);
     if (result.step == ConversationStep.failed) _onFailed(result);
   }
 
   Future<void> _addNewCustomer() async {
+    final operationGeneration = _listenGeneration;
+    final ownedSession = VoiceConversationService.sessionFor('voice_screen');
+    if (ownedSession == null || ownedSession.source != 'voice_screen') return;
+
     setState(() => _isProcessing = true);
 
-    final result = await VoiceConversationService.addNewCustomer();
-    if (!mounted) return;
+    final result = await VoiceConversationService.addNewCustomer(source: 'voice_screen');
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
@@ -613,11 +701,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      if (mounted &&
+          operationGeneration == _listenGeneration &&
+          identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
     if (result.step == ConversationStep.saved) _onSaved(result);
     if (result.step == ConversationStep.failed) _onFailed(result);
   }
@@ -678,7 +774,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final voiceEnabled = _isVoiceEnabled();
-    final session = VoiceConversationService.currentSession;
+    final session = VoiceConversationService.sessionFor('voice_screen');
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -691,7 +787,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 icon: const Icon(Icons.close),
                 tooltip: 'إلغاء الجلسة',
                 onPressed: () {
-                  VoiceConversationService.cancelSession();
+                  VoiceConversationService.cancelSession(source: 'voice_screen');
                   _resetSession();
                 },
               ),

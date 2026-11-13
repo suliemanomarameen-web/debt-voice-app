@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'handlers/overlay_handler.dart';
 import 'screens/add_account_screen.dart';
 import 'screens/duplicates_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/stats_screen.dart';
-import 'screens/voice_screen.dart';
 import 'services/accountants_service.dart';
 import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
@@ -24,6 +22,7 @@ import 'services/notification_action_handler.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/pending_notification_service.dart';
+import 'services/pdf_service.dart';
 import 'services/permission_service.dart';
 import 'services/reminder_service.dart';
 import 'services/settings_service.dart';
@@ -45,6 +44,9 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
 bool _sttStarting = false; // 🆕 التعديل (أ): حماية من الاستدعاء المزدوج
+int _mainSttGeneration = 0;
+bool _mainConversationProcessing = false;
+int _mainConversationGeneration = 0;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -101,9 +103,18 @@ class _BootstrapAppState extends State<BootstrapApp> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
-      if (pendingRecord) {
-        await prefs.setBool('pending_overlay_record', false);
-        debugPrint('🔄 [Bootstrap] Pending overlay record found, will start after 3s');
+      final requestedAt = prefs.getInt('pending_overlay_record_at');
+      final requestAge = requestedAt == null
+          ? null
+          : DateTime.now().millisecondsSinceEpoch - requestedAt;
+      final requestIsFresh =
+          requestAge != null && requestAge >= 0 && requestAge <= 120000;
+      // Old/stale flags (including flags written by older app versions) must
+      // never open the microphone on an ordinary app launch.
+      await prefs.setBool('pending_overlay_record', false);
+      await prefs.remove('pending_overlay_record_at');
+      if (pendingRecord && requestIsFresh) {
+        debugPrint('🔄 [Bootstrap] Fresh notification recording request found');
         Future.delayed(const Duration(seconds: 3), () {
           _startSTTInMain();
         });
@@ -204,6 +215,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('pending_overlay_record', false);
+        await prefs.remove('pending_overlay_record_at');
         await prefs.setBool('pending_quick_tx', false);
         await prefs.setBool('pending_new_customer', false);
         await prefs.setBool('pending_open_stats', false);
@@ -257,6 +269,27 @@ class _BootstrapAppState extends State<BootstrapApp> {
       NotificationActionHandler.handleAction(actionId, payload);
     };
 
+    // Recheck a notification action that may have arrived while bootstrap
+    // was still installing onAction. Its persisted flag is the cold-start
+    // handoff; ordinary launches have no fresh timestamp and never start STT.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
+      final requestedAt = prefs.getInt('pending_overlay_record_at');
+      final age = requestedAt == null
+          ? null
+          : DateTime.now().millisecondsSinceEpoch - requestedAt;
+      if (pendingRecord && age != null && age >= 0 && age <= 120000) {
+        await prefs.setBool('pending_overlay_record', false);
+        await prefs.remove('pending_overlay_record_at');
+        Future.delayed(const Duration(seconds: 3), () {
+          _startSTTInMain();
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Late notification handoff check failed: $e');
+    }
+
     NotificationService.onTap = _onNotificationTap;
 
     try {
@@ -294,14 +327,34 @@ class _BootstrapAppState extends State<BootstrapApp> {
       try {
         final prefs = await SharedPreferences.getInstance();
         if (prefs.getBool('pending_stt_start') == true) {
+          final requestedAt = prefs.getInt('pending_stt_start_at');
+          final age = requestedAt == null
+              ? null
+              : DateTime.now().millisecondsSinceEpoch - requestedAt;
+          final isFresh = age != null && age >= 0 && age <= 30000;
           await prefs.setBool('pending_stt_start', false);
-          await LoggerService.devInfo('main', 'Poll: pending_stt_start → _startSTTInMain');
-          _startSTTInMain();
+          await prefs.remove('pending_stt_start_at');
+          if (isFresh) {
+            await LoggerService.devInfo('main', 'Fresh pending_stt_start → _startSTTInMain');
+            _startSTTInMain();
+          } else {
+            await LoggerService.devWarn('main', 'Ignored stale pending_stt_start');
+          }
         }
         if (prefs.getBool('pending_stt_cancel') == true) {
+          final requestedAt = prefs.getInt('pending_stt_cancel_at');
+          final age = requestedAt == null
+              ? null
+              : DateTime.now().millisecondsSinceEpoch - requestedAt;
+          final isFresh = age != null && age >= 0 && age <= 30000;
           await prefs.setBool('pending_stt_cancel', false);
-          await LoggerService.devInfo('main', 'Poll: pending_stt_cancel → _cancelSTTInMain');
-          _cancelSTTInMain();
+          await prefs.remove('pending_stt_cancel_at');
+          if (isFresh) {
+            await LoggerService.devInfo('main', 'Fresh pending_stt_cancel → _cancelSTTInMain');
+            _cancelSTTInMain();
+          } else {
+            await LoggerService.devWarn('main', 'Ignored stale pending_stt_cancel');
+          }
         }
       } catch (_) {}
     });
@@ -387,103 +440,156 @@ class _BootstrapAppState extends State<BootstrapApp> {
 /// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
   // 🆕 التعديل (ج): حماية من الاستدعاء المزدوج
-  if (_sttStarting || _globalSpeech.isListening) {
+  if (_mainConversationProcessing ||
+      _sttStarting ||
+      _globalSpeech.isListening) {
     await LoggerService.devInfo('main', 'STT already starting/listening — skipping');
     return;
   }
   _sttStarting = true;
+  final generation = ++_mainSttGeneration;
 
   try {
     _userCancelled = false;
     await LoggerService.devInfo('main', 'Starting STT in main isolate');
 
-    FlutterOverlayWindow.shareData({'action': 'stt_started'});
-
-    if (!VoiceConversationService.hasActiveSession) {
+    final activeSession = VoiceConversationService.sessionFor('overlay_main');
+    if (activeSession == null || activeSession.source != 'overlay_main') {
+      // Notification/overlay input must not inherit a pending VoiceScreen
+      // dialog. Each UI source owns its own conversation lifecycle.
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       VoiceConversationService.startSession(source: 'overlay_main');
     }
 
-    final listenHandler = (String text, bool isFinal) async {
-      if (isFinal) {
-        await _globalSpeech.stop();
-        final finalText = text.trim();
+    Future<void> handleConversationInput(String rawText) async {
+      if (generation != _mainSttGeneration) return;
+      if (_userCancelled) {
+        _userCancelled = false;
+        return;
+      }
 
-        if (_userCancelled) {
-          _userCancelled = false;
-          return;
-        }
-
-        if (finalText.isEmpty || finalText == '__EMPTY__') {
-          await LoggerService.devInfo(
-              'main', 'Empty result — restarting listen');
-          await Future.delayed(const Duration(milliseconds: 300));
-          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
-          _startSTTInMain();
-          return;
-        }
-
+      final finalText = rawText.trim();
+      if (finalText.isNotEmpty && finalText != '__EMPTY__') {
         await LoggerService.devInfo('main', 'STT result: "$finalText"');
         FlutterOverlayWindow.shareData(
             {'action': 'stt_result', 'text': finalText});
+      } else {
+        await LoggerService.devInfo(
+            'main', 'Genuine silence/no-match — count as one dialog attempt');
+      }
 
-        if (_isCancelCommand(finalText)) {
-          await LoggerService.devInfo('main', 'Cancel command detected');
-          VoiceConversationService.cancelSession();
-          await TtsService.speak(VoicePromptsService.getResponse(
-              VoicePromptsService.rCancelled));
-          FlutterOverlayWindow.shareData(
-              {'action': 'stt_result', 'text': 'cancelled'});
+      if (finalText.isNotEmpty && _isCancelCommand(finalText)) {
+        await LoggerService.devInfo('main', 'Cancel command detected');
+        VoiceConversationService.cancelSession(source: 'overlay_main');
+        await TtsService.speak(VoicePromptsService.getResponse(
+            VoicePromptsService.rCancelled));
+        FlutterOverlayWindow.shareData(
+            {'action': 'stt_result', 'text': 'cancelled'});
+        return;
+      }
+
+      if (_mainConversationProcessing) return;
+      _mainConversationProcessing = true;
+      final processingToken = ++_mainConversationGeneration;
+      final processingSession = VoiceConversationService.sessionFor('overlay_main');
+      if (processingSession == null) {
+        _mainConversationProcessing = false;
+        return;
+      }
+
+      try {
+        final result =
+            await VoiceConversationService.processText(finalText, source: 'overlay_main');
+        if (generation != _mainSttGeneration ||
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
+          return;
+        }
+        await LoggerService.devInfo(
+            'main', 'VoiceConversationResult: ${result.step.name}');
+
+        if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
+          // TTS completion is awaited before another microphone session starts.
+          await TtsService.speak(result.ttsMessage!);
+        }
+
+        if (generation != _mainSttGeneration ||
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
           return;
         }
 
-        try {
-          final result =
-              await VoiceConversationService.processText(finalText);
-          await LoggerService.devInfo(
-              'main', 'VoiceConversationResult: ${result.step.name}');
-
-          if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
-            await TtsService.speak(result.ttsMessage!);
+        if (result.startListening) {
+           // Release the processing lock before opening the next listening
+          // generation. The finally block below is token-guarded.
+          if (processingToken == _mainConversationGeneration) {
+            _mainConversationProcessing = false;
+            _mainConversationGeneration++;
           }
-
-          if (result.startListening) {
-            await Future.delayed(const Duration(milliseconds: 500));
-            _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
-            _startSTTInMain();
-          } else if (result.targetScreen != null) {
-            await _handleVoiceTargetScreen(result);
-          } else {
-            VoiceConversationService.cancelSession();
+          await Future.delayed(const Duration(milliseconds: 350));
+          if (generation != _mainSttGeneration ||
+              !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
+            return;
           }
-        } catch (e) {
-          await LoggerService.devError('main', 'processText error: $e');
-          await Future.delayed(const Duration(milliseconds: 500));
-          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
+          _sttStarting = false;
           _startSTTInMain();
+        } else if (result.targetScreen != null) {
+          await _handleVoiceTargetScreen(result);
+        } else {
+          VoiceConversationService.cancelSession(source: 'overlay_main');
+          FlutterOverlayWindow.shareData(
+              {'action': 'stt_result', 'text': 'conversation_finished'});
+        }
+      } catch (e) {
+        // An exception from an obsolete callback must not cancel a newer
+        // conversation that has since taken ownership of the shared service.
+        if (generation != _mainSttGeneration ||
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
+          return;
+        }
+        await LoggerService.devError('main', 'processText error: $e');
+        VoiceConversationService.cancelSession(source: 'overlay_main');
+        await TtsService.speak('حدث خطأ أثناء معالجة الأمر، حاول مرة أخرى');
+      } finally {
+        if (processingToken == _mainConversationGeneration) {
+          _mainConversationProcessing = false;
         }
       }
+    }
+
+    final listenHandler = (String text, bool isFinal) async {
+      if (generation != _mainSttGeneration || !isFinal) return;
+      await _globalSpeech.stop();
+      await handleConversationInput(text);
     };
 
-    await _globalSpeech.listen(
+    final started = await _globalSpeech.listen(
       listenFor: const Duration(minutes: 5),
-      pauseFor: const Duration(seconds: 5),
+      // Match VoiceScreen: a genuine 3-second pause is one empty attempt.
+      pauseFor: const Duration(seconds: 3),
       onResult: listenHandler,
+      onSilence: () async {
+        if (generation != _mainSttGeneration) return;
+        await handleConversationInput('');
+      },
     );
 
-    // 🆕 إصلاح مشكلة أول تثبيت: إذا لم يبدأ المحرك فعلياً بعد 800 مللي ثانية، نعيد التهيئة والمحاولة
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!_globalSpeech.isListening &&
-        VoiceConversationService.hasActiveSession) {
-      await LoggerService.devInfo(
-          'main', 'STT failed to start, resetting and retrying...');
-      await _globalSpeech.reset();
-      await _globalSpeech.init();
-      await _globalSpeech.listen(
-        listenFor: const Duration(minutes: 5),
-        pauseFor: const Duration(seconds: 5),
-        onResult: listenHandler,
-      );
+    if (generation != _mainSttGeneration) return;
+
+    // أعلن بدء التسجيل فقط بعد أن يؤكد محرك Android فتح جلسة الاستماع.
+    if (started && _globalSpeech.hasActiveRecognition) {
+      FlutterOverlayWindow.shareData({'action': 'stt_started'});
+    } else {
+      await LoggerService.devWarn(
+          'main', 'STT did not enter listening state; no retry will be counted');
+      FlutterOverlayWindow.shareData({
+        'action': 'stt_result',
+        'text': '__ERROR__',
+      });
+      // احتفظ بجلسة الحوار عند فشل فتح الميكروفون؛ فشل البدء ليس
+      // إجابة غير مفهومة ولا ينبغي أن يلغي الحقول التي جمعها المستخدم.
     }
+
+    // لا نعيد تهيئة المحرك تلقائياً عند فشل بدء الالتقاط؛ إعادة المحاولة
+    // هنا كانت تتداخل مع جلسة جديدة أو تعيد فتح الميكروفون بعد توقف المستخدم.
 
   } catch (e) {
     await LoggerService.devError('main', 'STT listen error: $e');
@@ -492,7 +598,9 @@ void _startSTTInMain() async {
       'text': '__ERROR__',
     });
   } finally {
-    _sttStarting = false; // 🆕 التعديل (ج): تصفير الحماية دائماً عند الخروج
+    // An older async invocation must not clear the startup lock belonging
+    // to a newer listening generation.
+    if (generation == _mainSttGeneration) _sttStarting = false;
   }
 }
 
@@ -500,7 +608,9 @@ void _startSTTInMain() async {
 void _stopSTTInMain() async {
   await LoggerService.devInfo('main', 'Stopping STT (temporary pause)');
   try {
-    await _globalSpeech.stop();
+    // رفع الإصبع يوقف الالتقاط الحالي مع السماح بتسليم الكلام الذي قيل،
+    // ولا يُعامل كإلغاء للحوار أو كصمت مصطنع.
+    await _globalSpeech.stop(suppressCallbacks: false);
   } catch (e) {
     await LoggerService.devError('main', 'STT stop error: $e');
   }
@@ -509,11 +619,15 @@ void _stopSTTInMain() async {
 /// إلغاء كامل (عند النقر على الزر العائم أثناء التسجيل)
 void _cancelSTTInMain() async {
   await LoggerService.devInfo('main', 'Cancelling STT (user action)');
+  _mainSttGeneration++;
+  _sttStarting = false;
+  _mainConversationGeneration++;
+  _mainConversationProcessing = false;
   _userCancelled = true;
   try {
-    await _globalSpeech.stop();
+    await _globalSpeech.cancel();
   } catch (e) {}
-  VoiceConversationService.cancelSession();
+  VoiceConversationService.cancelSession(source: 'overlay_main');
   FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
 }
 
@@ -546,7 +660,7 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
     case 'stats':
       navigatorKey.currentState?.push(
         MaterialPageRoute(builder: (_) => const StatsScreen()),
-      ).then((_) => VoiceConversationService.cancelSession());
+      ).then((_) => VoiceConversationService.cancelSession(source: 'overlay_main'));
       break;
 
     case 'edit':
@@ -555,18 +669,22 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
           MaterialPageRoute(
             builder: (_) => AddAccountScreen(existing: result.matchedCustomer),
           ),
-        ).then((_) => VoiceConversationService.cancelSession());
+        ).then((_) => VoiceConversationService.cancelSession(source: 'overlay_main'));
       } else {
-        VoiceConversationService.cancelSession();
+        VoiceConversationService.cancelSession(source: 'overlay_main');
       }
       break;
 
     case 'print':
     case 'send':
       if (result.matchedCustomer != null) {
-        await _showStatementDialog(result.matchedCustomer!);
+        await _showStatementDialog(
+          result.matchedCustomer!,
+          fromDate: result.fromDate,
+          toDate: result.toDate,
+        );
       }
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       break;
 
     case 'search':
@@ -576,16 +694,20 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
           backgroundColor: Colors.blue,
         ),
       );
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       break;
 
     default:
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
   }
 }
 
 /// 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
-Future<void> _showStatementDialog(Customer customer) async {
+Future<void> _showStatementDialog(
+  Customer customer, {
+  DateTime? fromDate,
+  DateTime? toDate,
+}) async {
   final ctx = navigatorKey.currentContext;
   if (ctx == null) return;
   final db = DatabaseHelper.instance;
@@ -676,6 +798,51 @@ Future<void> _showStatementDialog(Customer customer) async {
           TextButton(
             onPressed: () => Navigator.pop(c),
             child: const Text('إغلاق'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.picture_as_pdf),
+            label: const Text('طباعة / حفظ PDF'),
+            onPressed: () async {
+              DateTime? selectedFromDate = fromDate;
+              DateTime? selectedToDate = toDate;
+
+              if (selectedFromDate == null || selectedToDate == null) {
+                selectedFromDate = await showDatePicker(
+                  context: c,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ البداية',
+                );
+                if (selectedFromDate == null || !c.mounted) return;
+
+                selectedToDate = await showDatePicker(
+                  context: c,
+                  initialDate: DateTime.now().isBefore(selectedFromDate)
+                      ? selectedFromDate
+                      : DateTime.now(),
+                  firstDate: selectedFromDate,
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ النهاية',
+                );
+                if (selectedToDate == null || !c.mounted) return;
+              }
+
+              Navigator.pop(c);
+              try {
+                final file = await PdfService.generateStatement(
+                  customer,
+                  fromDate: selectedFromDate,
+                  toDate: selectedToDate,
+                );
+                await PdfService.share(file, customer.name);
+              } catch (e) {
+                if (!ctx.mounted) return;
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('تعذر إنشاء كشف PDF: $e')),
+                );
+              }
+            },
           ),
         ],
       ),
