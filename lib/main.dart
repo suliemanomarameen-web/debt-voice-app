@@ -265,6 +265,27 @@ class _BootstrapAppState extends State<BootstrapApp> {
       NotificationActionHandler.handleAction(actionId, payload);
     };
 
+    // Recheck a notification action that may have arrived while bootstrap
+    // was still installing onAction. Its persisted flag is the cold-start
+    // handoff; ordinary launches have no fresh timestamp and never start STT.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
+      final requestedAt = prefs.getInt('pending_overlay_record_at');
+      final age = requestedAt == null
+          ? null
+          : DateTime.now().millisecondsSinceEpoch - requestedAt;
+      if (pendingRecord && age != null && age >= 0 && age <= 120000) {
+        await prefs.setBool('pending_overlay_record', false);
+        await prefs.remove('pending_overlay_record_at');
+        Future.delayed(const Duration(seconds: 3), () {
+          _startSTTInMain();
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Bootstrap] Late notification handoff check failed: $e');
+    }
+
     NotificationService.onTap = _onNotificationTap;
 
     try {
