@@ -394,8 +394,10 @@ class ParserService {
       }
     }
 
-    // 2. المبلغ
-    final amount = _extractAmountOnly(original);
+    // 2. المبلغ (أرقام التاريخ ليست مبالغ في أوامر الطباعة والإرسال).
+    final amount = intent == 'print_statement' || intent == 'send_statement'
+        ? null
+        : _extractAmountOnly(original);
 
     // 3. اسم الحساب
     // ✅ إصلاح: عند add_account، استخدم _extractAccountName (تعرف "باسم...")
