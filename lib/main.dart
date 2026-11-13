@@ -432,11 +432,11 @@ void _startSTTInMain() async {
     _userCancelled = false;
     await LoggerService.devInfo('main', 'Starting STT in main isolate');
 
-    final activeSession = VoiceConversationService.currentSession;
+    final activeSession = VoiceConversationService.sessionFor('overlay_main');
     if (activeSession == null || activeSession.source != 'overlay_main') {
       // Notification/overlay input must not inherit a pending VoiceScreen
       // dialog. Each UI source owns its own conversation lifecycle.
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       VoiceConversationService.startSession(source: 'overlay_main');
     }
 
@@ -459,7 +459,7 @@ void _startSTTInMain() async {
 
       if (finalText.isNotEmpty && _isCancelCommand(finalText)) {
         await LoggerService.devInfo('main', 'Cancel command detected');
-        VoiceConversationService.cancelSession();
+        VoiceConversationService.cancelSession(source: 'overlay_main');
         await TtsService.speak(VoicePromptsService.getResponse(
             VoicePromptsService.rCancelled));
         FlutterOverlayWindow.shareData(
@@ -470,7 +470,7 @@ void _startSTTInMain() async {
       if (_mainConversationProcessing) return;
       _mainConversationProcessing = true;
       final processingToken = ++_mainConversationGeneration;
-      final processingSession = VoiceConversationService.currentSession;
+      final processingSession = VoiceConversationService.sessionFor('overlay_main');
       if (processingSession == null) {
         _mainConversationProcessing = false;
         return;
@@ -478,9 +478,9 @@ void _startSTTInMain() async {
 
       try {
         final result =
-            await VoiceConversationService.processText(finalText);
+            await VoiceConversationService.processText(finalText, source: 'overlay_main');
         if (generation != _mainSttGeneration ||
-            !identical(VoiceConversationService.currentSession, processingSession)) {
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
           return;
         }
         await LoggerService.devInfo(
@@ -492,7 +492,7 @@ void _startSTTInMain() async {
         }
 
         if (generation != _mainSttGeneration ||
-            !identical(VoiceConversationService.currentSession, processingSession)) {
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
           return;
         }
 
@@ -505,7 +505,7 @@ void _startSTTInMain() async {
           }
           await Future.delayed(const Duration(milliseconds: 350));
           if (generation != _mainSttGeneration ||
-              !identical(VoiceConversationService.currentSession, processingSession)) {
+              !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
             return;
           }
           _sttStarting = false;
@@ -513,7 +513,7 @@ void _startSTTInMain() async {
         } else if (result.targetScreen != null) {
           await _handleVoiceTargetScreen(result);
         } else {
-          VoiceConversationService.cancelSession();
+          VoiceConversationService.cancelSession(source: 'overlay_main');
           FlutterOverlayWindow.shareData(
               {'action': 'stt_result', 'text': 'conversation_finished'});
         }
@@ -521,11 +521,11 @@ void _startSTTInMain() async {
         // An exception from an obsolete callback must not cancel a newer
         // conversation that has since taken ownership of the shared service.
         if (generation != _mainSttGeneration ||
-            !identical(VoiceConversationService.currentSession, processingSession)) {
+            !identical(VoiceConversationService.sessionFor('overlay_main'), processingSession)) {
           return;
         }
         await LoggerService.devError('main', 'processText error: $e');
-        VoiceConversationService.cancelSession();
+        VoiceConversationService.cancelSession(source: 'overlay_main');
         await TtsService.speak('حدث خطأ أثناء معالجة الأمر، حاول مرة أخرى');
       } finally {
         if (processingToken == _mainConversationGeneration) {
@@ -562,7 +562,7 @@ void _startSTTInMain() async {
         'action': 'stt_result',
         'text': '__ERROR__',
       });
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
     }
 
     // لا نعيد تهيئة المحرك تلقائياً عند فشل بدء الالتقاط؛ إعادة المحاولة
@@ -604,7 +604,7 @@ void _cancelSTTInMain() async {
   try {
     await _globalSpeech.stop();
   } catch (e) {}
-  VoiceConversationService.cancelSession();
+  VoiceConversationService.cancelSession(source: 'overlay_main');
   FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
 }
 
@@ -637,7 +637,7 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
     case 'stats':
       navigatorKey.currentState?.push(
         MaterialPageRoute(builder: (_) => const StatsScreen()),
-      ).then((_) => VoiceConversationService.cancelSession());
+      ).then((_) => VoiceConversationService.cancelSession(source: 'overlay_main'));
       break;
 
     case 'edit':
@@ -646,9 +646,9 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
           MaterialPageRoute(
             builder: (_) => AddAccountScreen(existing: result.matchedCustomer),
           ),
-        ).then((_) => VoiceConversationService.cancelSession());
+        ).then((_) => VoiceConversationService.cancelSession(source: 'overlay_main'));
       } else {
-        VoiceConversationService.cancelSession();
+        VoiceConversationService.cancelSession(source: 'overlay_main');
       }
       break;
 
@@ -657,7 +657,7 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
       if (result.matchedCustomer != null) {
         await _showStatementDialog(result.matchedCustomer!);
       }
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       break;
 
     case 'search':
@@ -667,11 +667,11 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
           backgroundColor: Colors.blue,
         ),
       );
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
       break;
 
     default:
-      VoiceConversationService.cancelSession();
+      VoiceConversationService.cancelSession(source: 'overlay_main');
   }
 }
 
