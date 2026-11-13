@@ -88,12 +88,13 @@ class SpeechService {
       _available = await _speech.initialize(
         onError: (e) {
           debugPrint('STT Error: ${e.errorMsg}');
-          // Do not count an error as user silence unless the native engine
-          // actually entered listening state. The status callback below will
-          // deliver a genuine end-of-speech once, if applicable.
-          if (e.errorMsg != 'error_no_match' &&
-              e.errorMsg != 'error_speech_timeout' &&
-              e.errorMsg != 'error_client') {
+          // A no-match/timeout is a real empty attempt only after the
+          // recognizer entered listening state. Startup errors must not burn
+          // one of the user's three dialog attempts.
+          if (e.errorMsg == 'error_no_match' ||
+              e.errorMsg == 'error_speech_timeout') {
+            if (_engineStarted) _deliverSilence(_generation);
+          } else if (e.errorMsg != 'error_client') {
             _available = false;
           }
         },
