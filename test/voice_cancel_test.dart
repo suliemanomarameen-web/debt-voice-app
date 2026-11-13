@@ -38,6 +38,7 @@ void main() {
   });
 
 
+  group('Voice source isolation', () {
     test('keeps conversations isolated by source', () {
       final screenSession = VoiceConversationService.startSession(source: 'voice_screen');
       final overlaySession = VoiceConversationService.startSession(source: 'overlay_main');
@@ -62,6 +63,8 @@ void main() {
       expect(VoiceConversationService.sessionFor('overlay_main'), isNull);
       expect(VoiceConversationService.sessionFor('voice_screen'), same(screenSession));
     });
+
+  });
 
   group('Voice session retry state', () {
     test('counts empty attempts separately for the requested field', () {
