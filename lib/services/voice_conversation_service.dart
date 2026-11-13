@@ -664,6 +664,16 @@ class VoiceConversationService {
     Customer customer,
   ) async {
     try {
+      // Refuse to enter the persistence path if this is no longer the active
+      // conversation. This also prevents stale async callbacks from saving.
+      if (!identical(_session, session) || session.isCompleted) {
+        return VoiceConversationResult(
+          step: ConversationStep.failed,
+          ttsMessage: 'تم إلغاء العملية',
+          errorMessage: 'تم إلغاء العملية',
+        );
+      }
+
       final db = DatabaseHelper.instance;
 
       final fakeParsed = _FakeParsed(
@@ -687,6 +697,13 @@ class VoiceConversationService {
       );
 
       if (!ok) {
+        if (!identical(_session, session)) {
+          return VoiceConversationResult(
+            step: ConversationStep.failed,
+            ttsMessage: 'تم إلغاء العملية',
+            errorMessage: 'تم إلغاء العملية',
+          );
+        }
         return _fail('فشل حفظ العملية');
       }
 
