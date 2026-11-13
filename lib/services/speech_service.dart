@@ -1,6 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
+/// Shared speech engine used by VoiceScreen and the floating overlay.
+///
+/// A single native speech_to_text engine must not deliver callbacks from an
+/// older listening session into a newer conversation. Manual stop and cancel
+/// are also distinguished from a genuine end-of-speech event.
 class SpeechService {
   static final SpeechService _instance = SpeechService._internal();
   factory SpeechService() => _instance;
@@ -16,6 +21,9 @@ class SpeechService {
   void Function(String text, bool isFinal)? _onResult;
   bool _finalResultDelivered = false;
   bool _silenceDelivered = false;
+  bool _suppressCallbacks = false;
+  bool _sessionActive = false;
+  int _generation = 0;
 
   bool get isListening => _speech.isListening;
   bool get isAvailable => _available;
@@ -23,6 +31,37 @@ class SpeechService {
   String get lastText => _lastText;
 
   void setLocale(String loc) => _locale = loc;
+
+  void _deliverSilence(int generation) {
+    if (generation != _generation ||
+        !_sessionActive ||
+        _suppressCallbacks ||
+        _silenceDelivered ||
+        _finalResultDelivered) {
+      return;
+    }
+    _silenceDelivered = true;
+    _sessionActive = false;
+    _onSilence?.call();
+  }
+
+  void _deliverFinalText(String text, int generation) {
+    if (generation != _generation ||
+        !_sessionActive ||
+        _suppressCallbacks ||
+        _finalResultDelivered) {
+      return;
+    }
+    final value = text.trim();
+    if (value.isEmpty) {
+      _deliverSilence(generation);
+      return;
+    }
+    _lastText = value;
+    _finalResultDelivered = true;
+    _sessionActive = false;
+    _onResult?.call(value, true);
+  }
 
   Future<bool> init() async {
     if (_available) return true;
@@ -40,35 +79,30 @@ class SpeechService {
     try {
       _available = await _speech.initialize(
         onError: (e) {
-          debugPrint('STT Error: $e');
-          // تجاهل الأخطاء المتعلقة بعدم فهم الكلام
-          if (e.errorMsg != 'error_no_match' &&
-              e.errorMsg != 'error_speech_timeout' &&
-              e.errorMsg != 'error_client') {
+          debugPrint('STT Error: ${e.errorMsg}');
+          if (e.errorMsg == 'error_no_match' ||
+              e.errorMsg == 'error_speech_timeout') {
+            _deliverSilence(_generation);
+          } else if (e.errorMsg != 'error_client') {
             _available = false;
           }
         },
         onStatus: (status) {
           debugPrint('STT Status: $status');
           if (status == 'done' || status == 'notListening') {
-            if (_lastText.isEmpty &&
-                !_silenceDelivered &&
-                !_finalResultDelivered) {
-              _silenceDelivered = true;
-              _onSilence?.call();
-            } else if (_lastText.isNotEmpty && !_finalResultDelivered) {
-              _finalResultDelivered = true;
-              _onResult?.call(_lastText, true);
+            if (_suppressCallbacks || !_sessionActive) return;
+            if (_lastText.isEmpty) {
+              _deliverSilence(_generation);
+            } else {
+              _deliverFinalText(_lastText, _generation);
             }
           }
         },
       );
-      
-      // 🆕 تأخير 400 مللي ثانية للسماح للنظام بربط المحرك (إصلاح مشكلة التشغيل الأول)
+
       if (_available) {
-        await Future.delayed(const Duration(milliseconds: 400));
+        await Future.delayed(const Duration(milliseconds: 250));
       }
-      
       debugPrint('✅ [SpeechService] initialized=$_available locale=$_locale');
     } catch (e) {
       debugPrint('❌ STT Init error: $e');
@@ -80,6 +114,11 @@ class SpeechService {
   }
 
   Future<void> reset() async {
+    _generation++;
+    _sessionActive = false;
+    _suppressCallbacks = true;
+    _onSilence = null;
+    _onResult = null;
     try {
       await _speech.cancel();
     } catch (_) {}
@@ -106,13 +145,17 @@ class SpeechService {
       }
     }
 
+    final generation = ++_generation;
     _lastText = '';
     _onSilence = onSilence;
     _onResult = onResult;
     _finalResultDelivered = false;
     _silenceDelivered = false;
+    _suppressCallbacks = false;
+    _sessionActive = true;
 
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(const Duration(milliseconds: 120));
+    if (generation != _generation || !_sessionActive) return;
 
     try {
       await _speech.listen(
@@ -121,21 +164,38 @@ class SpeechService {
         pauseFor: pauseFor,
         partialResults: true,
         onResult: (r) {
+          if (generation != _generation ||
+              !_sessionActive ||
+              _suppressCallbacks) {
+            return;
+          }
           final text = r.recognizedWords.trim();
-          _lastText = text;
-          if (r.finalResult) _finalResultDelivered = true;
-          onResult(text, r.finalResult);
+          if (text.isNotEmpty) _lastText = text;
+          if (r.finalResult) {
+            _deliverFinalText(text.isNotEmpty ? text : _lastText, generation);
+          } else if (text.isNotEmpty) {
+            onResult(text, false);
+          }
         },
         onSoundLevelChange: (level) {},
       );
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
-      _available = false;
-      _initializing = false;
+      if (generation == _generation) {
+        _sessionActive = false;
+        _available = false;
+      }
     }
   }
 
-  Future<void> stop() async {
+  /// Stops listening. By default this is a user-requested stop and callbacks
+  /// are suppressed. The overlay's push-to-talk release passes false so the
+  /// final recognized words can still be delivered.
+  Future<void> stop({bool suppressCallbacks = true}) async {
+    if (suppressCallbacks) {
+      _suppressCallbacks = true;
+      _sessionActive = false;
+    }
     try {
       await _speech.stop();
     } catch (e) {
@@ -144,6 +204,11 @@ class SpeechService {
   }
 
   Future<void> cancel() async {
+    _generation++;
+    _suppressCallbacks = true;
+    _sessionActive = false;
+    _onSilence = null;
+    _onResult = null;
     try {
       await _speech.cancel();
     } catch (e) {
@@ -153,7 +218,8 @@ class SpeechService {
   }
 }
 
-// Speech Service v1: النسخة الأساسية (STT بسيط)
-// Speech Service v2: تحسين التعرف الصوتي + try/finally
-// Speech Service v2.1: إعادة timeout كمعامل قديم للتوافق مع overlay_widget (سيُزال في v7)
-// Speech Service v2.2: إضافة تأخير 400ms بعد التهيئة وتجاهل أخطاء عدم الفهم
+// Speech Service v3:
+// - تمييز الإيقاف اليدوي عن الصمت الحقيقي.
+// - منع callbacks المتأخرة من جلسة صوتية سابقة.
+// - تسليم النتيجة النهائية أو الصمت مرة واحدة فقط.
+// - الحفاظ على محرك STT مشترك بين VoiceScreen والزر العائم.
