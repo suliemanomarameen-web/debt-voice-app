@@ -69,6 +69,24 @@ void main() {
       expect(result.customerName, 'أحمد');
     });
 
+    test('parses numeric date range in a print statement command', () {
+      final result = ParserService.parsePartial(
+        'طباعة كشف حساب أحمد من تاريخ 01/11/2026 إلى 13/11/2026',
+      );
+      expect(result.intent, 'print_statement');
+      expect(result.customerName, 'أحمد');
+      expect(result.fromDate, DateTime(2026, 11, 1));
+      expect(result.toDate, DateTime(2026, 11, 13));
+    });
+
+    test('parses ISO date range with Arabic digits', () {
+      final result = ParserService.parsePartial(
+        'اطبع كشف حساب محمد من ٢٠٢٦-١١-٠١ إلى ٢٠٢٦-١١-١٣',
+      );
+      expect(result.fromDate, DateTime(2026, 11, 1));
+      expect(result.toDate, DateTime(2026, 11, 13));
+    });
+
     test('parses send statement command', () {
       final result = ParserService.parsePartial('أرسل كشف حساب أحمد');
       expect(result.intent, 'send_statement');
