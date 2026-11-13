@@ -46,6 +46,8 @@ final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
 bool _sttStarting = false; // 🆕 التعديل (أ): حماية من الاستدعاء المزدوج
 int _mainSttGeneration = 0;
+bool _mainConversationProcessing = false;
+int _mainConversationGeneration = 0;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -416,7 +418,9 @@ class _BootstrapAppState extends State<BootstrapApp> {
 /// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
   // 🆕 التعديل (ج): حماية من الاستدعاء المزدوج
-  if (_sttStarting || _globalSpeech.isListening) {
+  if (_mainConversationProcessing ||
+      _sttStarting ||
+      _globalSpeech.isListening) {
     await LoggerService.devInfo('main', 'STT already starting/listening — skipping');
     return;
   }
@@ -462,8 +466,14 @@ void _startSTTInMain() async {
         return;
       }
 
+      if (_mainConversationProcessing) return;
+      _mainConversationProcessing = true;
+      final processingToken = ++_mainConversationGeneration;
       final processingSession = VoiceConversationService.currentSession;
-      if (processingSession == null) return;
+      if (processingSession == null) {
+        _mainConversationProcessing = false;
+        return;
+      }
 
       try {
         final result =
@@ -487,6 +497,12 @@ void _startSTTInMain() async {
         }
 
         if (result.startListening) {
+          // Release the processing lock before opening the next listening
+          // generation. The finally block below is token-guarded.
+          if (processingToken == _mainConversationGeneration) {
+            _mainConversationProcessing = false;
+            _mainConversationGeneration++;
+          }
           await Future.delayed(const Duration(milliseconds: 350));
           if (generation != _mainSttGeneration ||
               !identical(VoiceConversationService.currentSession, processingSession)) {
@@ -511,6 +527,10 @@ void _startSTTInMain() async {
         await LoggerService.devError('main', 'processText error: $e');
         VoiceConversationService.cancelSession();
         await TtsService.speak('حدث خطأ أثناء معالجة الأمر، حاول مرة أخرى');
+      } finally {
+        if (processingToken == _mainConversationGeneration) {
+          _mainConversationProcessing = false;
+        }
       }
     }
 
@@ -578,6 +598,8 @@ void _cancelSTTInMain() async {
   await LoggerService.devInfo('main', 'Cancelling STT (user action)');
   _mainSttGeneration++;
   _sttStarting = false;
+  _mainConversationGeneration++;
+  _mainConversationProcessing = false;
   _userCancelled = true;
   try {
     await _globalSpeech.stop();
