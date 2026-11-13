@@ -4,6 +4,25 @@ import 'package:debt_voice_app/models/voice_session.dart';
 import 'package:debt_voice_app/services/parser_service.dart';
 
 void main() {
+  group('Voice confirmation answers', () {
+    test('accepts clear Arabic yes answers with punctuation', () {
+      expect(VoiceConversationService.isAffirmativeConfirmation('نعم.'), isTrue);
+      expect(VoiceConversationService.isAffirmativeConfirmation('أيوه، احذف الحساب'), isTrue);
+      expect(VoiceConversationService.isAffirmativeConfirmation('موافق!'), isTrue);
+    });
+
+    test('accepts clear Arabic and English no answers', () {
+      expect(VoiceConversationService.isNegativeConfirmation('لا.'), isTrue);
+      expect(VoiceConversationService.isNegativeConfirmation('كلا، لا تحذف الحساب'), isTrue);
+      expect(VoiceConversationService.isNegativeConfirmation('No!'), isTrue);
+    });
+
+    test('does not mistake ambiguous phrases for confirmation', () {
+      expect(VoiceConversationService.isAffirmativeConfirmation('ربما'), isFalse);
+      expect(VoiceConversationService.isNegativeConfirmation('بعد قليل'), isFalse);
+    });
+  });
+
   group('Voice cancellation commands', () {
     test('recognizes Arabic cancel words and phrases', () {
       expect(VoiceConversationService.isCancelCommand('إلغاء'), isTrue);
