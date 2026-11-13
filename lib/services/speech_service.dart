@@ -101,7 +101,7 @@ class SpeechService {
         },
         onStatus: (status) {
           debugPrint('STT Status: $status');
-          if (status == 'listening') {
+          if (status == 'listening' && _sessionActive && !_suppressCallbacks) {
             _engineStarted = true;
           }
           if (status == 'done' || status == 'notListening') {
