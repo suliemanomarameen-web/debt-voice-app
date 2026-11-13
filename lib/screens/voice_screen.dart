@@ -450,7 +450,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
       case 'print':
       case 'send':
         if (result.matchedCustomer != null) {
-          await _showStatementDialog(result.matchedCustomer!);
+          await _showStatementDialog(
+            result.matchedCustomer!,
+            fromDate: result.fromDate,
+            toDate: result.toDate,
+          );
           if (mounted) _resetSession();
         } else {
           if (mounted) _resetSession();
@@ -477,7 +481,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // ═══════════════════════════════════════════════════════════
   // 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
   // ═══════════════════════════════════════════════════════════
-  Future<void> _showStatementDialog(Customer customer) async {
+  Future<void> _showStatementDialog(
+    Customer customer, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(customer.id!);
     final txList = await db.customerTransactions(customer.id!);
@@ -568,36 +576,38 @@ class _VoiceScreenState extends State<VoiceScreen> {
               icon: const Icon(Icons.picture_as_pdf),
               label: const Text('طباعة / حفظ PDF'),
               onPressed: () async {
-                DateTime? fromDate;
-                DateTime? toDate;
+                DateTime? selectedFromDate = fromDate;
+                DateTime? selectedToDate = toDate;
 
-                // اختيار بداية الفترة ونهايتها قبل إنشاء كشف الحساب.
-                fromDate = await showDatePicker(
-                  context: ctx,
-                  initialDate: DateTime.now(),
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(2100),
-                  helpText: 'اختر تاريخ البداية',
-                );
-                if (fromDate == null || !ctx.mounted) return;
+                // إذا نطق المستخدم الفترة، نستخدمها مباشرة؛ وإلا نطلب اختيارها.
+                if (selectedFromDate == null || selectedToDate == null) {
+                  selectedFromDate = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                    helpText: 'اختر تاريخ البداية',
+                  );
+                  if (selectedFromDate == null || !ctx.mounted) return;
 
-                toDate = await showDatePicker(
-                  context: ctx,
-                  initialDate: DateTime.now().isBefore(fromDate)
-                      ? fromDate
-                      : DateTime.now(),
-                  firstDate: fromDate,
-                  lastDate: DateTime(2100),
-                  helpText: 'اختر تاريخ النهاية',
-                );
-                if (toDate == null || !ctx.mounted) return;
+                  selectedToDate = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.now().isBefore(selectedFromDate)
+                        ? selectedFromDate
+                        : DateTime.now(),
+                    firstDate: selectedFromDate,
+                    lastDate: DateTime(2100),
+                    helpText: 'اختر تاريخ النهاية',
+                  );
+                  if (selectedToDate == null || !ctx.mounted) return;
+                }
 
                 Navigator.pop(ctx);
                 try {
                   final file = await PdfService.generateStatement(
                     customer,
-                    fromDate: fromDate,
-                    toDate: toDate,
+                    fromDate: selectedFromDate,
+                    toDate: selectedToDate,
                   );
                   await PdfService.share(file, customer.name);
                 } catch (e) {
