@@ -440,8 +440,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
 /// تشغيل STT من الخيط الرئيسي (مع استمرارية الحوار)
 void _startSTTInMain() async {
-  // A fresh start clears the previous manual-pause state.
-  _mainUserStopped = false;
   // 🆕 التعديل (ج): حماية من الاستدعاء المزدوج
   if (_mainConversationProcessing ||
       _sttStarting ||
@@ -449,6 +447,8 @@ void _startSTTInMain() async {
     await LoggerService.devInfo('main', 'STT already starting/listening — skipping');
     return;
   }
+  // Only an accepted fresh start clears the previous manual-pause state.
+  _mainUserStopped = false;
   _sttStarting = true;
   final generation = ++_mainSttGeneration;
 
