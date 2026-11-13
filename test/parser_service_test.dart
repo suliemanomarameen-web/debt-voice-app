@@ -37,6 +37,20 @@ void main() {
       expect(result.items, 'بضاعة');
     });
 
+    test('recognizes add-account intent when the user has not said a name yet', () {
+      final result = ParserService.parsePartial('أضف حساب');
+      expect(result.intent, 'add_account');
+      expect(result.customerName, isNull);
+    });
+
+    test('extracts the name from a contextual add-account answer', () {
+      final result = ParserService.parsePartial(
+        'باسم يونس',
+        expecting: 'customerName',
+      );
+      expect(result.customerName, 'يونس');
+    });
+
     test('parses a complete add-account command and extracts only the name', () {
       final result = ParserService.parsePartial('أضف حساب باسم أحمد');
       expect(result.intent, 'add_account');
