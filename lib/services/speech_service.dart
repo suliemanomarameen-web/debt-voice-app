@@ -172,6 +172,21 @@ class SpeechService {
       }
     }
 
+    // The speech_to_text plugin exposes one native recognizer. A new
+    // source takes ownership explicitly and cancels any previous session,
+    // preventing VoiceScreen and the overlay from listening concurrently.
+    if (_speech.isListening) {
+      _generation++;
+      _suppressCallbacks = true;
+      _sessionActive = false;
+      _engineStarted = false;
+      _onSilence = null;
+      _onResult = null;
+      try {
+        await _speech.cancel();
+      } catch (_) {}
+    }
+
     final generation = ++_generation;
     _lastText = '';
     _onSilence = onSilence;
@@ -209,11 +224,17 @@ class SpeechService {
       );
       // Some Android devices return from listen() without opening the native
       // recognizer. Do not convert that startup failure into a silence retry.
-      await Future.delayed(const Duration(milliseconds: 250));
-      if (generation == _generation &&
+      // Wait briefly for the platform's explicit "listening" status.
+      // A failed startup is not user silence and must not consume a retry.
+      var startupWaits = 0;
+      while (generation == _generation &&
           _sessionActive &&
-          !_speech.isListening &&
-          !_engineStarted) {
+          !_engineStarted &&
+          startupWaits < 15) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        startupWaits++;
+      }
+      if (generation == _generation && _sessionActive && !_engineStarted) {
         _sessionActive = false;
         _onSilence = null;
         _onResult = null;
