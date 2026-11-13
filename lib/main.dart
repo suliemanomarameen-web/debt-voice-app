@@ -479,7 +479,7 @@ void _startSTTInMain() async {
     );
 
     // أعلن بدء التسجيل فقط بعد أن يؤكد محرك Android فتح جلسة الاستماع.
-    if (_globalSpeech.isListening) {
+    if (_globalSpeech.hasActiveRecognition) {
       FlutterOverlayWindow.shareData({'action': 'stt_started'});
     } else {
       await LoggerService.devWarn(
