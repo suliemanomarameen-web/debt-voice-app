@@ -4,11 +4,11 @@ import 'voice_prompts_service.dart';
 class TtsService {
   static final FlutterTts _tts = FlutterTts();
   static bool _initialized = false;
-  static bool _speaking = false;
+  static int _activeSpeeches = 0;
   static String? _arabicVoice;
 
-  /// True while the application is speaking; STT must not capture this audio.
-  static bool get isSpeaking => _speaking;
+  /// True while any queued/current speech is active; STT must not capture it.
+  static bool get isSpeaking => _activeSpeeches > 0;
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -49,23 +49,19 @@ class TtsService {
   static Future<void> speak(String text) async {
     if (text.isEmpty) return;
     if (!_initialized) await init();
-    _speaking = true;
+    _activeSpeeches++;
     try {
       await _tts.stop();
       await _tts.speak(text);
     } catch (e) {
       print('TTS speak error: $e');
     } finally {
-      _speaking = false;
+      _activeSpeeches = (_activeSpeeches - 1).clamp(0, 1000000);
     }
   }
 
   static Future<void> stop() async {
-    try {
-      await _tts.stop();
-    } finally {
-      _speaking = false;
-    }
+    await _tts.stop();
   }
 
   // ============================================================
