@@ -602,7 +602,7 @@ void _cancelSTTInMain() async {
   _mainConversationProcessing = false;
   _userCancelled = true;
   try {
-    await _globalSpeech.stop();
+    await _globalSpeech.cancel();
   } catch (e) {}
   VoiceConversationService.cancelSession(source: 'overlay_main');
   FlutterOverlayWindow.shareData({'action': 'stt_result', 'text': 'cancelled'});
