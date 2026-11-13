@@ -24,7 +24,7 @@ class NotificationService {
   static int _idCounter = 100000;
 
   static void Function(String? payload)? onTap;
-  static void Function(String actionId, String? payload)? onAction;
+  static FutureOr<void> Function(String actionId, String? payload)? onAction;
 
   static const String channelId = 'debt_channel';
   static const String channelName = 'دفتر الديون';
@@ -72,18 +72,20 @@ class NotificationService {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
 
-    // Persist the launch action before dispatching it. The main isolate may
-    // consume this flag during startup, so fire-and-forget caused a race.
-    if (actionId != null && actionId.isNotEmpty) {
-      await _writeFlagForAction(actionId);
-    }
-
     if (actionId != null &&
         actionId.isNotEmpty &&
         actionId != 'default_action') {
       debugPrint('🔔 [Notif] Action: $actionId, payload: $payload');
-      LoggerService.devInfo('notif', '_handleResponse: $actionId');
-      onAction?.call(actionId, payload);
+      await LoggerService.devInfo('notif', '_handleResponse: $actionId');
+
+      // Exactly one delivery path: dispatch immediately when the app has
+      // installed its handler, otherwise persist for cold-start bootstrap.
+      final handler = onAction;
+      if (handler != null) {
+        await handler(actionId, payload);
+      } else {
+        await _writeFlagForAction(actionId);
+      }
       return;
     }
 
