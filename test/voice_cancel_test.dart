@@ -8,12 +8,14 @@ void main() {
     test('accepts clear Arabic yes answers with punctuation', () {
       expect(VoiceConversationService.isAffirmativeConfirmation('نعم.'), isTrue);
       expect(VoiceConversationService.isAffirmativeConfirmation('أيوه، احذف الحساب'), isTrue);
+      expect(VoiceConversationService.isAffirmativeConfirmation('نعم، أضف الحساب'), isTrue);
       expect(VoiceConversationService.isAffirmativeConfirmation('موافق!'), isTrue);
     });
 
     test('accepts clear Arabic and English no answers', () {
       expect(VoiceConversationService.isNegativeConfirmation('لا.'), isTrue);
       expect(VoiceConversationService.isNegativeConfirmation('كلا، لا تحذف الحساب'), isTrue);
+      expect(VoiceConversationService.isNegativeConfirmation('لا، لا تضف'), isTrue);
       expect(VoiceConversationService.isNegativeConfirmation('No!'), isTrue);
     });
 
