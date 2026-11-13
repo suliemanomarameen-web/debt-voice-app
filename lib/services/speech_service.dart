@@ -27,6 +27,7 @@ class SpeechService {
   bool _engineStarted = false;
   int _generation = 0;
   int _listenRequestGeneration = 0;
+  int _lastStartedGeneration = -1;
 
   bool get isListening => _speech.isListening;
   bool get hasActiveRecognition => _engineStarted && _sessionActive;
@@ -105,6 +106,7 @@ class SpeechService {
           debugPrint('STT Status: $status');
           if (status == 'listening' && _sessionActive && !_suppressCallbacks) {
             _engineStarted = true;
+            _lastStartedGeneration = _generation;
           }
           if (status == 'done' || status == 'notListening') {
             if (_suppressCallbacks || !_sessionActive || !_engineStarted) return;
@@ -146,7 +148,7 @@ class SpeechService {
     _lastText = '';
   }
 
-  Future<void> listen({
+  Future<bool> listen({
     required void Function(String text, bool isFinal) onResult,
     void Function()? onSilence,
     Duration listenFor = const Duration(seconds: 30),
@@ -163,20 +165,20 @@ class SpeechService {
       await Future.delayed(const Duration(milliseconds: 100));
       ttsWaits++;
     }
-    if (requestGeneration != _listenRequestGeneration) return;
+    if (requestGeneration != _listenRequestGeneration) return false;
     if (TtsService.isSpeaking) {
       debugPrint('⚠️ [SpeechService] skipped listen while TTS is speaking');
-      return;
+      return false;
     }
 
     if (!_available) {
       final ok = await init();
       if (!ok) {
         debugPrint('⚠️ [SpeechService] not available — cannot listen');
-        return;
+        return false;
       }
     }
-    if (requestGeneration != _listenRequestGeneration) return;
+    if (requestGeneration != _listenRequestGeneration) return false;
 
     // The speech_to_text plugin exposes one native recognizer. A new
     // source takes ownership explicitly and cancels any previous session,
@@ -204,7 +206,7 @@ class SpeechService {
     _engineStarted = false;
 
     await Future.delayed(const Duration(milliseconds: 120));
-    if (generation != _generation || !_sessionActive) return;
+    if (generation != _generation || !_sessionActive) return false;
 
     try {
       await _speech.listen(
@@ -246,6 +248,7 @@ class SpeechService {
         _onResult = null;
         debugPrint('⚠️ [SpeechService] native recognizer did not start');
       }
+      return _lastStartedGeneration == generation;
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
       if (generation == _generation) {
@@ -255,6 +258,7 @@ class SpeechService {
         _onResult = null;
         _available = false;
       }
+      return false;
     }
   }
 
