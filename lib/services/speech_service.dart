@@ -28,6 +28,7 @@ class SpeechService {
   int _generation = 0;
 
   bool get isListening => _speech.isListening;
+  bool get hasActiveRecognition => _engineStarted && _sessionActive;
   bool get isAvailable => _available;
   bool get isReady => _available;
   String get lastText => _lastText;
