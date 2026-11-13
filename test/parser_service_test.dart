@@ -37,6 +37,33 @@ void main() {
       expect(result.items, 'بضاعة');
     });
 
+    test('parses item after an amount written in Arabic words', () {
+      final result = ParserService.parsePartial('سجل على أحمد خمسة آلاف بضاعة');
+      expect(result.intent, 'debt');
+      expect(result.customerName, 'أحمد');
+      expect(result.amount, 5000);
+      expect(result.items, 'بضاعة');
+    });
+
+    test('parses item after a multi-part Arabic word amount', () {
+      final result = ParserService.parsePartial(
+        'سجل على أحمد خمسة آلاف ومئتين قطع غيار',
+      );
+      expect(result.intent, 'debt');
+      expect(result.customerName, 'أحمد');
+      expect(result.amount, 5200);
+      expect(result.items, 'قطع غيار');
+    });
+
+    test('keeps item when amount and item are supplied in a follow-up answer', () {
+      final result = ParserService.parsePartial(
+        'خمسة آلاف بضاعة',
+        expecting: 'amount',
+      );
+      expect(result.amount, 5000);
+      expect(result.items, 'بضاعة');
+    });
+
     test('recognizes add-account intent when the user has not said a name yet', () {
       final result = ParserService.parsePartial('أضف حساب');
       expect(result.intent, 'add_account');
