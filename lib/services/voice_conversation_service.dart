@@ -515,7 +515,9 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeBlock(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final changed = await DatabaseHelper.instance.setCustomerActive(customer.id!, false);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر إيقاف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
@@ -525,7 +527,9 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeUnblock(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final changed = await DatabaseHelper.instance.setCustomerActive(customer.id!, true);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر تفعيل الحساب');
     session.markCompleted();
     return VoiceConversationResult(
@@ -535,10 +539,12 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeSetLimit(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final changed = await DatabaseHelper.instance.updateCustomerFields(
       customer.id!,
       {'max_balance': session.amount},
     );
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر تحديد سقف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
@@ -555,10 +561,12 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeRemoveLimit(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final changed = await DatabaseHelper.instance.updateCustomerFields(
       customer.id!,
       {'max_balance': null},
     );
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر إلغاء سقف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
@@ -606,9 +614,11 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeDelete(VoiceSession session) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (session.matchedCustomer == null) return _fail('لم يتم تحديد الحساب');
     final customer = Customer.fromMap(session.matchedCustomer!);
     final changed = await DatabaseHelper.instance.softDeleteCustomer(customer.id!);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر حذف الحساب');
     session.markCompleted();
     return VoiceConversationResult(
@@ -633,10 +643,12 @@ class VoiceConversationService {
       return _fail('يوجد حساب آخر بهذا الاسم بالفعل');
     }
 
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final changed = await DatabaseHelper.instance.updateCustomerFields(
       customer.id!,
       {'name': normalizedName},
     );
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (changed <= 0) return _fail('تعذر تغيير اسم الحساب');
 
     session.markCompleted();
