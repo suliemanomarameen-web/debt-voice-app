@@ -403,71 +403,74 @@ void _startSTTInMain() async {
       VoiceConversationService.startSession(source: 'overlay_main');
     }
 
-    final listenHandler = (String text, bool isFinal) async {
-      if (isFinal) {
-        await _globalSpeech.stop();
-        final finalText = text.trim();
+    Future<void> handleConversationInput(String rawText) async {
+      if (_userCancelled) {
+        _userCancelled = false;
+        return;
+      }
 
-        if (_userCancelled) {
-          _userCancelled = false;
-          return;
-        }
-
-        if (finalText.isEmpty || finalText == '__EMPTY__') {
-          await LoggerService.devInfo(
-              'main', 'Empty result — restarting listen');
-          await Future.delayed(const Duration(milliseconds: 300));
-          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
-          _startSTTInMain();
-          return;
-        }
-
+      final finalText = rawText.trim();
+      if (finalText.isNotEmpty && finalText != '__EMPTY__') {
         await LoggerService.devInfo('main', 'STT result: "$finalText"');
         FlutterOverlayWindow.shareData(
             {'action': 'stt_result', 'text': finalText});
-
-        if (_isCancelCommand(finalText)) {
-          await LoggerService.devInfo('main', 'Cancel command detected');
-          VoiceConversationService.cancelSession();
-          await TtsService.speak(VoicePromptsService.getResponse(
-              VoicePromptsService.rCancelled));
-          FlutterOverlayWindow.shareData(
-              {'action': 'stt_result', 'text': 'cancelled'});
-          return;
-        }
-
-        try {
-          final result =
-              await VoiceConversationService.processText(finalText);
-          await LoggerService.devInfo(
-              'main', 'VoiceConversationResult: ${result.step.name}');
-
-          if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
-            await TtsService.speak(result.ttsMessage!);
-          }
-
-          if (result.startListening) {
-            await Future.delayed(const Duration(milliseconds: 500));
-            _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
-            _startSTTInMain();
-          } else if (result.targetScreen != null) {
-            await _handleVoiceTargetScreen(result);
-          } else {
-            VoiceConversationService.cancelSession();
-          }
-        } catch (e) {
-          await LoggerService.devError('main', 'processText error: $e');
-          await Future.delayed(const Duration(milliseconds: 500));
-          _sttStarting = false; // إعادة تصفير الحماية للاستدعاء التالي
-          _startSTTInMain();
-        }
+      } else {
+        await LoggerService.devInfo(
+            'main', 'Genuine silence/no-match — count as one dialog attempt');
       }
+
+      if (finalText.isNotEmpty && _isCancelCommand(finalText)) {
+        await LoggerService.devInfo('main', 'Cancel command detected');
+        VoiceConversationService.cancelSession();
+        await TtsService.speak(VoicePromptsService.getResponse(
+            VoicePromptsService.rCancelled));
+        FlutterOverlayWindow.shareData(
+            {'action': 'stt_result', 'text': 'cancelled'});
+        return;
+      }
+
+      try {
+        final result =
+            await VoiceConversationService.processText(finalText);
+        await LoggerService.devInfo(
+            'main', 'VoiceConversationResult: ${result.step.name}');
+
+        if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
+          // TTS completion is awaited before another microphone session starts.
+          await TtsService.speak(result.ttsMessage!);
+        }
+
+        if (result.startListening) {
+          await Future.delayed(const Duration(milliseconds: 350));
+          _sttStarting = false;
+          _startSTTInMain();
+        } else if (result.targetScreen != null) {
+          await _handleVoiceTargetScreen(result);
+        } else {
+          VoiceConversationService.cancelSession();
+          FlutterOverlayWindow.shareData(
+              {'action': 'stt_result', 'text': 'conversation_finished'});
+        }
+      } catch (e) {
+        await LoggerService.devError('main', 'processText error: $e');
+        VoiceConversationService.cancelSession();
+        await TtsService.speak('حدث خطأ أثناء معالجة الأمر، حاول مرة أخرى');
+      }
+    }
+
+    final listenHandler = (String text, bool isFinal) async {
+      if (!isFinal) return;
+      await _globalSpeech.stop();
+      await handleConversationInput(text);
     };
 
     await _globalSpeech.listen(
       listenFor: const Duration(minutes: 5),
       pauseFor: const Duration(seconds: 5),
       onResult: listenHandler,
+      onSilence: () async {
+        await handleConversationInput('');
+      },
     );
 
     // 🆕 إصلاح مشكلة أول تثبيت: إذا لم يبدأ المحرك فعلياً بعد 800 مللي ثانية، نعيد التهيئة والمحاولة
