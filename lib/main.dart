@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'handlers/overlay_handler.dart';
 import 'screens/add_account_screen.dart';
 import 'screens/duplicates_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/overlay_widget.dart';
 import 'screens/stats_screen.dart';
-import 'screens/voice_screen.dart';
 import 'services/accountants_service.dart';
 import 'services/audio_recorder_service.dart';
 import 'services/auto_backup_service.dart';
@@ -482,7 +480,6 @@ void _startSTTInMain() async {
         final result =
             await VoiceConversationService.processText(finalText);
         if (generation != _mainSttGeneration ||
-            processingSession == null ||
             !identical(VoiceConversationService.currentSession, processingSession)) {
           return;
         }
