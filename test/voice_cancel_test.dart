@@ -37,6 +37,32 @@ void main() {
     });
   });
 
+
+    test('keeps conversations isolated by source', () {
+      final screenSession = VoiceConversationService.startSession(source: 'voice_screen');
+      final overlaySession = VoiceConversationService.startSession(source: 'overlay_main');
+
+      expect(VoiceConversationService.sessionFor('voice_screen'), same(screenSession));
+      expect(VoiceConversationService.sessionFor('overlay_main'), same(overlaySession));
+
+      VoiceConversationService.cancelSession(source: 'overlay_main');
+
+      expect(VoiceConversationService.sessionFor('overlay_main'), isNull);
+      expect(VoiceConversationService.sessionFor('voice_screen'), same(screenSession));
+      expect(VoiceConversationService.hasActiveSessionFor('voice_screen'), isTrue);
+    });
+
+    test('voice cancellation only cancels the matching source', () {
+      final screenSession = VoiceConversationService.startSession(source: 'voice_screen');
+      VoiceConversationService.startSession(source: 'overlay_main');
+
+      final result = VoiceConversationService.cancelFromVoice(source: 'overlay_main');
+
+      expect(result.ttsMessage, 'تم إلغاء العملية');
+      expect(VoiceConversationService.sessionFor('overlay_main'), isNull);
+      expect(VoiceConversationService.sessionFor('voice_screen'), same(screenSession));
+    });
+
   group('Voice session retry state', () {
     test('counts empty attempts separately for the requested field', () {
       final session = VoiceSession()..expectingField = 'items';
