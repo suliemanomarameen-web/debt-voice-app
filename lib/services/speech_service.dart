@@ -94,7 +94,8 @@ class SpeechService {
           // one of the user's three dialog attempts.
           if (e.errorMsg == 'error_no_match' ||
               e.errorMsg == 'error_speech_timeout') {
-            if (_engineStarted) _deliverSilence(_generation);
+            // The status callback owns end-of-speech delivery. Error callbacks
+            // have no session token and can arrive late from a previous owner.
           } else if (e.errorMsg != 'error_client') {
             _available = false;
           }
