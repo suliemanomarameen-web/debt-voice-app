@@ -72,8 +72,8 @@ class VoiceConversationResult {
 
 /// 🆕 خدمة الحوار الصوتي التفاعلي
 class VoiceConversationService {
-  static VoiceSession? _session;
-  static List<Customer> _lastCandidates = [];
+  static final Map<String, VoiceSession> _sessions = {};
+  static final Map<String, List<Customer>> _candidatesBySource = {};
 
   // ═══════════════════════════════════════════════════════════
   // إدارة الجلسة
@@ -81,22 +81,23 @@ class VoiceConversationService {
 
   /// ابدأ جلسة جديدة
   static VoiceSession startSession({String source = 'voice_screen'}) {
-    _session = VoiceSession(source: source);
-    _lastCandidates = [];
+    final session = VoiceSession(source: source);
+    _sessions[source] = session;
+    _candidatesBySource.remove(source);
     debugPrint('🎤 [VoiceConv] Session started (source=$source)');
-    return _session!;
+    return session;
   }
 
-  static VoiceSession? get currentSession => _session;
-  static bool get hasActiveSession => _session != null;
-  static List<Customer> get lastCandidates =>
-      List<Customer>.unmodifiable(_lastCandidates);
-
-  /// ألغِ الجلسة (مسح كل شيء)
-  static void cancelSession() {
-    _session = null;
-    _lastCandidates = [];
-    debugPrint('🎤 [VoiceConv] Session cancelled');
+  static VoiceSession? sessionFor(String source) => _sessions[source];
+  static bool hasActiveSessionFor(String source) => _sessions.containsKey(source);
+  static List<Customer> candidatesFor(String source) => List<Customer>.unmodifiable(_candidatesBySource[source] ?? const []);
+  static VoiceSession? get currentSession => sessionFor('voice_screen');
+  static bool get hasActiveSession => hasActiveSessionFor('voice_screen');
+  static List<Customer> get lastCandidates => candidatesFor('voice_screen');
+  static void cancelSession({String source = 'voice_screen'}) {
+    _sessions.remove(source);
+    _candidatesBySource.remove(source);
+    debugPrint('🎤 [VoiceConv] Session cancelled (source=$source)');
   }
 
   /// التعرّف على أوامر الإلغاء قبل تحليل أي حقل حتى لا تُحفظ كلمة "إلغاء" كبيان.
@@ -113,8 +114,8 @@ class VoiceConversationService {
   }
 
   /// إلغاء الجلسة بالكامل وإرجاع رسالة واضحة دون حفظ أي بيانات.
-  static VoiceConversationResult cancelFromVoice() {
-    cancelSession();
+  static VoiceConversationResult cancelFromVoice({String source = 'voice_screen'}) {
+    cancelSession(source: source);
     return VoiceConversationResult(
       step: ConversationStep.failed,
       ttsMessage: 'تم إلغاء العملية',
@@ -125,12 +126,13 @@ class VoiceConversationService {
   static Future<VoiceConversationResult> processText(
     String text, {
     String? expecting,
+    String source = 'voice_screen',
   }) async {
     // يجب أن يسبق الإلغاء كل التحليلات، خصوصاً تحليل البيان وتأكيد الحذف.
-    if (isCancelCommand(text)) return cancelFromVoice();
+    if (isCancelCommand(text)) return cancelFromVoice(source: source);
 
-    if (_session == null) startSession();
-    final session = _session!;
+    if (!hasActiveSessionFor(source)) startSession(source: source);
+    final session = _sessions[source]!;
 
     if (session.isCompleted) {
       return _fail('الجلسة منتهية بالفعل');
@@ -182,7 +184,7 @@ class VoiceConversationService {
       }
 
       if (no.contains(answer)) {
-        cancelSession();
+        cancelSession(source: session.source);
         final message = prevExpecting == 'confirmAddAccount'
             ? 'تم إلغاء إضافة الحساب'
             : 'تم إلغاء الحذف';
@@ -199,7 +201,7 @@ class VoiceConversationService {
         defaultValue: 3,
       );
       if (session.attemptsFor(prevExpecting!) >= maxRounds) {
-        return _failAfterMaxAttempts();
+        return _failAfterMaxAttempts(session);
       }
 
       final message = prevExpecting == 'confirmAddAccount'
@@ -231,7 +233,7 @@ class VoiceConversationService {
         defaultValue: 3,
       );
       if (session.attemptsFor(prevExpecting) >= maxRounds) {
-        return _failAfterMaxAttempts();
+        return _failAfterMaxAttempts(session);
       }
     }
 
@@ -376,29 +378,30 @@ class VoiceConversationService {
   // اختيار مرشح من القائمة
   // ═══════════════════════════════════════════════════════════
 
-  static Future<VoiceConversationResult> selectCandidate(int index) async {
-    if (_session == null) return _fail('لا توجد جلسة نشطة');
-    if (index < 0 || index >= _lastCandidates.length) return _fail('اختيار غير صالح');
-
-    final chosen = _lastCandidates[index];
-    _session!.matchedCustomer = _customerToMap(chosen);
-    _session!.customerName = chosen.name;
-    _lastCandidates = [];
-    _session!.expectingField = null;
-    _session!.resetAttemptsFor('customerName');
+  static Future<VoiceConversationResult> selectCandidate(int index, {String source = 'voice_screen'}) async {
+    final session = _sessions[source];
+    final candidates = _candidatesBySource[source] ?? const <Customer>[];
+    if (session == null) return _fail('لا توجد جلسة نشطة');
+    if (index < 0 || index >= candidates.length) return _fail('اختيار غير صالح');
+    final chosen = candidates[index];
+    session.matchedCustomer = _customerToMap(chosen);
+    session.customerName = chosen.name;
+    _candidatesBySource.remove(source);
+    session.expectingField = null;
+    session.resetAttemptsFor('customerName');
 
     // إعادة توجيه التنفيذ حسب النية الحالية
-    switch (_session!.intent) {
-      case 'statement': return _executeStatement(_session!, chosen);
-      case 'block_account': return _executeBlock(_session!, chosen);
-      case 'unblock_account': return _executeUnblock(_session!, chosen);
-      case 'set_limit': return _executeSetLimit(_session!, chosen);
-      case 'remove_limit': return _executeRemoveLimit(_session!, chosen);
-      case 'print_statement': return _executePrint(_session!, chosen);
-      case 'send_statement': return _executeSend(_session!, chosen);
-      case 'last_transaction': return _executeLastTransaction(_session!, chosen);
+    switch (session.intent) {
+      case 'statement': return _executeStatement(session, chosen);
+      case 'block_account': return _executeBlock(session, chosen);
+      case 'unblock_account': return _executeUnblock(session, chosen);
+      case 'set_limit': return _executeSetLimit(session, chosen);
+      case 'remove_limit': return _executeRemoveLimit(session, chosen);
+      case 'print_statement': return _executePrint(session, chosen);
+      case 'send_statement': return _executeSend(session, chosen);
+      case 'last_transaction': return _executeLastTransaction(session, chosen);
       case 'delete_customer':
-        _session!.expectingField = 'confirmDelete';
+        session.expectingField = 'confirmDelete';
         final msg = VoicePromptsService.getPrompt(
           VoicePromptsService.pConfirmDeleteCustomer,
           vars: {'name': chosen.name},
@@ -409,17 +412,17 @@ class VoiceConversationService {
           ttsMessage: msg,
           startListening: true,
         );
-      case 'edit_customer': return _executeEdit(_session!, chosen);
-      case 'rename_customer': return _askForField(_session!, 'renameTo');
+      case 'edit_customer': return _executeEdit(session, chosen);
+      case 'rename_customer': return _askForField(session, 'renameTo');
       default:
         final askItems = SettingsService.getBool(
           AppSettings.voiceAlwaysAskForItems,
           defaultValue: false,
         );
-        if (askItems && _session!.items == null) {
-          return _askForField(_session!, 'items');
+        if (askItems && session.items == null) {
+          return _askForField(session, 'items');
         }
-        return _saveTransaction(_session!, chosen);
+        return _saveTransaction(session, chosen);
     }
   }
 
@@ -427,9 +430,10 @@ class VoiceConversationService {
   // إضافة حساب جديد
   // ═══════════════════════════════════════════════════════════
 
-  static Future<VoiceConversationResult> addNewCustomer() async {
-    if (_session == null) return _fail('لا توجد جلسة نشطة');
-    return _addNewCustomer(_session!);
+  static Future<VoiceConversationResult> addNewCustomer({String source = 'voice_screen'}) async {
+    final session = _sessions[source];
+    if (session == null) return _fail('لا توجد جلسة نشطة');
+    return _addNewCustomer(session);
   }
 
   static Future<VoiceConversationResult> _addNewCustomer(VoiceSession session) async {
@@ -663,7 +667,7 @@ class VoiceConversationService {
     try {
       // Refuse to enter the persistence path if this is no longer the active
       // conversation. This also prevents stale async callbacks from saving.
-      if (!identical(_session, session) || session.isCompleted) {
+      if (!identical(_sessions[session.source], session) || session.isCompleted) {
         return VoiceConversationResult(
           step: ConversationStep.failed,
           ttsMessage: 'تم إلغاء العملية',
@@ -681,7 +685,7 @@ class VoiceConversationService {
       );
 
       // Capture the exact session object. If the user cancels while any
-      // asynchronous validation is running, _session becomes null and the
+      // asynchronous validation is running, the session is removed from its source and the
       // transaction handler will refuse the final database insert.
       final ok = await TransactionHandler.save(
         customer: customer,
@@ -690,11 +694,11 @@ class VoiceConversationService {
         source: session.source,
         audioPath: null,
         canCommit: () =>
-            identical(_session, session) && !session.isCompleted,
+            identical(_sessions[session.source], session) && !session.isCompleted,
       );
 
       if (!ok) {
-        if (!identical(_session, session)) {
+        if (!identical(_sessions[session.source], session)) {
           return VoiceConversationResult(
             step: ConversationStep.failed,
             ttsMessage: 'تم إلغاء العملية',
@@ -755,7 +759,7 @@ class VoiceConversationService {
     VoiceSession session,
     List<Customer> candidates,
   ) {
-    _lastCandidates = candidates;
+    _candidatesBySource[session.source] = candidates;
 
     final name = session.customerName ?? '';
 
@@ -793,7 +797,7 @@ class VoiceConversationService {
     };
     if (candidates.isEmpty && accountManagementIntents.contains(session.intent)) {
       final message = 'لا يوجد حساب باسم $name';
-      cancelSession();
+      cancelSession(source: session.source);
       return VoiceConversationResult(
         step: ConversationStep.failed,
         ttsMessage: message,
@@ -928,14 +932,14 @@ class VoiceConversationService {
     );
   }
 
-  static Future<VoiceConversationResult> _failAfterMaxAttempts() async {
+  static Future<VoiceConversationResult> _failAfterMaxAttempts(VoiceSession session) async {
     final maxRounds = SettingsService.getInt(
       AppSettings.voiceMaxConversationRounds,
       defaultValue: 3,
     );
 
     // لا نحفظ العمليات غير المكتملة ولا ننشئ سجلاً معلقاً عند فشل التعرف.
-    cancelSession();
+    cancelSession(source: session.source);
 
     final ttsMessage = VoicePromptsService.getResponse(
       VoicePromptsService.rUnknownMax,
