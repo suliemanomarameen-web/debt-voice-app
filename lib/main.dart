@@ -442,8 +442,14 @@ void _startSTTInMain() async {
       }
 
       try {
+        final processingSession = VoiceConversationService.currentSession;
         final result =
             await VoiceConversationService.processText(finalText);
+        if (generation != _mainSttGeneration ||
+            processingSession == null ||
+            !identical(VoiceConversationService.currentSession, processingSession)) {
+          return;
+        }
         await LoggerService.devInfo(
             'main', 'VoiceConversationResult: ${result.step.name}');
 
@@ -452,8 +458,17 @@ void _startSTTInMain() async {
           await TtsService.speak(result.ttsMessage!);
         }
 
+        if (generation != _mainSttGeneration ||
+            !identical(VoiceConversationService.currentSession, processingSession)) {
+          return;
+        }
+
         if (result.startListening) {
           await Future.delayed(const Duration(milliseconds: 350));
+          if (generation != _mainSttGeneration ||
+              !identical(VoiceConversationService.currentSession, processingSession)) {
+            return;
+          }
           _sttStarting = false;
           _startSTTInMain();
         } else if (result.targetScreen != null) {
