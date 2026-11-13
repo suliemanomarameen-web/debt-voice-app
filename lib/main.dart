@@ -584,7 +584,8 @@ void _startSTTInMain() async {
         'action': 'stt_result',
         'text': '__ERROR__',
       });
-      VoiceConversationService.cancelSession(source: 'overlay_main');
+      // احتفظ بجلسة الحوار عند فشل فتح الميكروفون؛ فشل البدء ليس
+      // إجابة غير مفهومة ولا ينبغي أن يلغي الحقول التي جمعها المستخدم.
     }
 
     // لا نعيد تهيئة المحرك تلقائياً عند فشل بدء الالتقاط؛ إعادة المحاولة
