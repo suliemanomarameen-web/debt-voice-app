@@ -404,7 +404,11 @@ void _startSTTInMain() async {
     _userCancelled = false;
     await LoggerService.devInfo('main', 'Starting STT in main isolate');
 
-    if (!VoiceConversationService.hasActiveSession) {
+    final activeSession = VoiceConversationService.currentSession;
+    if (activeSession == null || activeSession.source != 'overlay_main') {
+      // Notification/overlay input must not inherit a pending VoiceScreen
+      // dialog. Each UI source owns its own conversation lifecycle.
+      VoiceConversationService.cancelSession();
       VoiceConversationService.startSession(source: 'overlay_main');
     }
 
