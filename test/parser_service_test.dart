@@ -77,6 +77,7 @@ void main() {
       expect(result.customerName, 'أحمد');
       expect(result.fromDate, DateTime(2026, 11, 1));
       expect(result.toDate, DateTime(2026, 11, 13));
+      expect(result.amount, isNull, reason: 'Date numbers must not be treated as transaction amounts');
     });
 
     test('parses ISO date range with Arabic digits', () {
