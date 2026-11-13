@@ -326,14 +326,34 @@ class _BootstrapAppState extends State<BootstrapApp> {
       try {
         final prefs = await SharedPreferences.getInstance();
         if (prefs.getBool('pending_stt_start') == true) {
+          final requestedAt = prefs.getInt('pending_stt_start_at');
+          final age = requestedAt == null
+              ? null
+              : DateTime.now().millisecondsSinceEpoch - requestedAt;
+          final isFresh = age != null && age >= 0 && age <= 30000;
           await prefs.setBool('pending_stt_start', false);
-          await LoggerService.devInfo('main', 'Poll: pending_stt_start → _startSTTInMain');
-          _startSTTInMain();
+          await prefs.remove('pending_stt_start_at');
+          if (isFresh) {
+            await LoggerService.devInfo('main', 'Fresh pending_stt_start → _startSTTInMain');
+            _startSTTInMain();
+          } else {
+            await LoggerService.devWarn('main', 'Ignored stale pending_stt_start');
+          }
         }
         if (prefs.getBool('pending_stt_cancel') == true) {
+          final requestedAt = prefs.getInt('pending_stt_cancel_at');
+          final age = requestedAt == null
+              ? null
+              : DateTime.now().millisecondsSinceEpoch - requestedAt;
+          final isFresh = age != null && age >= 0 && age <= 30000;
           await prefs.setBool('pending_stt_cancel', false);
-          await LoggerService.devInfo('main', 'Poll: pending_stt_cancel → _cancelSTTInMain');
-          _cancelSTTInMain();
+          await prefs.remove('pending_stt_cancel_at');
+          if (isFresh) {
+            await LoggerService.devInfo('main', 'Fresh pending_stt_cancel → _cancelSTTInMain');
+            _cancelSTTInMain();
+          } else {
+            await LoggerService.devWarn('main', 'Ignored stale pending_stt_cancel');
+          }
         }
       } catch (_) {}
     });
