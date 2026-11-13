@@ -503,7 +503,9 @@ void _startSTTInMain() async {
 void _stopSTTInMain() async {
   await LoggerService.devInfo('main', 'Stopping STT (temporary pause)');
   try {
-    await _globalSpeech.stop();
+    // رفع الإصبع يوقف الالتقاط الحالي مع السماح بتسليم الكلام الذي قيل،
+    // ولا يُعامل كإلغاء للحوار أو كصمت مصطنع.
+    await _globalSpeech.stop(suppressCallbacks: false);
   } catch (e) {
     await LoggerService.devError('main', 'STT stop error: $e');
   }
