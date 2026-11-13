@@ -48,6 +48,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   VoiceConversationResult? _lastResult;
   List<Customer> _candidates = [];
   bool _sessionCompleted = false;
+  int _listenGeneration = 0;
 
   // ─── خطأ ───
   String? _errorMessage;
@@ -66,6 +67,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   @override
   void dispose() {
+    _listenGeneration++;
     _audioService.stopPlayback();
     VoiceConversationService.cancelSession();
     super.dispose();
@@ -93,11 +95,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
 
     if (_listening) {
+      // إيقاف المستخدم صريح: لا نرسل صمتاً للحوار ولا نسمح لنتيجة متأخرة
+      // من جلسة الشاشة بأن تغيّر حالة الواجهة أو تنفّذ أمراً.
+      _listenGeneration++;
       await _speech.stop();
-      setState(() => _listening = false);
+      if (mounted) setState(() => _listening = false);
       return;
     }
 
+    final generation = ++_listenGeneration;
     setState(() {
       _text = '';
       _errorMessage = null;
@@ -109,20 +115,20 @@ class _VoiceScreenState extends State<VoiceScreen> {
     await _speech.listen(
       pauseFor: const Duration(seconds: 3),
       onSilence: () {
-        if (!mounted) return;
+        if (!mounted || generation != _listenGeneration) return;
         setState(() => _listening = false);
         if (VoiceConversationService.hasActiveSession) {
           _processConversation('');
         }
       },
       onResult: (text, isFinal) {
-        if (!mounted) return;
+        if (!mounted || generation != _listenGeneration) return;
         setState(() => _text = text);
         if (isFinal) {
           setState(() => _listening = false);
 
-          // إذا انتهت مهلة الصمت أثناء سؤال من أسئلة الحوار، نعيد معالجة
-          // الإجابة الفارغة ليُعاد السؤال وتُحتسب محاولة غير مفهومة.
+          // الصمت هنا صادر عن نهاية استماع حقيقية فقط؛ الإيقاف اليدوي
+          // يلغي generation ويمنع الوصول إلى هذا المسار.
           if (text.trim().isEmpty) {
             if (VoiceConversationService.hasActiveSession) {
               _processConversation('');
