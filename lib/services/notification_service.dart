@@ -68,12 +68,14 @@ class NotificationService {
     await androidImpl?.requestNotificationsPermission();
   }
 
-  static void _handleResponse(NotificationResponse resp) {
+  static Future<void> _handleResponse(NotificationResponse resp) async {
     final payload = resp.payload ?? '';
     final actionId = resp.actionId;
 
+    // Persist the launch action before dispatching it. The main isolate may
+    // consume this flag during startup, so fire-and-forget caused a race.
     if (actionId != null && actionId.isNotEmpty) {
-      _writeFlagForAction(actionId);
+      await _writeFlagForAction(actionId);
     }
 
     if (actionId != null &&
