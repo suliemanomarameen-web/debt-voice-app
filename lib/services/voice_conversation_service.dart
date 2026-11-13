@@ -88,6 +88,9 @@ class VoiceConversationService {
     return session;
   }
 
+  static bool _isCurrentSession(VoiceSession session) =>
+      identical(_sessions[session.source], session) && !session.isCompleted;
+
   static VoiceSession? sessionFor(String source) => _sessions[source];
   static bool hasActiveSessionFor(String source) => _sessions.containsKey(source);
   static List<Customer> candidatesFor(String source) => List<Customer>.unmodifiable(_candidatesBySource[source] ?? const []);
@@ -145,6 +148,7 @@ class VoiceConversationService {
       try {
         if (QueryService.isQuery(text)) {
           final qResult = await QueryService.query(text);
+          if (!_isCurrentSession(session)) return _cancelledResult();
           session.markCompleted();
           return VoiceConversationResult(
             step: ConversationStep.saved,
@@ -310,6 +314,7 @@ class VoiceConversationService {
     Customer? customer;
     if (session.hasCustomer) {
       final found = await _findCustomerWithCandidates(session.customerName!);
+      if (!_isCurrentSession(session)) return _cancelledResult();
       if (found.$1 == null) {
         return _handleUnknownCustomer(session, found.$2);
       }
@@ -437,19 +442,23 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _addNewCustomer(VoiceSession session) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final name = session.customerName;
     if (name == null || name.trim().isEmpty) return _fail('اسم الحساب غير معروف');
 
     try {
       final db = DatabaseHelper.instance;
       final existing = await db.findAllByExactName(name.trim());
+      if (!_isCurrentSession(session)) return _cancelledResult();
       if (existing.isNotEmpty) {
         return _handleUnknownCustomer(session, existing);
       }
 
       final accountant = await AccountantService.getAccountantName();
+      if (!_isCurrentSession(session)) return _cancelledResult();
       final now = DateTime.now().toIso8601String();
 
+      if (!_isCurrentSession(session)) return _cancelledResult();
       final customerId = await db.insertCustomer(Customer(
         name: name.trim(),
         accountType: session.accountType,
@@ -459,10 +468,14 @@ class VoiceConversationService {
         createdAt: now,
       ));
 
+      if (!_isCurrentSession(session)) return _cancelledResult();
       final newCustomer = await db.getCustomer(customerId);
+      if (!_isCurrentSession(session)) return _cancelledResult();
       if (newCustomer == null) return _fail('فشل إنشاء الحساب');
 
+      if (!_isCurrentSession(session)) return _cancelledResult();
       await LoggerService.logCustomerAdded(newCustomer.name, accountant: accountant);
+      if (!_isCurrentSession(session)) return _cancelledResult();
       session.markCompleted();
       
       return VoiceConversationResult(
@@ -484,8 +497,10 @@ class VoiceConversationService {
   // ═══════════════════════════════════════════════════════════
 
   static Future<VoiceConversationResult> _executeStatement(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final db = DatabaseHelper.instance;
     final balance = await db.customerBalance(customer.id!);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final String tts;
     
     if (balance > 0) {
@@ -573,8 +588,10 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executeLastTransaction(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     final db = DatabaseHelper.instance;
     final txList = await db.customerTransactions(customer.id!);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (txList.isEmpty) {
       session.markCompleted();
       return VoiceConversationResult(step: ConversationStep.saved, ttsMessage: 'لا توجد عمليات لهذا الحساب');
@@ -611,6 +628,7 @@ class VoiceConversationService {
     }
 
     final matches = await DatabaseHelper.instance.findAllByExactName(normalizedName);
+    if (!_isCurrentSession(session)) return _cancelledResult();
     if (matches.any((item) => item.id != customer.id)) {
       return _fail('يوجد حساب آخر بهذا الاسم بالفعل');
     }
@@ -667,7 +685,7 @@ class VoiceConversationService {
     try {
       // Refuse to enter the persistence path if this is no longer the active
       // conversation. This also prevents stale async callbacks from saving.
-      if (!identical(_sessions[session.source], session) || session.isCompleted) {
+      if (!_isCurrentSession(session)) {
         return VoiceConversationResult(
           step: ConversationStep.failed,
           ttsMessage: 'تم إلغاء العملية',
@@ -694,7 +712,7 @@ class VoiceConversationService {
         source: session.source,
         audioPath: null,
         canCommit: () =>
-            identical(_sessions[session.source], session) && !session.isCompleted,
+            _isCurrentSession(session),
       );
 
       if (!ok) {
@@ -924,6 +942,12 @@ class VoiceConversationService {
   // ═══════════════════════════════════════════════════════════
   // حالات الفشل
   // ═══════════════════════════════════════════════════════════
+
+  static VoiceConversationResult _cancelledResult() => VoiceConversationResult(
+        step: ConversationStep.failed,
+        ttsMessage: 'تم إلغاء العملية',
+        errorMessage: 'تم إلغاء العملية',
+      );
 
   static VoiceConversationResult _fail(String error) {
     return VoiceConversationResult(
