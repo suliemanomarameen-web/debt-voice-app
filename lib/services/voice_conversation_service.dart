@@ -125,9 +125,9 @@ class VoiceConversationService {
   /// تطبيع ردود التأكيد الصوتية حتى لا تُرفض بسبب علامات الترقيم أو التشكيل.
   static String _normalizeConfirmationAnswer(String text) {
     return text
-        .replaceAll(RegExp(r'[\\u064B-\\u065F\\u0670]'), '')
+        .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
         .replaceAll(RegExp(r'[،,.!؟?:;؛"“”]+'), ' ')
-        .replaceAll(RegExp(r'\\s+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
         .trim()
         .toLowerCase();
   }
@@ -141,8 +141,24 @@ class VoiceConversationService {
     };
     if (exactAnswers.contains(answer)) return true;
     return RegExp(
-      r'^(?:نعم|ايوه|أيوه|اي|أجل|اجل|أكيد|اكيد|موافق|تمام)'
-      r'\\s+(?:أضف|اضف|احذف|احذف الحساب|نفذ|نفّذ|أكمل|اكمل|الحساب|الحذف)
+      r'^(?:نعم|ايوه|أيوه|اي|أجل|اجل|أكيد|اكيد|موافق|تمام)\s+(?:أضف|اضف|احذف|احذف الحساب|نفذ|نفّذ|أكمل|اكمل|الحساب|الحذف)$',
+    ).hasMatch(answer);
+  }
+
+  /// قبول إجابات الرفض الواضحة فقط في تأكيد الإضافة والحذف.
+  static bool isNegativeConfirmation(String text) {
+    final answer = _normalizeConfirmationAnswer(text);
+    const exactAnswers = {
+      'لا', 'كلا', 'مش', 'لا تضف', 'لا تضيف', 'غير موافق',
+      'no', 'nope',
+    };
+    return exactAnswers.contains(answer) ||
+        RegExp(r'^(?:لا|كلا)\s+(?:تحذف|تحذف الحساب|تضف|تضيف|تنفذ|تكمل)$')
+            .hasMatch(answer);
+  }
+
+  /// إلغاء الجلسة بالكامل وإرجاع رسالة واضحة دون حفظ أي بيانات.
+  static VoiceConversationResult cancelFromVoice({String source = 'voice_screen'}) {
     cancelSession(source: source);
     return VoiceConversationResult(
       step: ConversationStep.failed,
