@@ -628,10 +628,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // اختيار مرشح
   // ═══════════════════════════════════════════════════════════
   Future<void> _selectCandidate(int index) async {
+    final operationGeneration = _listenGeneration;
+    final ownedSession = VoiceConversationService.sessionFor('voice_screen');
+    if (ownedSession == null || ownedSession.source != 'voice_screen') return;
+
     setState(() => _isProcessing = true);
 
     final result = await VoiceConversationService.selectCandidate(index, source: 'voice_screen');
-    if (!mounted) return;
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
@@ -646,20 +653,37 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      // Do not let a delayed candidate callback reclaim the shared microphone
+      // after the user stopped this screen or another source took ownership.
+      if (mounted &&
+          operationGeneration == _listenGeneration &&
+          identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
     if (result.step == ConversationStep.saved) _onSaved(result);
     if (result.step == ConversationStep.failed) _onFailed(result);
   }
 
   Future<void> _addNewCustomer() async {
+    final operationGeneration = _listenGeneration;
+    final ownedSession = VoiceConversationService.sessionFor('voice_screen');
+    if (ownedSession == null || ownedSession.source != 'voice_screen') return;
+
     setState(() => _isProcessing = true);
 
     final result = await VoiceConversationService.addNewCustomer(source: 'voice_screen');
-    if (!mounted) return;
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
@@ -674,11 +698,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      if (mounted &&
+          operationGeneration == _listenGeneration &&
+          identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
+    if (!mounted ||
+        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      return;
+    }
     if (result.step == ConversationStep.saved) _onSaved(result);
     if (result.step == ConversationStep.failed) _onFailed(result);
   }
