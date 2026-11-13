@@ -323,10 +323,20 @@ class _VoiceScreenState extends State<VoiceScreen> {
       } catch (_) {}
     }
 
+    // If another source cancelled/replaced this conversation while TTS was
+    // speaking, do not reopen the microphone for the obsolete screen session.
+    if (!mounted ||
+        !identical(VoiceConversationService.currentSession, ownedSession)) {
+      return;
+    }
+
     // بدء التسجيل تلقائيًا للسؤال التالي
-    if (result.startListening && mounted) {
+    if (result.startListening) {
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _toggleSpeech();
+      if (mounted &&
+          identical(VoiceConversationService.currentSession, ownedSession)) {
+        _toggleSpeech();
+      }
     }
 
     // نجاح
