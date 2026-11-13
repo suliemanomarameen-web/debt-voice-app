@@ -23,6 +23,7 @@ class SpeechService {
   bool _silenceDelivered = false;
   bool _suppressCallbacks = false;
   bool _sessionActive = false;
+  bool _engineStarted = false;
   int _generation = 0;
 
   bool get isListening => _speech.isListening;
@@ -42,7 +43,10 @@ class SpeechService {
     }
     _silenceDelivered = true;
     _sessionActive = false;
-    _onSilence?.call();
+    final callback = _onSilence;
+    _onSilence = null;
+    _onResult = null;
+    callback?.call();
   }
 
   void _deliverFinalText(String text, int generation) {
@@ -60,7 +64,10 @@ class SpeechService {
     _lastText = value;
     _finalResultDelivered = true;
     _sessionActive = false;
-    _onResult?.call(value, true);
+    final callback = _onResult;
+    _onSilence = null;
+    _onResult = null;
+    callback?.call(value, true);
   }
 
   Future<bool> init() async {
@@ -80,17 +87,22 @@ class SpeechService {
       _available = await _speech.initialize(
         onError: (e) {
           debugPrint('STT Error: ${e.errorMsg}');
-          if (e.errorMsg == 'error_no_match' ||
-              e.errorMsg == 'error_speech_timeout') {
-            _deliverSilence(_generation);
-          } else if (e.errorMsg != 'error_client') {
+          // Do not count an error as user silence unless the native engine
+          // actually entered listening state. The status callback below will
+          // deliver a genuine end-of-speech once, if applicable.
+          if (e.errorMsg != 'error_no_match' &&
+              e.errorMsg != 'error_speech_timeout' &&
+              e.errorMsg != 'error_client') {
             _available = false;
           }
         },
         onStatus: (status) {
           debugPrint('STT Status: $status');
+          if (status == 'listening') {
+            _engineStarted = true;
+          }
           if (status == 'done' || status == 'notListening') {
-            if (_suppressCallbacks || !_sessionActive) return;
+            if (_suppressCallbacks || !_sessionActive || !_engineStarted) return;
             if (_lastText.isEmpty) {
               _deliverSilence(_generation);
             } else {
@@ -116,6 +128,7 @@ class SpeechService {
   Future<void> reset() async {
     _generation++;
     _sessionActive = false;
+    _engineStarted = false;
     _suppressCallbacks = true;
     _onSilence = null;
     _onResult = null;
@@ -153,6 +166,7 @@ class SpeechService {
     _silenceDelivered = false;
     _suppressCallbacks = false;
     _sessionActive = true;
+    _engineStarted = false;
 
     await Future.delayed(const Duration(milliseconds: 120));
     if (generation != _generation || !_sessionActive) return;
@@ -179,10 +193,25 @@ class SpeechService {
         },
         onSoundLevelChange: (level) {},
       );
+      // Some Android devices return from listen() without opening the native
+      // recognizer. Do not convert that startup failure into a silence retry.
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (generation == _generation &&
+          _sessionActive &&
+          !_speech.isListening &&
+          !_engineStarted) {
+        _sessionActive = false;
+        _onSilence = null;
+        _onResult = null;
+        debugPrint('⚠️ [SpeechService] native recognizer did not start');
+      }
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
       if (generation == _generation) {
         _sessionActive = false;
+        _engineStarted = false;
+        _onSilence = null;
+        _onResult = null;
         _available = false;
       }
     }
@@ -195,6 +224,7 @@ class SpeechService {
     if (suppressCallbacks) {
       _suppressCallbacks = true;
       _sessionActive = false;
+      _engineStarted = false;
     }
     try {
       await _speech.stop();
@@ -207,6 +237,7 @@ class SpeechService {
     _generation++;
     _suppressCallbacks = true;
     _sessionActive = false;
+    _engineStarted = false;
     _onSilence = null;
     _onResult = null;
     try {
