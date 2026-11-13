@@ -116,7 +116,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _listening = true;
     });
 
-    await _speech.listen(
+    final started = await _speech.listen(
       pauseFor: const Duration(seconds: 3),
       onSilence: () {
         if (!mounted || generation != _listenGeneration) return;
@@ -143,6 +143,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
         }
       },
     );
+    if (!started && mounted && generation == _listenGeneration) {
+      setState(() {
+        _listening = false;
+        _errorMessage = 'تعذر بدء الاستماع. تحقق من إذن الميكروفون وخدمة التعرف على الكلام.';
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -295,8 +301,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
       VoiceConversationService.startSession(source: 'voice_screen');
     }
 
+    final ownedSession = VoiceConversationService.currentSession;
     final result = await VoiceConversationService.processText(text);
-    if (!mounted) return;
+    if (!mounted ||
+        ownedSession == null ||
+        !identical(VoiceConversationService.currentSession, ownedSession)) {
+      return;
+    }
 
     setState(() {
       _lastResult = result;
