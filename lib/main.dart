@@ -105,8 +105,11 @@ class _BootstrapAppState extends State<BootstrapApp> {
       final prefs = await SharedPreferences.getInstance();
       final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
       final requestedAt = prefs.getInt('pending_overlay_record_at');
-      final requestIsFresh = requestedAt != null &&
-          DateTime.now().millisecondsSinceEpoch - requestedAt <= 120000;
+      final requestAge = requestedAt == null
+          ? null
+          : DateTime.now().millisecondsSinceEpoch - requestedAt;
+      final requestIsFresh =
+          requestAge != null && requestAge >= 0 && requestAge <= 120000;
       // Old/stale flags (including flags written by older app versions) must
       // never open the microphone on an ordinary app launch.
       await prefs.setBool('pending_overlay_record', false);
