@@ -4,7 +4,11 @@ import 'voice_prompts_service.dart';
 class TtsService {
   static final FlutterTts _tts = FlutterTts();
   static bool _initialized = false;
+  static bool _speaking = false;
   static String? _arabicVoice;
+
+  /// True while the application is speaking; STT must not capture this audio.
+  static bool get isSpeaking => _speaking;
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -45,15 +49,24 @@ class TtsService {
   static Future<void> speak(String text) async {
     if (text.isEmpty) return;
     if (!_initialized) await init();
+    _speaking = true;
     try {
       await _tts.stop();
       await _tts.speak(text);
     } catch (e) {
       print('TTS speak error: $e');
+    } finally {
+      _speaking = false;
     }
   }
 
-  static Future<void> stop() async => _tts.stop();
+  static Future<void> stop() async {
+    try {
+      await _tts.stop();
+    } finally {
+      _speaking = false;
+    }
+  }
 
   // ============================================================
   // تحويل الأرقام إلى كلمات عربية مشكّلة
