@@ -476,7 +476,7 @@ void _startSTTInMain() async {
       await handleConversationInput(text);
     };
 
-    await _globalSpeech.listen(
+    final started = await _globalSpeech.listen(
       listenFor: const Duration(minutes: 5),
       pauseFor: const Duration(seconds: 5),
       onResult: listenHandler,
@@ -486,8 +486,10 @@ void _startSTTInMain() async {
       },
     );
 
+    if (generation != _mainSttGeneration) return;
+
     // أعلن بدء التسجيل فقط بعد أن يؤكد محرك Android فتح جلسة الاستماع.
-    if (_globalSpeech.hasActiveRecognition) {
+    if (started && _globalSpeech.hasActiveRecognition) {
       FlutterOverlayWindow.shareData({'action': 'stt_started'});
     } else {
       await LoggerService.devWarn(
