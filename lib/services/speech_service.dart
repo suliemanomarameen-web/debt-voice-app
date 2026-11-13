@@ -292,14 +292,17 @@ class SpeechService {
   /// are suppressed. The overlay's push-to-talk release passes false so the
   /// final recognized words can still be delivered.
   Future<void> stop({bool suppressCallbacks = true}) async {
-    if (suppressCallbacks) {
-      // Invalidate a listen request that is still waiting for TTS/init/startup.
-      // Otherwise the microphone could open after the user has pressed Stop.
-      _listenRequestGeneration++;
+    // Invalidate a listen request that is still waiting for TTS/init/startup.
+    // A push-to-talk release may preserve final callbacks only if the native
+    // recognizer had actually started; otherwise it must not open afterwards.
+    _listenRequestGeneration++;
+    if (suppressCallbacks || !_engineStarted) {
       _generation++;
       _suppressCallbacks = true;
       _sessionActive = false;
       _engineStarted = false;
+      _onSilence = null;
+      _onResult = null;
     }
     try {
       await _speech.stop();
