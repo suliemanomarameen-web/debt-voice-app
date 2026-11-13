@@ -56,6 +56,24 @@ void main() {
       expect(result.ttsMessage, 'تم إلغاء العملية');
       expect(VoiceConversationService.hasActiveSession, isFalse);
     });
+
+    test('spoken cancel overrides an active transaction while asking for items', () async {
+      final session = VoiceConversationService.startSession(source: 'voice_screen');
+      session.intent = 'debt';
+      session.customerName = 'محمد';
+      session.amount = 5000;
+      session.expectingField = 'items';
+
+      final result = await VoiceConversationService.processText(
+        'إلغاء',
+        expecting: 'items',
+        source: 'voice_screen',
+      );
+
+      expect(result.step, ConversationStep.failed);
+      expect(result.ttsMessage, 'تم إلغاء العملية');
+      expect(VoiceConversationService.sessionFor('voice_screen'), isNull);
+    });
   });
 
 
