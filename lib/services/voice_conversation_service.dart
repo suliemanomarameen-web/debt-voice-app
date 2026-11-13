@@ -45,6 +45,10 @@ class VoiceConversationResult {
   /// الحساب المختار (عند saved)
   final Customer? matchedCustomer;
 
+  /// نطاق التاريخ المطلوب لكشف الحساب، إن ذكره المستخدم صوتياً
+  final DateTime? fromDate;
+  final DateTime? toDate;
+
   /// رسالة الخطأ (عند failed)
   final String? errorMessage;
 
@@ -58,6 +62,8 @@ class VoiceConversationResult {
     this.startListening = false,
     this.candidates,
     this.matchedCustomer,
+    this.fromDate,
+    this.toDate,
     this.errorMessage,
     this.targetScreen,
   });
@@ -576,22 +582,28 @@ class VoiceConversationService {
   }
 
   static Future<VoiceConversationResult> _executePrint(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
       ttsMessage: VoicePromptsService.getResponse(VoicePromptsService.rPrintingStatement, vars: {'name': customer.name}),
       targetScreen: 'print',
       matchedCustomer: customer,
+      fromDate: session.fromDate,
+      toDate: session.toDate,
     );
   }
 
   static Future<VoiceConversationResult> _executeSend(VoiceSession session, Customer customer) async {
+    if (!_isCurrentSession(session)) return _cancelledResult();
     session.markCompleted();
     return VoiceConversationResult(
       step: ConversationStep.saved,
       ttsMessage: VoicePromptsService.getResponse(VoicePromptsService.rSendingStatement, vars: {'name': customer.name}),
       targetScreen: 'send',
       matchedCustomer: customer,
+      fromDate: session.fromDate,
+      toDate: session.toDate,
     );
   }
 
