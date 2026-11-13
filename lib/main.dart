@@ -101,9 +101,15 @@ class _BootstrapAppState extends State<BootstrapApp> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final pendingRecord = prefs.getBool('pending_overlay_record') ?? false;
-      if (pendingRecord) {
-        await prefs.setBool('pending_overlay_record', false);
-        debugPrint('🔄 [Bootstrap] Pending overlay record found, will start after 3s');
+      final requestedAt = prefs.getInt('pending_overlay_record_at');
+      final requestIsFresh = requestedAt != null &&
+          DateTime.now().millisecondsSinceEpoch - requestedAt <= 120000;
+      // Old/stale flags (including flags written by older app versions) must
+      // never open the microphone on an ordinary app launch.
+      await prefs.setBool('pending_overlay_record', false);
+      await prefs.remove('pending_overlay_record_at');
+      if (pendingRecord && requestIsFresh) {
+        debugPrint('🔄 [Bootstrap] Fresh notification recording request found');
         Future.delayed(const Duration(seconds: 3), () {
           _startSTTInMain();
         });
@@ -204,6 +210,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('pending_overlay_record', false);
+        await prefs.remove('pending_overlay_record_at');
         await prefs.setBool('pending_quick_tx', false);
         await prefs.setBool('pending_new_customer', false);
         await prefs.setBool('pending_open_stats', false);
