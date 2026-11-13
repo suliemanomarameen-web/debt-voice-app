@@ -562,7 +562,8 @@ void _startSTTInMain() async {
 
     final started = await _globalSpeech.listen(
       listenFor: const Duration(minutes: 5),
-      pauseFor: const Duration(seconds: 5),
+      // Match VoiceScreen: a genuine 3-second pause is one empty attempt.
+      pauseFor: const Duration(seconds: 3),
       onResult: listenHandler,
       onSilence: () async {
         if (generation != _mainSttGeneration) return;
