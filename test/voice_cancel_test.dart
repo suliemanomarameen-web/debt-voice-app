@@ -137,5 +137,29 @@ void main() {
       expect(session.isComplete, isTrue);
       expect(session.items, isNull);
     });
+
+    test('repeats an unrecognized prompt twice then cancels on the third silence', () async {
+      final session = VoiceConversationService.startSession(source: 'voice_screen');
+      session.expectingField = 'intent';
+
+      final first = await VoiceConversationService.processText(
+        '', expecting: 'intent', source: 'voice_screen',
+      );
+      expect(first.step, ConversationStep.askQuestion);
+      expect(VoiceConversationService.sessionFor('voice_screen'), same(session));
+
+      final second = await VoiceConversationService.processText(
+        '', expecting: 'intent', source: 'voice_screen',
+      );
+      expect(second.step, ConversationStep.askQuestion);
+      expect(VoiceConversationService.sessionFor('voice_screen'), same(session));
+
+      final third = await VoiceConversationService.processText(
+        '', expecting: 'intent', source: 'voice_screen',
+      );
+      expect(third.step, ConversationStep.failed);
+      expect(third.errorMessage, contains('3'));
+      expect(VoiceConversationService.sessionFor('voice_screen'), isNull);
+    });
   });
 }
