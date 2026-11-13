@@ -22,6 +22,7 @@ import 'services/notification_action_handler.dart';
 import 'services/notification_service.dart';
 import 'services/overlay_service.dart';
 import 'services/pending_notification_service.dart';
+import 'services/pdf_service.dart';
 import 'services/permission_service.dart';
 import 'services/reminder_service.dart';
 import 'services/settings_service.dart';
@@ -676,7 +677,11 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
     case 'print':
     case 'send':
       if (result.matchedCustomer != null) {
-        await _showStatementDialog(result.matchedCustomer!);
+        await _showStatementDialog(
+          result.matchedCustomer!,
+          fromDate: result.fromDate,
+          toDate: result.toDate,
+        );
       }
       VoiceConversationService.cancelSession(source: 'overlay_main');
       break;
@@ -697,7 +702,11 @@ Future<void> _handleVoiceTargetScreen(VoiceConversationResult result) async {
 }
 
 /// 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
-Future<void> _showStatementDialog(Customer customer) async {
+Future<void> _showStatementDialog(
+  Customer customer, {
+  DateTime? fromDate,
+  DateTime? toDate,
+}) async {
   final ctx = navigatorKey.currentContext;
   if (ctx == null) return;
   final db = DatabaseHelper.instance;
@@ -788,6 +797,51 @@ Future<void> _showStatementDialog(Customer customer) async {
           TextButton(
             onPressed: () => Navigator.pop(c),
             child: const Text('إغلاق'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.picture_as_pdf),
+            label: const Text('طباعة / حفظ PDF'),
+            onPressed: () async {
+              DateTime? selectedFromDate = fromDate;
+              DateTime? selectedToDate = toDate;
+
+              if (selectedFromDate == null || selectedToDate == null) {
+                selectedFromDate = await showDatePicker(
+                  context: c,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ البداية',
+                );
+                if (selectedFromDate == null || !c.mounted) return;
+
+                selectedToDate = await showDatePicker(
+                  context: c,
+                  initialDate: DateTime.now().isBefore(selectedFromDate)
+                      ? selectedFromDate
+                      : DateTime.now(),
+                  firstDate: selectedFromDate,
+                  lastDate: DateTime(2100),
+                  helpText: 'اختر تاريخ النهاية',
+                );
+                if (selectedToDate == null || !c.mounted) return;
+              }
+
+              Navigator.pop(c);
+              try {
+                final file = await PdfService.generateStatement(
+                  customer,
+                  fromDate: selectedFromDate,
+                  toDate: selectedToDate,
+                );
+                await PdfService.share(file, customer.name);
+              } catch (e) {
+                if (!ctx.mounted) return;
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('تعذر إنشاء كشف PDF: $e')),
+                );
+              }
+            },
           ),
         ],
       ),
