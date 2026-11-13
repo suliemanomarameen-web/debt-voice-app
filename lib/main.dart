@@ -43,7 +43,6 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // متغير عام لخدمة الصوت (نستخدمها لتشغيل STT من الخيط الرئيسي)
 final SpeechService _globalSpeech = SpeechService();
 bool _userCancelled = false;
-bool _mainUserStopped = false;
 bool _sttStarting = false; // 🆕 التعديل (أ): حماية من الاستدعاء المزدوج
 int _mainSttGeneration = 0;
 bool _mainConversationProcessing = false;
@@ -447,8 +446,6 @@ void _startSTTInMain() async {
     await LoggerService.devInfo('main', 'STT already starting/listening — skipping');
     return;
   }
-  // Only an accepted fresh start clears the previous manual-pause state.
-  _mainUserStopped = false;
   _sttStarting = true;
   final generation = ++_mainSttGeneration;
 
@@ -521,17 +518,7 @@ void _startSTTInMain() async {
         }
 
         if (result.startListening) {
-          // A user-requested stop is a pause, not permission to reopen the
-          // microphone automatically after the prompt has finished speaking.
-          if (_mainUserStopped) {
-            _mainUserStopped = false;
-            FlutterOverlayWindow.shareData({
-              'action': 'stt_result',
-              'text': 'listening_paused',
-            });
-            return;
-          }
-          // Release the processing lock before opening the next listening
+           // Release the processing lock before opening the next listening
           // generation. The finally block below is token-guarded.
           if (processingToken == _mainConversationGeneration) {
             _mainConversationProcessing = false;
@@ -618,7 +605,6 @@ void _startSTTInMain() async {
 
 /// إيقاف مؤقت (عند رفع الإصبع من الزر العائم)
 void _stopSTTInMain() async {
-  _mainUserStopped = true;
   await LoggerService.devInfo('main', 'Stopping STT (temporary pause)');
   try {
     // رفع الإصبع يوقف الالتقاط الحالي مع السماح بتسليم الكلام الذي قيل،
