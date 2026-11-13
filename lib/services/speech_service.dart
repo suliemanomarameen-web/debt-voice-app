@@ -26,6 +26,7 @@ class SpeechService {
   bool _sessionActive = false;
   bool _engineStarted = false;
   int _generation = 0;
+  int _listenRequestGeneration = 0;
 
   bool get isListening => _speech.isListening;
   bool get hasActiveRecognition => _engineStarted && _sessionActive;
@@ -130,6 +131,7 @@ class SpeechService {
   }
 
   Future<void> reset() async {
+    _listenRequestGeneration++;
     _generation++;
     _sessionActive = false;
     _engineStarted = false;
@@ -152,6 +154,7 @@ class SpeechService {
     @Deprecated('استخدم listenFor بدلًا منه')
     Duration? timeout,
   }) async {
+    final requestGeneration = ++_listenRequestGeneration;
     final effectiveListenFor = timeout ?? listenFor;
 
     // Wait until any prompt/confirmation spoken by the app has fully ended.
@@ -160,6 +163,7 @@ class SpeechService {
       await Future.delayed(const Duration(milliseconds: 100));
       ttsWaits++;
     }
+    if (requestGeneration != _listenRequestGeneration) return;
     if (TtsService.isSpeaking) {
       debugPrint('⚠️ [SpeechService] skipped listen while TTS is speaking');
       return;
@@ -172,6 +176,7 @@ class SpeechService {
         return;
       }
     }
+    if (requestGeneration != _listenRequestGeneration) return;
 
     // The speech_to_text plugin exposes one native recognizer. A new
     // source takes ownership explicitly and cancels any previous session,
@@ -270,6 +275,7 @@ class SpeechService {
   }
 
   Future<void> cancel() async {
+    _listenRequestGeneration++;
     _generation++;
     _suppressCallbacks = true;
     _sessionActive = false;
