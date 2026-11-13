@@ -305,9 +305,16 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     final ownedSession = VoiceConversationService.sessionFor('voice_screen');
     final result = await VoiceConversationService.processText(text, source: 'voice_screen');
-    if (!mounted ||
-        ownedSession == null ||
-        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+    final sessionStillOwned = ownedSession != null &&
+        identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession);
+    // الإلغاء وبلوغ الحد الأقصى للمحاولات ينهيان الجلسة عمداً؛
+    // يجب مع ذلك إظهار/نطق الرسالة النهائية للمستخدم.
+    final terminalFailure = result.step == ConversationStep.failed &&
+        (VoiceConversationService.isCancelCommand(text) ||
+            (result.errorMessage?.startsWith('تجاوز ') ?? false) ||
+            (result.errorMessage?.startsWith('لا يوجد حساب باسم ') ?? false) ||
+            (result.errorMessage?.startsWith('تم إلغاء') ?? false));
+    if (!mounted || (!sessionStillOwned && !terminalFailure)) {
       return;
     }
 
@@ -327,8 +334,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     // If another source cancelled/replaced this conversation while TTS was
     // speaking, do not reopen the microphone for the obsolete screen session.
-    if (!mounted ||
-        !identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+    if (!mounted) return;
+    if (!identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
+      // لا نعيد فتح الميكروفون بعد الإلغاء أو انتهاء المحاولات.
+      if (terminalFailure) _onFailed(result);
       return;
     }
 
