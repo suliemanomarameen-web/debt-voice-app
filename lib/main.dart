@@ -473,20 +473,8 @@ void _startSTTInMain() async {
       },
     );
 
-    // 🆕 إصلاح مشكلة أول تثبيت: إذا لم يبدأ المحرك فعلياً بعد 800 مللي ثانية، نعيد التهيئة والمحاولة
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!_globalSpeech.isListening &&
-        VoiceConversationService.hasActiveSession) {
-      await LoggerService.devInfo(
-          'main', 'STT failed to start, resetting and retrying...');
-      await _globalSpeech.reset();
-      await _globalSpeech.init();
-      await _globalSpeech.listen(
-        listenFor: const Duration(minutes: 5),
-        pauseFor: const Duration(seconds: 5),
-        onResult: listenHandler,
-      );
-    }
+    // لا نعيد تهيئة المحرك تلقائياً عند فشل بدء الالتقاط؛ إعادة المحاولة
+    // هنا كانت تتداخل مع جلسة جديدة أو تعيد فتح الميكروفون بعد توقف المستخدم.
 
   } catch (e) {
     await LoggerService.devError('main', 'STT listen error: $e');
