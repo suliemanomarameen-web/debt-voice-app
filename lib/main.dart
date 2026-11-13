@@ -404,8 +404,6 @@ void _startSTTInMain() async {
     _userCancelled = false;
     await LoggerService.devInfo('main', 'Starting STT in main isolate');
 
-    FlutterOverlayWindow.shareData({'action': 'stt_started'});
-
     if (!VoiceConversationService.hasActiveSession) {
       VoiceConversationService.startSession(source: 'overlay_main');
     }
@@ -479,6 +477,19 @@ void _startSTTInMain() async {
         await handleConversationInput('');
       },
     );
+
+    // أعلن بدء التسجيل فقط بعد أن يؤكد محرك Android فتح جلسة الاستماع.
+    if (_globalSpeech.isListening) {
+      FlutterOverlayWindow.shareData({'action': 'stt_started'});
+    } else {
+      await LoggerService.devWarn(
+          'main', 'STT did not enter listening state; no retry will be counted');
+      FlutterOverlayWindow.shareData({
+        'action': 'stt_result',
+        'text': '__ERROR__',
+      });
+      VoiceConversationService.cancelSession();
+    }
 
     // لا نعيد تهيئة المحرك تلقائياً عند فشل بدء الالتقاط؛ إعادة المحاولة
     // هنا كانت تتداخل مع جلسة جديدة أو تعيد فتح الميكروفون بعد توقف المستخدم.
