@@ -271,7 +271,10 @@ class SpeechService {
         _onResult = null;
         debugPrint('⚠️ [SpeechService] native recognizer did not start');
       }
-      return _lastStartedGeneration == generation;
+      return generation == _generation &&
+          _sessionActive &&
+          _engineStarted &&
+          _lastStartedGeneration == generation;
     } catch (e) {
       debugPrint('❌ [SpeechService] listen error: $e');
       if (generation == _generation) {
