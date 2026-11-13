@@ -325,6 +325,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _sessionCompleted = result.step == ConversationStep.saved;
     });
 
+    // Snapshot before speaking. A manual stop during TTS must invalidate the
+    // pending auto-listen instead of being overwritten when speech completes.
+    final listenGenerationBeforeSpeech = _listenGeneration;
+
     // TTS
     if (result.ttsMessage != null && result.ttsMessage!.isNotEmpty) {
       try {
@@ -343,11 +347,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     // بدء التسجيل تلقائيًا للسؤال التالي
     if (result.startListening) {
-      final listenGenerationBeforeDelay = _listenGeneration;
       await Future.delayed(const Duration(milliseconds: 300));
       if (mounted &&
           !_listening &&
-          _listenGeneration == listenGenerationBeforeDelay &&
+          _listenGeneration == listenGenerationBeforeSpeech &&
           identical(VoiceConversationService.sessionFor('voice_screen'), ownedSession)) {
         _toggleSpeech();
       }
