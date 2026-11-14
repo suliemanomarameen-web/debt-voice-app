@@ -231,8 +231,13 @@ class VoiceConversationService {
     }
 
     // ح. إضافة حساب
-    if (session.intent == 'add_account' && !session.hasCustomer) {
-      return _askForField(session, 'customerName');
+    // لا تبحث عن الاسم في الحسابات الموجودة؛ فالاسم هنا اسم حساب جديد.
+    // _addNewCustomer يتولى فحص التكرار ثم الإنشاء.
+    if (session.intent == 'add_account') {
+      if (!session.hasCustomer) {
+        return _askForField(session, 'customerName');
+      }
+      return _addNewCustomer(session);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -650,7 +655,11 @@ class VoiceConversationService {
         break;
 
       case 'customerName':
-        if (session.intent == 'statement' || session.intent == 'print_statement' || session.intent == 'send_statement') {
+        if (session.intent == 'add_account') {
+          prompt = VoicePromptsService.getPrompt(
+            VoicePromptsService.pAskAddAccountName,
+          );
+        } else if (session.intent == 'statement' || session.intent == 'print_statement' || session.intent == 'send_statement') {
            prompt = 'أي حساب تريد؟'; // يمكن تعديلها من VoicePromptsService لاحقاً
         } else if (session.intent == 'block_account' || session.intent == 'unblock_account' || session.intent == 'delete_customer' || session.intent == 'edit_customer') {
            prompt = 'أي حساب تريد؟';
