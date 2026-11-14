@@ -116,8 +116,13 @@ class VoiceConversationService {
       return _fail('الجلسة منتهية بالفعل');
     }
 
-    // 🆕 1. فحص الاستعلام المباشر (كشف حساب، رصيد، إلخ) إذا لم نكن في منتصف حوار
-    if (expecting == null &&
+    // 🆕 1. فحص الاستعلام المباشر (كشف حساب، رصيد، إلخ) إذا لم نكن في منتصف حوار.
+    // أوامر إنشاء الحساب لها أولوية؛ فكلمة "حساب" قد تجعل QueryService
+    // يصنف "أضف حساب باسم وليد" خطأً على أنه استعلام كشف حساب.
+    final initialParse = ParserService.parsePartial(text);
+    final isAddAccountCommand = initialParse.intent == 'add_account';
+    if (!isAddAccountCommand &&
+        expecting == null &&
         session.collectedTexts.isEmpty &&
         session.expectingField == null) {
       try {
