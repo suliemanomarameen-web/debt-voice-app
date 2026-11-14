@@ -386,35 +386,63 @@ class ParserService {
   // ═══════════════════════════════════════════════════════════
 
   static String? _detectIntent(String t) {
-    // 🆕 1. النوايا الجديدة (كشف الحساب، إدارة الحساب، الطباعة، إلخ)
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement))) return 'statement';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) return 'statement';
-    
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catBlockAccount))) return 'block_account';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catUnblockAccount))) return 'unblock_account';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catSetLimit))) return 'set_limit';
-    
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) return 'print_statement';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catSendStatement))) return 'send_statement';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catStatistics))) return 'statistics';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catLastTransaction))) return 'last_transaction';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catSearch))) return 'search';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catDeleteCustomer))) return 'delete_customer';
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catEditCustomer))) return 'edit_customer';
-    
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catProcess))) return 'process';
+    // الأوامر الصريحة ذات الأولوية الأعلى من عبارة "كشف حساب".
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSendStatement))) {
+      return 'send_statement';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catPrintStatement))) {
+      return 'print_statement';
+    }
 
-    // 2. النوايا المالية القديمة (مرتجع → دين → سداد)
-    final returnKeywords = KeywordsService.get(KeywordsService.catReturn);
-    final debtKeywords = KeywordsService.get(KeywordsService.catDebt);
-    final paymentKeywords = KeywordsService.get(KeywordsService.catPayment);
+    // إدارة الحساب والسقف.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catBlockAccount))) {
+      return 'block_account';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catUnblockAccount))) {
+      return 'unblock_account';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSetLimit))) {
+      return 'set_limit';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catDeleteCustomer))) {
+      return 'delete_customer';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catEditCustomer))) {
+      return 'edit_customer';
+    }
 
-    if (_containsAny(t, returnKeywords)) return 'return';
+    // الاستعلام الإجمالي والإحصائيات يوجهان إلى شاشة الإحصائيات.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catStatistics)) ||
+        _containsAny(t, KeywordsService.get(KeywordsService.catQueryAll))) {
+      return 'statistics';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catLastTransaction))) {
+      return 'last_transaction';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catSearch))) {
+      return 'search';
+    }
 
-    if (_containsAny(t, debtKeywords)) return 'debt';
+    // "كشف حساب خالد" تعني كشف حساب؛ والإرسال والطباعة فُحصا قبله.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement)) ||
+        _containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) {
+      return 'statement';
+    }
 
-    if (_containsAny(t, paymentKeywords)) return 'payment';
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catProcess))) {
+      return 'process';
+    }
 
+    // النوايا المالية.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catReturn))) {
+      return 'return';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catPayment))) {
+      return 'payment';
+    }
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catDebt))) {
+      return 'debt';
+    }
     return null;
   }
 
@@ -618,12 +646,14 @@ class ParserService {
         final cleaned = w.replaceAll(RegExp(r'[،,.!؟?:;]+$'), '').trim();
         if (cleaned.isEmpty) continue;
 
-        // توقف عند أول رقم
+        // توقف عند أول رقم.
         if (_findFirstNumber(cleaned) != null) break;
 
-        // توقف عند كلمة توقف
-        if (_isStopWord(cleaned)) break;
+        // تجاوز كلمات بنية الأمر في بداية الاسم، مثل:
+        // "حدد سقف حساب خالد" و"أوقف حساب العميل خالد".
+        if (nameWords.isEmpty && _isNameConnector(cleaned)) continue;
 
+        if (_isStopWord(cleaned)) break;
         nameWords.add(cleaned);
       }
 
@@ -769,16 +799,30 @@ class ParserService {
   // أدوات مشتركة
   // ═══════════════════════════════════════════════════════════
 
+  static bool _isNameConnector(String word) {
+    const connectors = {
+      'حساب', 'الحساب', 'عميل', 'العميل', 'زبون', 'الزبون',
+      'باسم', 'اسم', 'على', 'لـ', 'للعميل', 'للزبون',
+    };
+    return connectors.contains(_normalizeForCompare(word));
+  }
+
   static bool _isStopWord(String w) {
-    final lower = w.toLowerCase().trim();
+    final lower = _normalizeForCompare(w);
     if (lower.isEmpty) return true;
-    return _stopWords.contains(lower);
+    return _stopWords.map(_normalizeForCompare).contains(lower);
   }
 
   static bool _containsAny(String text, List<String> keywords) {
-    for (final kw in keywords) {
-      if (kw.isEmpty) continue;
-      if (text.contains(kw.toLowerCase())) return true;
+    final normalizedText = _normalizeForCompare(text);
+    if (normalizedText.isEmpty) return false;
+    final paddedText = ' $normalizedText ';
+
+    for (final keyword in keywords) {
+      final normalizedKeyword = _normalizeForCompare(keyword);
+      if (normalizedKeyword.isEmpty) continue;
+      // مطابقة العبارة كاملة، لا جزءاً عشوائياً من كلمة أخرى.
+      if (paddedText.contains(' $normalizedKeyword ')) return true;
     }
     return false;
   }
@@ -788,8 +832,10 @@ class ParserService {
         .replaceAll(RegExp(r'[أإآ]'), 'ا')
         .replaceAll('ة', 'ه')
         .replaceAll('ى', 'ي')
-        .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
+        .replaceAll(RegExp(r'[\\u064B-\\u065F\\u0670]'), '')
+        .replaceAll(RegExp(r'[،,.!؟?:;؛]+'), ' ')
         .toLowerCase()
+        .replaceAll(RegExp(r'\\s+'), ' ')
         .trim();
   }
 
@@ -951,3 +997,9 @@ class _NameAmount {
 // - Prioritize add_account before statement and other overlapping intents.
 // - Keep built-in create-account phrases active alongside user-defined phrases.
 // - Ignore connector-only keywords such as "باسم" as standalone commands.
+
+// Voice intent routing update:
+// - Explicit send/print commands outrank the general statement keyword.
+// - Query-all phrases route to statistics.
+// - Keyword matching uses normalized whole words/phrases.
+// - Name extraction skips structural account words after command phrases.
