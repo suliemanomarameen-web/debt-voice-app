@@ -430,8 +430,14 @@ class ParserService {
       return 'process';
     }
 
-    // أوامر تسجيل الدين والسداد والمرتجع تتقدم على كلمة "رصيد/كشف"
-    // إذا ظهرت في وصف البضاعة أو البيان داخل جملة التسجيل.
+    // صيغ السؤال الصريحة عن المستحقات مثل "كم عليه خالد" هي استعلام،
+    // حتى لو احتوت كلمة "عليه" الموجودة أيضاً ضمن مفردات الدين.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) {
+      return 'statement';
+    }
+
+    // أوامر تسجيل الدين والسداد والمرتجع الصريحة تتقدم على كلمات
+    // الاستعلام العامة إذا ظهرت في وصف المعاملة.
     if (_containsAny(t, KeywordsService.get(KeywordsService.catReturn))) {
       return 'return';
     }
@@ -443,8 +449,7 @@ class ParserService {
     }
 
     // "كشف حساب خالد" تعني كشف حساب؛ والإرسال والطباعة فُحصا قبله.
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement)) ||
-        _containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) {
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement))) {
       return 'statement';
     }
     return null;
@@ -637,10 +642,13 @@ class ParserService {
       ..sort((a, b) => b.length.compareTo(a.length));
 
     for (final kw in allKeywords) {
-      final idx = clean.toLowerCase().indexOf(kw.toLowerCase());
+      // طبّق إزالة التشكيل على الكلمة المخصصة أيضاً؛ فالنص الوارد
+      // من parsePartial منزوع التشكيل مسبقاً.
+      final normalizedKeyword = _stripTashkeel(kw).toLowerCase();
+      final idx = clean.toLowerCase().indexOf(normalizedKeyword);
       if (idx == -1) continue;
 
-      final after = clean.substring(idx + kw.length).trim();
+      final after = clean.substring(idx + normalizedKeyword.length).trim();
       if (after.isEmpty) continue;
 
       final words = after.split(RegExp(r'\s+'));
