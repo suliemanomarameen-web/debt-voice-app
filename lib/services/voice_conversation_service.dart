@@ -94,6 +94,30 @@ class VoiceConversationService {
   static List<Customer> get lastCandidates =>
       List<Customer>.unmodifiable(_lastCandidates);
 
+  /// يتعرف على أوامر الإلغاء المستقلة قبل تحليل أي إجابة للحوار.
+  /// لا نستخدم contains حتى لا نلغي أوامر أخرى تتضمن كلمة مشابهة عرضاً.
+  static bool isCancelCommand(String text) {
+    final normalized = text
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[ً-ْـ]'), '')
+        .replaceAll(RegExp(r'[.!؟?،,:;]+'), '')
+        .replaceAll(RegExp(r'\\s+'), ' ');
+    const commands = {
+      'إلغاء',
+      'الغاء',
+      'إلغاء العملية',
+      'الغاء العملية',
+      'إلغاء الأمر',
+      'الغاء الامر',
+      'ألغ',
+      'الغي',
+      'cancel',
+      'cancel operation',
+    };
+    return commands.contains(normalized);
+  }
+
   /// ألغِ الجلسة (مسح كل شيء)
   static void cancelSession() {
     _session = null;
@@ -111,6 +135,13 @@ class VoiceConversationService {
   }) async {
     if (_session == null) startSession();
     final session = _session!;
+
+    // الإلغاء يسبق عدّ المحاولات والتحليل والدمج؛ حتى لا تُفسَّر كلمة
+    // «إلغاء» كبيان أو اسم أو مبلغ ثم تُحفظ العملية بالخطأ.
+    if (isCancelCommand(text)) {
+      cancelSession();
+      return _fail('تم إلغاء العملية', ttsMessage: 'تم إلغاء العملية');
+    }
 
     if (session.isCompleted) {
       return _fail('الجلسة منتهية بالفعل');
@@ -714,10 +745,14 @@ class VoiceConversationService {
   // حالات الفشل
   // ═══════════════════════════════════════════════════════════
 
-  static VoiceConversationResult _fail(String error) {
+  static VoiceConversationResult _fail(
+    String error, {
+    String? ttsMessage,
+  }) {
     return VoiceConversationResult(
       step: ConversationStep.failed,
       errorMessage: error,
+      ttsMessage: ttsMessage,
     );
   }
 
