@@ -346,11 +346,14 @@ class ParserService {
     // ═══════════════════════════════════════════════════════════
 
     // 1. النية
-    String? intent = _detectIntent(t);
-
-    // فحص إضافة الحساب
-    if (intent == null && _isAddAccount(t)) {
+    // إنشاء الحساب له أولوية على كلمات "حساب" التي قد تظهر في
+    // كلمات الاستعلام المخصصة؛ وإلا قد يتحول "أضف حساب باسم وليد"
+    // إلى نية كشف حساب قبل الوصول إلى فئة إنشاء الحساب.
+    String? intent;
+    if (_isAddAccount(t)) {
       intent = 'add_account';
+    } else {
+      intent = _detectIntent(t);
     }
 
     // 2. المبلغ
