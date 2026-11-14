@@ -38,6 +38,18 @@ void main() {
     expect(parsed.customerName, 'يونس');
   });
 
+  test('built-in add-account command still works when custom words contain only باسم', () async {
+    await KeywordsService.set(
+      KeywordsService.catAddAccount,
+      ['باسم'],
+    );
+
+    final parsed = ParserService.parsePartial('أضف حساب');
+
+    expect(parsed.intent, 'add_account');
+    expect(parsed.customerName, isNull);
+  });
+
   test('the connector word باسم alone does not turn a statement into account creation', () async {
     await KeywordsService.set(
       KeywordsService.catAddAccount,
