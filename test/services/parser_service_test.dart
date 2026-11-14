@@ -133,4 +133,13 @@ void main() {
     expect(parsed.intent, 'block_account');
     expect(parsed.customerName, 'خالد');
   });
+
+  test('a statement keyword inside a transaction description does not override recording', () {
+    final parsed = ParserService.parsePartial('سجل على خالد 500 رصيد');
+    expect(parsed.intent, 'debt');
+    expect(parsed.customerName, 'خالد');
+    expect(parsed.amount, 500);
+    expect(QueryService.isQuery('سجل على خالد 500 رصيد'), isFalse);
+  });
+
 }
