@@ -417,3 +417,6 @@ class VoicePromptsService {
 // - pAskEditCustomer, pAskEditField
 // - rStatementReady, rStatementSent, rStatsSummary
 // - rSearchResults, rCustomerDeleted, rEditSaved
+
+// Account creation prompt fix notes:
+// - Added a dedicated configurable prompt asking for the new account name.
