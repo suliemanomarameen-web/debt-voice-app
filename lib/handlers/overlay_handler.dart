@@ -248,9 +248,10 @@ class OverlayHandler {
       } catch (_) {}
     }
 
+    final cancelled = result.errorMessage == 'تم إلغاء العملية';
     await NotificationService.show(
-      '❌ لم أفهم',
-      result.errorMessage ?? 'فشل التعرف على العملية',
+      cancelled ? 'تم إلغاء العملية' : '❌ لم أفهم',
+      cancelled ? 'لم يتم حفظ أي عملية' : (result.errorMessage ?? 'فشل التعرف على العملية'),
     );
 
     VoiceConversationService.cancelSession();
