@@ -425,6 +425,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       return;
     }
 
+    var loadingDialogOpen = false;
     try {
       if (!mounted) return;
       showDialog<void>(
@@ -432,11 +433,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
         barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()),
       );
+      loadingDialogOpen = true;
 
       final file = await PdfService.generateStatement(customer);
 
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
+      loadingDialogOpen = false;
 
       if (print) {
         await Printing.layoutPdf(
@@ -448,8 +451,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
       }
     } catch (e) {
       if (mounted) {
-        // أغلق مؤشر الانتظار إن كان ما زال معروضاً.
-        Navigator.of(context, rootNavigator: true).maybePop();
+        // أغلق مؤشر الانتظار فقط إن كان ما زال معروضاً.
+        if (loadingDialogOpen) {
+          Navigator.of(context, rootNavigator: true).maybePop();
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(print
