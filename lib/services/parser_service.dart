@@ -947,3 +947,8 @@ class _NameAmount {
 // - _extractNamePartial: إضافة الفئات الجديدة لاستخراج أسماء العملاء بدقة
 // - parsePartial: دعم expecting (processType، intentForCustomer، limitAmount)
 // - ParsedPartial: تحديث isComplete و missingFields و summary للنوايا الجديدة
+
+// Account creation fix notes:
+// - Prioritize add_account before statement and other overlapping intents.
+// - Keep built-in create-account phrases active alongside user-defined phrases.
+// - Ignore connector-only keywords such as "باسم" as standalone commands.
