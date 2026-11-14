@@ -64,6 +64,25 @@ class OverlayHandler {
     }
     if (text.isEmpty) return;
 
+    // حلّل النية أولاً حتى لا تلتقط خدمة الاستعلام عبارة إنشاء الحساب
+    // بسبب كلمة "حساب" أو كلمة مخصصة أضيفت لفئة أخرى.
+    final check = ParserService.parsePartial(text);
+    final conversationEnabled = SettingsService.getBool(
+      AppSettings.voiceConversationEnabled,
+      defaultValue: true,
+    );
+
+    // إنشاء الحساب يمر عبر الحوار الموحد عند تفعيله.
+    // نحتفظ بالمسار القديم فقط إذا عطّل المستخدم الحوار من الإعدادات.
+    if (check.intent == 'add_account') {
+      if (conversationEnabled) {
+        await _handleConversation(text, audioPath);
+      } else {
+        await _handleAddAccount(check, text, audioPath);
+      }
+      return;
+    }
+
     // ===== استعلام؟ =====
     if (QueryService.isQuery(text)) {
       final result = await QueryService.query(text);
@@ -75,19 +94,7 @@ class OverlayHandler {
       return;
     }
 
-    // ===== تحليل مبدئي (للكشف عن add_account فقط) =====
-    final check = ParserService.parsePartial(text);
-    if (check.intent == 'add_account') {
-      await _handleAddAccount(check, text, audioPath);
-      return;
-    }
-
     // ===== الحوار التفاعلي أو السلوك القديم =====
-    final conversationEnabled = SettingsService.getBool(
-      AppSettings.voiceConversationEnabled,
-      defaultValue: true,
-    );
-
     if (conversationEnabled) {
       await _handleConversation(text, audioPath);
     } else {
