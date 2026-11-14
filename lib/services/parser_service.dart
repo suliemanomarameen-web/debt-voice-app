@@ -833,10 +833,10 @@ class ParserService {
         .replaceAll(RegExp(r'[أإآ]'), 'ا')
         .replaceAll('ة', 'ه')
         .replaceAll('ى', 'ي')
-        .replaceAll(RegExp(r'[\\u064B-\\u065F\\u0670]'), '')
+        .replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '')
         .replaceAll(RegExp(r'[،,.!؟?:;؛]+'), ' ')
         .toLowerCase()
-        .replaceAll(RegExp(r'\\s+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
