@@ -423,17 +423,12 @@ class ParserService {
       return 'search';
     }
 
-    // "كشف حساب خالد" تعني كشف حساب؛ والإرسال والطباعة فُحصا قبله.
-    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement)) ||
-        _containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) {
-      return 'statement';
-    }
-
     if (_containsAny(t, KeywordsService.get(KeywordsService.catProcess))) {
       return 'process';
     }
 
-    // النوايا المالية.
+    // أوامر تسجيل الدين والسداد والمرتجع تتقدم على كلمة "رصيد/كشف"
+    // إذا ظهرت في وصف البضاعة أو البيان داخل جملة التسجيل.
     if (_containsAny(t, KeywordsService.get(KeywordsService.catReturn))) {
       return 'return';
     }
@@ -442,6 +437,12 @@ class ParserService {
     }
     if (_containsAny(t, KeywordsService.get(KeywordsService.catDebt))) {
       return 'debt';
+    }
+
+    // "كشف حساب خالد" تعني كشف حساب؛ والإرسال والطباعة فُحصا قبله.
+    if (_containsAny(t, KeywordsService.get(KeywordsService.catQueryStatement)) ||
+        _containsAny(t, KeywordsService.get(KeywordsService.catQueryBalance))) {
+      return 'statement';
     }
     return null;
   }
