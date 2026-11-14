@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:printing/printing.dart';
 import '../db/database_helper.dart';
 import '../models/account_type.dart';
 import '../models/customer.dart';
@@ -9,6 +11,8 @@ import '../services/audio_recorder_service.dart';
 import '../services/code_service.dart';
 import '../services/logger_service.dart';
 import '../services/parser_service.dart';
+import '../services/pdf_service.dart';
+import '../services/permission_gate.dart';
 import '../services/query_service.dart';
 import '../services/speech_service.dart';
 import '../services/tts_service.dart';
@@ -377,13 +381,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
         break;
 
       case 'print':
+        if (result.matchedCustomer != null) {
+          await _exportVoiceStatement(result.matchedCustomer!, print: true);
+        }
+        if (mounted) _resetSession();
+        break;
+
       case 'send':
         if (result.matchedCustomer != null) {
-          await _showStatementDialog(result.matchedCustomer!);
-          if (mounted) _resetSession();
-        } else {
-          if (mounted) _resetSession();
+          await _exportVoiceStatement(result.matchedCustomer!, print: false);
         }
+        if (mounted) _resetSession();
         break;
 
       case 'search':
@@ -403,8 +411,60 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
+  // تنفيذ أمر إرسال أو طباعة كشف الحساب من الحوار الصوتي.
+  // الإرسال يفتح مشاركة ملف PDF، والطباعة تفتح واجهة الطباعة الفعلية.
+  Future<void> _exportVoiceStatement(
+    Customer customer, {
+    required bool print,
+  }) async {
+    if (!await PermissionGate.require(
+      context,
+      'export_data',
+      message: 'ليس لديك صلاحية تصدير البيانات',
+    )) {
+      return;
+    }
+
+    try {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final file = await PdfService.generateStatement(customer);
+
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (print) {
+        await Printing.layoutPdf(
+          name: 'كشف حساب ${customer.name}',
+          onLayout: (_) => file.readAsBytes(),
+        );
+      } else {
+        await PdfService.share(file, customer.name);
+      }
+    } catch (e) {
+      if (mounted) {
+        // أغلق مؤشر الانتظار إن كان ما زال معروضاً.
+        Navigator.of(context, rootNavigator: true).maybePop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(print
+                ? 'فشلت طباعة كشف الحساب: $e'
+                : 'فشل إرسال كشف الحساب: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
-  // 🆕 عرض كشف الحساب في نافذة (للطباعة والإرسال)
+  // عرض كشف الحساب في نافذة الاستعلام
   // ═══════════════════════════════════════════════════════════
   Future<void> _showStatementDialog(Customer customer) async {
     final db = DatabaseHelper.instance;
@@ -1388,7 +1448,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 // Voice Screen v3: دعم targetScreen والنوايا الجديدة
 // - إحصائيات: فتح StatsScreen
 // - تعديل: فتح AddAccountScreen(existing)
-// - طباعة/إرسال: عرض نافذة كشف الحساب
+// - إرسال: إنشاء PDF وفتح المشاركة مباشرة\n// - طباعة: إنشاء PDF وفتح واجهة الطباعة الفعلية
 // - بحث: توجيه المستخدم لتبويب العملاء
 // - _intentLabel: يدعم جميع النوايا الجديدة
 // - QueryService word-count heuristic: يتخطى الاستعلامات القصيرة التي لا تحتوي على اسم
