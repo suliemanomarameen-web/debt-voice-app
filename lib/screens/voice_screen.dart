@@ -1392,3 +1392,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 // - بحث: توجيه المستخدم لتبويب العملاء
 // - _intentLabel: يدعم جميع النوايا الجديدة
 // - QueryService word-count heuristic: يتخطى الاستعلامات القصيرة التي لا تحتوي على اسم
+
+// Account creation routing fix notes:
+// - Route add-account commands into the same interactive conversation flow
+//   used by transaction commands instead of the legacy confirmation card.
