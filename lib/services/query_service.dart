@@ -1,7 +1,7 @@
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
-import 'keywords_service.dart';
+import 'parser_service.dart';
 
 class QueryResult {
   final String customerName;
@@ -20,57 +20,12 @@ class QueryResult {
 }
 
 class QueryService {
-  /// هل الجملة استعلام؟ (وليس تسجيل معاملة)
+  /// هل الجملة استعلام عن كشف/رصيد حساب؟
+  /// يستخدم محلّل النوايا الموحد حتى لا تختلف النتيجة بين مسارات الصوت.
+  /// أوامر الإرسال والطباعة لها نوايا مستقلة ولا تمر من هنا.
   static bool isQuery(String text) {
-    final t = text.toLowerCase().trim();
-
-    // 🆕 نجلب الكلمات من KeywordsService
-    final recordVerbs = <String>{
-      ...KeywordsService.get(KeywordsService.catDebt),
-      ...KeywordsService.get(KeywordsService.catPayment),
-      ...KeywordsService.get(KeywordsService.catReturn),
-    }.toList();
-
-    final queryBalanceWords =
-        KeywordsService.get(KeywordsService.catQueryBalance);
-    final queryStatementWords =
-        KeywordsService.get(KeywordsService.catQueryStatement);
-    final queryAllWords = KeywordsService.get(KeywordsService.catQueryAll);
-
-    // 🔑 إذا كانت الجملة تحتوي على فعل تسجيل → ليست استعلاماً
-    final hasRecordVerb = _containsAny(t, recordVerbs);
-
-    if (hasRecordVerb) {
-      // إذا كانت جملة تسجيل → نتحقق من كلمات الاستعلام أولاً
-      if (_containsAny(t, queryBalanceWords)) return true;
-      return false; // جملة تسجيل
-    }
-
-    // 🔑 كلمات الاستعلام الواضحة
-    if (_containsAny(t, queryBalanceWords)) return true;
-    if (_containsAny(t, queryAllWords)) return true;
-
-    // 🔑 "رصيد" أو "كشف" — نتحقق: قد تكون صنفاً
-    final words = t.split(RegExp(r'\s+'));
-    if (words.isNotEmpty) {
-      final lastWord = words.last;
-      if (queryStatementWords.contains(lastWord)) {
-        // إذا كان قبلها رقم → فهي صنف (وليس استعلاماً)
-        if (words.length >= 2) {
-          final beforeLast = words[words.length - 2];
-          if (RegExp(r'\d').hasMatch(beforeLast)) {
-            return false; // رقم + رصيد = صنف
-          }
-        }
-      }
-    }
-
-    // "رصيد محمد" أو "كشف حساب محمد" → استعلام
-    for (final kw in queryStatementWords) {
-      if (t.startsWith('$kw ')) return true;
-    }
-
-    return false;
+    if (text.trim().isEmpty) return false;
+    return ParserService.parsePartial(text).intent == 'statement';
   }
 
   /// استخراج اسم الزبون من سؤال الاستعلام
@@ -193,15 +148,7 @@ class QueryService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 أداة مساعدة
-  // ═══════════════════════════════════════════════════════════
-  static bool _containsAny(String text, List<String> keywords) {
-    for (final kw in keywords) {
-      if (text.contains(kw.toLowerCase())) return true;
-    }
-    return false;
-  }
+
 }
 
 // Query Service v1: خدمة الاستعلام الأساسية (رصيد / كشف حساب)
