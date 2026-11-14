@@ -801,3 +801,8 @@ class _FakeParsed {
 // - طباعة، إرسال، إحصائيات، آخر عملية
 // - بحث، حذف (مع تأكيد)، تعديل
 // - إضافة targetScreen للتنقل في الواجهة
+
+// Account creation conversation fix notes:
+// - Ask for the account name with its own configurable prompt.
+// - Send a supplied new-account name directly to duplicate-check/create logic,
+//   instead of looking it up as an existing customer first.
