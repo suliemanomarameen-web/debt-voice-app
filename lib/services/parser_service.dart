@@ -418,10 +418,22 @@ class ParserService {
     return null;
   }
 
+  static List<String> _addAccountKeywords() {
+    // Keep the built-in creation phrases available after custom keywords
+    // are saved. Connector words alone are not creation commands.
+    final keywords = <String>{
+      ...KeywordsService.getDefaults(KeywordsService.catAddAccount),
+      ...KeywordsService.get(KeywordsService.catAddAccount),
+    };
+    keywords.removeWhere((word) {
+      final normalized = _normalizeForCompare(word);
+      return normalized == 'باسم' || normalized == 'اسمه';
+    });
+    return keywords.toList();
+  }
+
   static bool _isAddAccount(String t) {
-    final addAccountKeywords =
-        KeywordsService.get(KeywordsService.catAddAccount);
-    final hasVerb = _containsAny(t, addAccountKeywords);
+    final hasVerb = _containsAny(t, _addAccountKeywords());
     if (!hasVerb) return false;
 
     const accountWords = [
