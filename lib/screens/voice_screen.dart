@@ -215,6 +215,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
 
     try {
+      // حلّل النية قبل الاستعلام؛ إنشاء الحساب يجب أن يسبق أي تطابق
+      // مع كلمات الاستعلام المخصصة التي قد تتداخل معها.
+      final check = ParserService.parsePartial(text);
+      if (check.intent == 'add_account') {
+        await _processConversation(text);
+        return;
+      }
+
       // 1. استعلام مباشر — فقط إذا كان النص 3 كلمات أو أكثر (يحتوي على اسم عميل محتمل)
       final wordCount = text.trim().split(RegExp(r'\s+')).length;
       if (wordCount >= 3 && QueryService.isQuery(text)) {
@@ -234,18 +242,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
         }
       }
 
-      // 2. تحليل مبدئي — لمعرفة إذا كان "إضافة حساب"
-      final check = ParserService.parsePartial(text);
-      if (check.intent == 'add_account') {
-        if (!mounted) return;
-        setState(() {
-          _addAccountParsed = check;
-          _isProcessing = false;
-        });
-        return;
-      }
-
-      // 3. الحوار التفاعلي
+      // 2. الحوار التفاعلي
       await _processConversation(text);
     } catch (e) {
       debugPrint('❌ _process error: $e');
@@ -1395,3 +1392,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 // - بحث: توجيه المستخدم لتبويب العملاء
 // - _intentLabel: يدعم جميع النوايا الجديدة
 // - QueryService word-count heuristic: يتخطى الاستعلامات القصيرة التي لا تحتوي على اسم
+
+// Account creation routing fix notes:
+// - Route add-account commands into the same interactive conversation flow
+//   used by transaction commands instead of the legacy confirmation card.

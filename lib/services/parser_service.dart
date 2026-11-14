@@ -346,11 +346,14 @@ class ParserService {
     // ═══════════════════════════════════════════════════════════
 
     // 1. النية
-    String? intent = _detectIntent(t);
-
-    // فحص إضافة الحساب
-    if (intent == null && _isAddAccount(t)) {
+    // إنشاء الحساب له أولوية على كلمات "حساب" التي قد تظهر في
+    // كلمات الاستعلام المخصصة؛ وإلا قد يتحول "أضف حساب باسم وليد"
+    // إلى نية كشف حساب قبل الوصول إلى فئة إنشاء الحساب.
+    String? intent;
+    if (_isAddAccount(t)) {
       intent = 'add_account';
+    } else {
+      intent = _detectIntent(t);
     }
 
     // 2. المبلغ
@@ -415,10 +418,22 @@ class ParserService {
     return null;
   }
 
+  static List<String> _addAccountKeywords() {
+    // Keep the built-in creation phrases available after custom keywords
+    // are saved. Connector words alone are not creation commands.
+    final keywords = <String>{
+      ...KeywordsService.getDefaults(KeywordsService.catAddAccount),
+      ...KeywordsService.get(KeywordsService.catAddAccount),
+    };
+    keywords.removeWhere((word) {
+      final normalized = _normalizeForCompare(word);
+      return normalized == 'باسم' || normalized == 'اسمه';
+    });
+    return keywords.toList();
+  }
+
   static bool _isAddAccount(String t) {
-    final addAccountKeywords =
-        KeywordsService.get(KeywordsService.catAddAccount);
-    final hasVerb = _containsAny(t, addAccountKeywords);
+    final hasVerb = _containsAny(t, _addAccountKeywords());
     if (!hasVerb) return false;
 
     const accountWords = [
@@ -824,8 +839,7 @@ class ParserService {
   }
 
   static ParsedEntry? _detectAddAccountIntent(String t, String original) {
-    final addAccountKeywords =
-        KeywordsService.get(KeywordsService.catAddAccount);
+    final addAccountKeywords = _addAccountKeywords();
 
     const hasAccountWords = [
       'حساب', 'عميل', 'مورد', 'أخرى', 'اخرى',
@@ -932,3 +946,8 @@ class _NameAmount {
 // - _extractNamePartial: إضافة الفئات الجديدة لاستخراج أسماء العملاء بدقة
 // - parsePartial: دعم expecting (processType، intentForCustomer، limitAmount)
 // - ParsedPartial: تحديث isComplete و missingFields و summary للنوايا الجديدة
+
+// Account creation fix notes:
+// - Prioritize add_account before statement and other overlapping intents.
+// - Keep built-in create-account phrases active alongside user-defined phrases.
+// - Ignore connector-only keywords such as "باسم" as standalone commands.

@@ -39,6 +39,7 @@ class VoicePromptsService {
   static const String pAskCustomerPayment = 'ask_customer_payment';
   static const String pAskCustomerReturn = 'ask_customer_return';
   static const String pAskCustomerUnknown = 'ask_customer_unknown';
+  static const String pAskAddAccountName = 'ask_add_account_name';
   static const String pAskAmount = 'ask_amount';
   static const String pAskItems = 'ask_items';
   static const String pAskCustomerAmbiguous = 'ask_customer_ambiguous';
@@ -120,6 +121,7 @@ class VoicePromptsService {
     pAskCustomerPayment: 'لمن أوصل؟',
     pAskCustomerReturn: 'مرتجع على من؟',
     pAskCustomerUnknown: 'على من أسجل؟',
+    pAskAddAccountName: 'باسم من تريد إنشاء الحساب؟',
     pAskAmount: 'كم المبلغ؟',
     pAskItems: 'ما البيان؟ قل "بدون بيان" لتخطي السؤال',
     pAskCustomerAmbiguous:
@@ -415,3 +417,6 @@ class VoicePromptsService {
 // - pAskEditCustomer, pAskEditField
 // - rStatementReady, rStatementSent, rStatsSummary
 // - rSearchResults, rCustomerDeleted, rEditSaved
+
+// Account creation prompt fix notes:
+// - Added a dedicated configurable prompt asking for the new account name.
