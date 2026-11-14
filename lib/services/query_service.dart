@@ -148,15 +148,7 @@ class QueryService {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // 🆕 أداة مساعدة
-  // ═══════════════════════════════════════════════════════════
-  static bool _containsAny(String text, List<String> keywords) {
-    for (final kw in keywords) {
-      if (text.contains(kw.toLowerCase())) return true;
-    }
-    return false;
-  }
+
 }
 
 // Query Service v1: خدمة الاستعلام الأساسية (رصيد / كشف حساب)
