@@ -432,3 +432,7 @@ class OverlayHandler {
 // - عند saved: TransactionHandler أظهر إشعاره — لا شيء إضافي
 // - عند failed: TTS + إشعار فشل
 // - احتياطي: السلوك القديم عند تعطيل voiceConversationEnabled
+
+// Account creation routing fix notes:
+// - Route add-account commands through VoiceConversationService when
+//   interactive voice conversation is enabled; preserve the legacy fallback.
