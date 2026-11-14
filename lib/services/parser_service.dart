@@ -839,8 +839,7 @@ class ParserService {
   }
 
   static ParsedEntry? _detectAddAccountIntent(String t, String original) {
-    final addAccountKeywords =
-        KeywordsService.get(KeywordsService.catAddAccount);
+    final addAccountKeywords = _addAccountKeywords();
 
     const hasAccountWords = [
       'حساب', 'عميل', 'مورد', 'أخرى', 'اخرى',
