@@ -364,6 +364,9 @@ class ParserService {
     String? customerName;
     if (intent == 'add_account') {
       customerName = _extractAccountName(original);
+    } else if (intent == 'statistics' || intent == 'process') {
+      // لا نحول كلمات مثل الديون في إجمالي الديون إلى اسم حساب.
+      customerName = null;
     } else {
       customerName = _extractNamePartial(clean);
     }
