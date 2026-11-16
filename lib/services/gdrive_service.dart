@@ -421,6 +421,7 @@ class GDriveService {
 
       final result = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false and 'me' in owners",
+        orderBy: 'modifiedTime desc',
         $fields: 'files(id,name,modifiedTime)',
       );
 
@@ -435,40 +436,47 @@ class GDriveService {
   }
 
   /// البحث عن ملف المزامنة المشترك معي
-  static Future<String?> findSharedSyncFileId() async {
+  static Future<String?> findSharedSyncFileId({String? ownerEmail}) async {
     try {
       if (!await ensureSignedIn()) return null;
 
+      final expectedOwner = ownerEmail?.trim().toLowerCase();
       final result = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false and sharedWithMe = true",
         $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
         orderBy: 'modifiedTime desc',
       );
 
-      if (result.files != null && result.files!.isNotEmpty) {
-        final file = result.files!.first;
-        debugPrint('🔗 [GDrive] Found shared sync file: ${file.id}');
-        return file.id;
+      for (final file in result.files ?? []) {
+        final actualOwner = file.owners?.first.emailAddress?.trim().toLowerCase();
+        if (expectedOwner == null || expectedOwner.isEmpty ||
+            actualOwner == expectedOwner) {
+          debugPrint('🔗 [GDrive] Selected shared sync file: ${file.id} '
+              '(owner: $actualOwner)');
+          return file.id;
+        }
       }
 
-      debugPrint('⚠️ [GDrive] Trying fallback search...');
+      // لا نختار ملفاً من مالك آخر عند تحديد بريد المحاسب الأساسي.
       final fallback = await _driveApi!.files.list(
         q: "name = '$_syncFileName' and trashed = false",
         $fields: 'files(id,name,modifiedTime,owners(emailAddress))',
         orderBy: 'modifiedTime desc',
       );
 
-      if (fallback.files != null && fallback.files!.isNotEmpty) {
-        final myEmail = userEmail?.toLowerCase();
-        for (final f in fallback.files!) {
-          final ownerEmail = f.owners?.first.emailAddress?.toLowerCase();
-          if (ownerEmail != myEmail) {
-            debugPrint('🔗 [GDrive] Fallback found: ${f.id} (owner: $ownerEmail)');
-            return f.id;
-          }
+      for (final file in fallback.files ?? []) {
+        final actualOwner = file.owners?.first.emailAddress?.trim().toLowerCase();
+        if (actualOwner != null &&
+            (expectedOwner == null || expectedOwner.isEmpty ||
+                actualOwner == expectedOwner) &&
+            actualOwner != userEmail?.trim().toLowerCase()) {
+          debugPrint('🔗 [GDrive] Selected fallback sync file: ${file.id} '
+              '(owner: $actualOwner)');
+          return file.id;
         }
       }
 
+      debugPrint('⚠️ [GDrive] No shared sync file found for owner: $expectedOwner');
       return null;
     } catch (e) {
       debugPrint('❌ findSharedSyncFileId error: $e');
@@ -564,24 +572,50 @@ class GDriveService {
     }
   }
 
+  /// إرجاع وقت تعديل الملف نفسه الذي ستستخدمه عملية التنزيل.
+  /// لا نستخدم أحدث ملف بالاسم فقط؛ فقد توجد نسخ مستقلة بالاسم نفسه.
   static Future<DateTime?> getSyncFileModifiedTime() async {
     try {
       if (!await ensureSignedIn()) return null;
 
-      final result = await _driveApi!.files.list(
-        q: "name = '$_syncFileName' and trashed = false",
-        $fields: 'files(id,modifiedTime)',
-        orderBy: 'modifiedTime desc',
-      );
+      final fileId = await _resolveSyncFileId();
+      if (fileId == null) return null;
 
-      if (result.files != null && result.files!.isNotEmpty) {
-        return result.files!.first.modifiedTime;
-      }
-      return null;
+      final file = await _driveApi!.files.get(
+        fileId,
+        $fields: 'id,modifiedTime',
+      ) as drive.File;
+      debugPrint('🕒 [GDrive] Modified time for active file $fileId: '
+          '${file.modifiedTime}');
+      return file.modifiedTime;
     } catch (e) {
       debugPrint('❌ getSyncFileModifiedTime error: $e');
       return null;
     }
+  }
+
+  /// يحلّ معرّفاً واحداً ثابتاً للرفع والتنزيل وفحص التعديل.
+  /// المعرّف المرتبط على الجهاز الثانوي له الأولوية ولا نستبدله تلقائياً
+  /// بملف آخر عند تعذّر الوصول إليه؛ لتجنب مزج قواعد بيانات مختلفة.
+  static Future<String?> _resolveSyncFileId() async {
+    final linkedId = await getLinkedFileId();
+    if (linkedId != null && linkedId.isNotEmpty) {
+      debugPrint('🔗 [GDrive] Active linked sync file: $linkedId');
+      return linkedId;
+    }
+
+    final ownId = await getSyncFileId();
+    if (ownId != null && ownId.isNotEmpty) {
+      debugPrint('📄 [GDrive] Active owned sync file: $ownId');
+      return ownId;
+    }
+
+    final sharedId = await findSharedSyncFileId();
+    if (sharedId != null && sharedId.isNotEmpty) {
+      debugPrint('🔗 [GDrive] Active shared sync file: $sharedId');
+      return sharedId;
+    }
+    return null;
   }
 
   /// تنزيل ملف المزامنة (مع الأخذ بالاعتبار الملف المشترك)
@@ -589,23 +623,9 @@ class GDriveService {
     try {
       if (!await ensureSignedIn()) return null;
 
-      var fileId = await getLinkedFileId();
-      if (fileId != null && fileId.isNotEmpty) {
-        debugPrint('🔗 [GDrive] Downloading from linked file: $fileId');
-      } else {
-        fileId = await getSyncFileId();
-        if (fileId != null) {
-          debugPrint('📄 [GDrive] Downloading from own file: $fileId');
-        } else {
-          fileId = await findSharedSyncFileId();
-          if (fileId != null) {
-            debugPrint('🔗 [GDrive] Downloading from shared file: $fileId');
-          }
-        }
-      }
-
+      final fileId = await _resolveSyncFileId();
       if (fileId == null) return null;
-
+      debugPrint('📥 [GDrive] Downloading from active sync file: $fileId');
       return await downloadSyncFileById(fileId);
     } catch (e) {
       debugPrint('❌ downloadSyncFile error: $e');
@@ -632,11 +652,7 @@ class GDriveService {
 
       final bytes = utf8.encode(content);
 
-      final linkedId = await getLinkedFileId();
-      final ownId = await getSyncFileId();
-      final targetId = (linkedId != null && linkedId.isNotEmpty)
-          ? linkedId
-          : ownId;
+      final targetId = await _resolveSyncFileId();
 
       if (targetId != null) {
         final driveFile = drive.File();
