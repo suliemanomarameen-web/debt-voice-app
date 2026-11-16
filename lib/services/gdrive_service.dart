@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'backup_service.dart';
 import 'crypto_service.dart';
+import 'device_service.dart';
 
 /// نتيجة تنزيل الملف الخام (قبل فك التشفير)
 class RawSyncFile {
@@ -644,8 +645,11 @@ class GDriveService {
 
     final ownId = await getSyncFileId();
     if (ownId != null && ownId.isNotEmpty) {
-      // ثبّت اختيار الجهاز الأساسي الحالي حتى لا يتبدل عند ظهور نسخة أخرى بالاسم نفسه.
-      await setPrimarySyncFileId(ownId);
+      // لا نثبّت الملف كملف أساسي إلا بعد التأكد من هوية الجهاز.
+      // الأجهزة الثانوية غير المكتملة الربط قد تملك ملفاً محلياً مؤقتاً.
+      if (await DeviceService.isPrimaryDevice()) {
+        await setPrimarySyncFileId(ownId);
+      }
       debugPrint('📄 [GDrive] Active owned sync file: $ownId');
       return ownId;
     }
