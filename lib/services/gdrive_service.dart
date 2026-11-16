@@ -475,7 +475,9 @@ class GDriveService {
       );
 
       for (final file in result.files ?? []) {
-        final actualOwner = file.owners?.first.emailAddress?.trim().toLowerCase();
+        final actualOwner = (file.owners?.isNotEmpty ?? false)
+            ? file.owners!.first.emailAddress?.trim().toLowerCase()
+            : null;
         if (expectedOwner == null || expectedOwner.isEmpty ||
             actualOwner == expectedOwner) {
           debugPrint('🔗 [GDrive] Selected shared sync file: ${file.id} '
@@ -492,7 +494,9 @@ class GDriveService {
       );
 
       for (final file in fallback.files ?? []) {
-        final actualOwner = file.owners?.first.emailAddress?.trim().toLowerCase();
+        final actualOwner = (file.owners?.isNotEmpty ?? false)
+            ? file.owners!.first.emailAddress?.trim().toLowerCase()
+            : null;
         if (actualOwner != null &&
             (expectedOwner == null || expectedOwner.isEmpty ||
                 actualOwner == expectedOwner) &&
