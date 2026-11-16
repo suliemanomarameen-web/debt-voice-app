@@ -211,6 +211,22 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Future<void> _process(String text) async {
     if (text.isEmpty) return;
 
+    // افحص الإلغاء قبل الاستعلامات والمسارات المباشرة.
+    if (VoiceConversationService.isCancelCommand(text)) {
+      VoiceConversationService.cancelSession();
+      final message = 'تم إلغاء العملية';
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _sessionCompleted = false;
+        _lastResult = null;
+        _candidates = [];
+        _errorMessage = message;
+      });
+      await TtsService.speak(message);
+      return;
+    }
+
     setState(() {
       _isProcessing = true;
       _errorMessage = null;
