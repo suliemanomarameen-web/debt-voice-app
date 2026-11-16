@@ -110,22 +110,7 @@ class VoiceConversationService {
     final normalized = text
         .trim()
         .replaceAll('ـ', '')
-        .replaceAll(RegExp(r'[.!،,؟?]+    String text, {
-    String? expecting,
-  }) async {
-    // يجب فحص الإلغاء قبل إنشاء جلسة أو تحليل/دمج أي جزء من الأمر.
-    if (isCancelCommand(text)) {
-      cancelSession();
-      final message = VoicePromptsService.getResponse(
-        VoicePromptsService.rCancelled,
-      );
-      return VoiceConversationResult(
-        step: ConversationStep.failed,
-        errorMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
-        ttsMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
-      );
-    }
-
+        .replaceAll(RegExp(r'[.!،,؟?]+
     if (_session == null) startSession();
     final session = _session!;
 
@@ -829,7 +814,7 @@ class _FakeParsed {
 // - Send a supplied new-account name directly to duplicate-check/create logic,
 //   instead of looking it up as an existing customer first.
 ), '')
-        .replaceAll(RegExp(r'\\s+'), ' ');
+        .replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return false;
 
     final configuredWord = VoicePromptsService.getPrompt(
