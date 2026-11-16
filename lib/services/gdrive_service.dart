@@ -640,6 +640,8 @@ class GDriveService {
 
     final ownId = await getSyncFileId();
     if (ownId != null && ownId.isNotEmpty) {
+      // ثبّت اختيار الجهاز الأساسي الحالي حتى لا يتبدل عند ظهور نسخة أخرى بالاسم نفسه.
+      await setPrimarySyncFileId(ownId);
       debugPrint('📄 [GDrive] Active owned sync file: $ownId');
       return ownId;
     }
