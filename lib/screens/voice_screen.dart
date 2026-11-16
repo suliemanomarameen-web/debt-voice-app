@@ -214,7 +214,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     // افحص الإلغاء قبل الاستعلامات والمسارات المباشرة.
     if (VoiceConversationService.isCancelCommand(text)) {
       VoiceConversationService.cancelSession();
-      final message = 'تم إلغاء العملية';
+      final message = VoiceConversationService.getCancellationMessage(); // توحيد رسالة الإلغاء مع الإعدادات.
       if (!mounted) return;
       setState(() {
         _isProcessing = false;
