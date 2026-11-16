@@ -137,6 +137,19 @@ class VoiceConversationService {
     String text, {
     String? expecting,
   }) async {
+    // فحص الإلغاء قبل إنشاء جلسة أو تحليل/دمج أي جزء من الأمر.
+    if (isCancelCommand(text)) {
+      cancelSession();
+      final message = VoicePromptsService.getResponse(
+        VoicePromptsService.rCancelled,
+      );
+      return VoiceConversationResult(
+        step: ConversationStep.failed,
+        errorMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
+        ttsMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
+      );
+    }
+
     if (_session == null) startSession();
     final session = _session!;
 
