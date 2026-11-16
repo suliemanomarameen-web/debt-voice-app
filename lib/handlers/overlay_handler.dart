@@ -67,7 +67,7 @@ class OverlayHandler {
     // الإلغاء له الأولوية على الاستعلام والحوار والوضع القديم.
     if (VoiceConversationService.isCancelCommand(text)) {
       VoiceConversationService.cancelSession();
-      const message = 'تم إلغاء العملية';
+      final message = VoiceConversationService.getCancellationMessage(); // توحيد رسالة الإلغاء مع الإعدادات.
       await TtsService.speak(message);
       await NotificationService.show('تم الإلغاء', message);
       return;
