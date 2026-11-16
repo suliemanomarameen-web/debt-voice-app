@@ -106,6 +106,15 @@ class VoiceConversationService {
   // ═══════════════════════════════════════════════════════════
 
   /// فحص موحّد لأوامر الإلغاء قبل تحليل أي نص أو دمجه في الجلسة.
+  /// الرسالة الموحدة التي تُعرض وتُنطق عند إلغاء أي مسار صوتي.
+  /// تُحترم العبارة المخصصة في الإعدادات، مع نص احتياطي عند فراغها.
+  static String getCancellationMessage() {
+    final configuredMessage = VoicePromptsService.getResponse(
+      VoicePromptsService.rCancelled,
+    ).trim();
+    return configuredMessage.isEmpty ? 'تم إلغاء العملية' : configuredMessage;
+  }
+
   static bool isCancelCommand(String text) {
     final normalized = text
         .trim()
@@ -140,9 +149,7 @@ class VoiceConversationService {
     // فحص الإلغاء قبل إنشاء جلسة أو تحليل/دمج أي جزء من الأمر.
     if (isCancelCommand(text)) {
       cancelSession();
-      final message = VoicePromptsService.getResponse(
-        VoicePromptsService.rCancelled,
-      );
+      final message = getCancellationMessage();
       return VoiceConversationResult(
         step: ConversationStep.failed,
         errorMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
