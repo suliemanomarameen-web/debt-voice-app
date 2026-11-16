@@ -104,7 +104,7 @@ class PrimaryLinkService {
         );
       }
 
-      final fileId = await GDriveService.findSharedSyncFileId();
+      final fileId = await GDriveService.findSharedSyncFileId(ownerEmail: primaryEmail);
       if (fileId == null) {
         return LinkInitResult.fail(
           'لم يتم العثور على ملف مزامنة مشترك.\n\n'
@@ -149,7 +149,7 @@ class PrimaryLinkService {
         return LinkResult.fail('بريد إلكتروني غير صالح');
       }
 
-      final fileId = await GDriveService.findSharedSyncFileId();
+      final fileId = await GDriveService.findSharedSyncFileId(ownerEmail: primaryEmail);
       if (fileId == null) {
         return LinkResult.fail(
             'لم يتم العثور على الملف المشترك.\nتأكد من أن الأساسي شاركه معك.');
