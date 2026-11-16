@@ -33,8 +33,9 @@ class GDriveService {
   static const String _syncFileName = 'debt_sync_data.json';
   static const String _encryptedPrefix = 'ENC:1:';
 
-  // مفتاح تخزين معرف الملف المشترك
+  // مفاتيح تثبيت ملف المزامنة على الجهازين.
   static const String _keyLinkedFileId = 'linked_sync_file_id';
+  static const String _keyPrimarySyncFileId = 'primary_sync_file_id';
 
   static GoogleSignIn? _googleSignIn;
   static GoogleSignInAccount? _currentUser;
@@ -375,7 +376,17 @@ class GDriveService {
     if (fileId == null) {
       return {'success': false, 'message': 'ملف المزامنة غير موجود'};
     }
-    return shareFileWithEmail(fileId: fileId, email: email, role: role);
+
+    final result = await shareFileWithEmail(
+      fileId: fileId,
+      email: email,
+      role: role,
+    );
+    if (result['success'] == true) {
+      // ثبّت على الجهاز الأساسي نفس الملف الذي تمت مشاركته مع المحاسب.
+      await setPrimarySyncFileId(fileId);
+    }
+    return result;
   }
 
   static Future<List<Map<String, dynamic>>> listSyncFilePermissions() async {
@@ -408,6 +419,22 @@ class GDriveService {
   static Future<String?> getLinkedFileId() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_keyLinkedFileId);
+  }
+
+  /// حفظ معرّف الملف المعتمد على الجهاز الأساسي بعد مشاركته.
+  static Future<void> setPrimarySyncFileId(String? fileId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (fileId == null || fileId.isEmpty) {
+      await prefs.remove(_keyPrimarySyncFileId);
+    } else {
+      await prefs.setString(_keyPrimarySyncFileId, fileId);
+      debugPrint('🔗 [GDrive] Primary sync file pinned: $fileId');
+    }
+  }
+
+  static Future<String?> getPrimarySyncFileId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyPrimarySyncFileId);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -602,6 +629,13 @@ class GDriveService {
     if (linkedId != null && linkedId.isNotEmpty) {
       debugPrint('🔗 [GDrive] Active linked sync file: $linkedId');
       return linkedId;
+    }
+
+    // على الجهاز الأساسي نستخدم الملف الذي تمت مشاركته فعلياً مع المحاسب.
+    final primaryId = await getPrimarySyncFileId();
+    if (primaryId != null && primaryId.isNotEmpty) {
+      debugPrint('🔗 [GDrive] Active pinned primary sync file: $primaryId');
+      return primaryId;
     }
 
     final ownId = await getSyncFileId();
