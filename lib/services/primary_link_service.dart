@@ -104,7 +104,7 @@ class PrimaryLinkService {
         );
       }
 
-      final fileId = await GDriveService.findSharedSyncFileId();
+      final fileId = await GDriveService.findSharedSyncFileId(ownerEmail: primaryEmail);
       if (fileId == null) {
         return LinkInitResult.fail(
           'لم يتم العثور على ملف مزامنة مشترك.\n\n'
@@ -149,7 +149,7 @@ class PrimaryLinkService {
         return LinkResult.fail('بريد إلكتروني غير صالح');
       }
 
-      final fileId = await GDriveService.findSharedSyncFileId();
+      final fileId = await GDriveService.findSharedSyncFileId(ownerEmail: primaryEmail);
       if (fileId == null) {
         return LinkResult.fail(
             'لم يتم العثور على الملف المشترك.\nتأكد من أن الأساسي شاركه معك.');
@@ -264,8 +264,8 @@ class PrimaryLinkService {
       // حفظ معرف الملف المشترك (للمزامنات القادمة)
       await GDriveService.setLinkedFileId(fileId);
 
-      // حذف أي ملف خاص قديم (لتفادي التعارض)
-      await GDriveService.deleteOwnSyncFileIfExists();
+      // نحافظ على ملفات المزامنة القديمة؛ قد تحتوي بيانات لم تُدمج بعد.
+      // بعد الربط، يستخدم الجهاز الثانوي معرّف الملف المشترك المحفوظ حصراً.
       
       // 🆕 دمج البيانات مباشرة (لضمان وصول العملاء دون الحاجة لتنزيل مرة أخرى)
       debugPrint('🔄 [Link] Merging data directly...');
