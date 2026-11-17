@@ -43,6 +43,8 @@ class AppSettings {
   static const String deletionConflictRestore =
       'deletion_conflict_restore';
   static const String syncLogs = 'sync_logs';
+  /// يسجل مراحل المزامنة محليًا لأغراض التشخيص فقط.
+  static const String syncDiagnosticsEnabled = 'sync_diagnostics_enabled';
   static const String syncDeletedBin = 'sync_deleted_bin';
 
   // ═══════════════════════════════════════════════════════════
@@ -222,6 +224,7 @@ class AppSettings {
     conflictNotification: true,
     deletionConflictRestore: true,
     syncLogs: true,
+    syncDiagnosticsEnabled: false,
     syncDeletedBin: true,
 
     // 🔀 كشف التكرار
