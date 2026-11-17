@@ -280,10 +280,18 @@ class SyncService {
   }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
+    final syncTimer = Stopwatch()..start();
+    await LoggerService.syncTrace(
+      'بدء',
+      'بدأت دورة المزامنة.',
+      metadata: {'silent': silent, 'force_pull': forcePull, 'force_upload': forceUpload},
+    );
+
     try {
       // 🆕 التحقق من وجود تكرارات معلّقة سابقة
       final existingBlocked = await DuplicateDetector.shouldBlockSync();
       if (existingBlocked) {
+        await LoggerService.syncTrace('إيقاف', 'أُوقفت المزامنة لوجود تكرارات معلّقة.');
         if (!silent) _setStatus(SyncStatus.error);
         debugPrint('🚫 [Sync] Blocked by existing duplicates');
         if (!silent) {
@@ -319,8 +327,11 @@ class SyncService {
       final lastLocal =
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
+      // نتحقق من بيانات الملف الوصفية أولاً، ولا ننزّل JSON كاملًا
+      // إلا إذا كان هناك تغيير سحابي فعلي أو طُلب السحب الإجباري.
+      final metadataTimer = Stopwatch()..start();
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
+      metadataTimer.stop();
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
@@ -330,7 +341,44 @@ class SyncService {
           (cloudModified != null &&
               (lastSync == null || cloudModified.isAfter(lastSync)));
 
+      await LoggerService.syncTrace(
+        'فحص السحابة',
+        hasCloudChanges
+            ? 'وُجد تغيير سحابي يستلزم تنزيل الملف.'
+            : 'لا يوجد تغيير سحابي جديد؛ سيتم تجاوز تنزيل الملف.',
+        metadata: {
+          'cloud_modified': cloudModified?.toIso8601String(),
+          'last_sync': lastSync?.toIso8601String(),
+          'has_local_changes': hasLocalChanges,
+          'has_cloud_changes': hasCloudChanges,
+          'metadata_check_ms': metadataTimer.elapsedMilliseconds,
+        },
+      );
+
+      Map<String, dynamic>? cloudData;
+      if (hasCloudChanges) {
+        final downloadTimer = Stopwatch()..start();
+        cloudData = await GDriveService.downloadSyncFile();
+        downloadTimer.stop();
+        await LoggerService.syncTrace(
+          cloudData == null ? 'فشل التنزيل' : 'اكتمل التنزيل',
+          cloudData == null
+              ? 'تعذر تنزيل ملف المزامنة من Google Drive.'
+              : 'تم تنزيل ملف المزامنة.',
+          metadata: {
+            'download_ms': downloadTimer.elapsedMilliseconds,
+            'downloaded': cloudData != null,
+          },
+        );
+      }
+
       if (!hasLocalChanges && !hasCloudChanges) {
+        syncTimer.stop();
+        await LoggerService.syncTrace(
+          'انتهت دون تغييرات',
+          'انتهت المزامنة دون الحاجة إلى تنزيل أو رفع.',
+          metadata: {'duration_ms': syncTimer.elapsedMilliseconds},
+        );
         final now = DateTime.now();
         await prefs.setString(_keyLastSyncTime, now.toIso8601String());
         if (!silent) _setStatus(SyncStatus.idle);
@@ -386,7 +434,21 @@ class SyncService {
           }
         }
 
+        final mergeTimer = Stopwatch()..start();
         final result = await _mergeCloudData(cloudData);
+        mergeTimer.stop();
+        await LoggerService.syncTrace(
+          'اكتمل الدمج',
+          'اكتمل دمج البيانات السحابية مع البيانات المحلية.',
+          metadata: {
+            'merge_ms': mergeTimer.elapsedMilliseconds,
+            'customers_added': result['customers_added'] ?? 0,
+            'transactions_added': result['transactions_added'] ?? 0,
+            'customers_updated': result['customers_updated'] ?? 0,
+            'transactions_updated': result['transactions_updated'] ?? 0,
+            'merge_error': result['error'] ?? 0,
+          },
+        );
 
         // P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
         if ((result['error'] ?? 0) == 1) {
@@ -418,6 +480,7 @@ class SyncService {
         final uploadOk = await _uploadCurrentState();
 
         if (!uploadOk) {
+          await LoggerService.syncTrace('فشل الرفع', 'فشل رفع ملف المزامنة إلى Google Drive.');
           if (!silent) _setStatus(SyncStatus.error);
           final errResult = SyncResult(
             success: false,
@@ -428,6 +491,19 @@ class SyncService {
         }
       }
 
+      syncTimer.stop();
+      await LoggerService.syncTrace(
+        'نجاح',
+        'اكتملت المزامنة بنجاح.',
+        metadata: {
+          'duration_ms': syncTimer.elapsedMilliseconds,
+          'customers_added': addedCustomers + restoredCustomers,
+          'transactions_added': addedTransactions,
+          'customers_updated': updatedCustomers,
+          'transactions_updated': updatedTransactions,
+          'conflicts': conflictsCount,
+        },
+      );
       final now = DateTime.now();
       await prefs.setString(_keyLastSyncTime, now.toIso8601String());
       await prefs.setString(_keyLastUpload, now.toIso8601String());
@@ -466,6 +542,12 @@ class SyncService {
       if (!_resultController.isClosed) _resultController.add(finalResult);
       return finalResult;
     } catch (e) {
+      syncTimer.stop();
+      await LoggerService.syncTrace(
+        'خطأ',
+        'حدث خطأ أثناء المزامنة: $e',
+        metadata: {'duration_ms': syncTimer.elapsedMilliseconds},
+      );
       debugPrint('❌ [Sync] Error: $e');
       if (!silent) _setStatus(SyncStatus.error);
       if (!silent) await LoggerService.logSyncError(e.toString());
