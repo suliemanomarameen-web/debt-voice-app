@@ -477,10 +477,25 @@ class SyncService {
 
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
+        await LoggerService.syncTrace(
+          'بدء الرفع',
+          'بدأ رفع الحالة الحالية إلى ملف المزامنة المشترك.',
+        );
+        final uploadTimer = Stopwatch()..start();
         final uploadOk = await _uploadCurrentState();
+        uploadTimer.stop();
+        await LoggerService.syncTrace(
+          uploadOk ? 'اكتمل الرفع' : 'فشل الرفع',
+          uploadOk
+              ? 'تم رفع ملف المزامنة إلى Google Drive.'
+              : 'فشل رفع ملف المزامنة إلى Google Drive.',
+          metadata: {
+            'upload_ms': uploadTimer.elapsedMilliseconds,
+            'upload_success': uploadOk,
+          },
+        );
 
         if (!uploadOk) {
-          await LoggerService.syncTrace('فشل الرفع', 'فشل رفع ملف المزامنة إلى Google Drive.');
           if (!silent) _setStatus(SyncStatus.error);
           final errResult = SyncResult(
             success: false,
