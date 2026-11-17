@@ -2215,7 +2215,13 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> allLogEventsRaw() async {
     final db = await database;
-    return db.query('log_events', orderBy: 'created_at ASC');
+    // تشخيص المزامنة محلي ولا يُرسل إلى الجهاز الآخر.
+    return db.query(
+      'log_events',
+      where: "action NOT LIKE ?",
+      whereArgs: ['🔄 [تشخيص المزامنة]%'],
+      orderBy: 'created_at ASC',
+    );
   }
 
   Future<int> clearAllLogEvents() async {

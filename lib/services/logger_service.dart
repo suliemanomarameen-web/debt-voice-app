@@ -300,6 +300,34 @@ class LoggerService {
     } catch (_) {}
   }
 
+  /// يسجل تفاصيل المزامنة عند تفعيل إعدادها المستقل.
+  /// تُستخدم بادئة action لتمييز هذه الأحداث واستثنائها من ملف المزامنة المشترك.
+  static Future<void> syncTrace(
+    String phase,
+    String message, {
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!(prefs.getBool(AppSettings.syncDiagnosticsEnabled) ?? false)) {
+        return;
+      }
+      await log(
+        action: '🔄 [تشخيص المزامنة] $phase',
+        description: message,
+        level: LogLevel.info,
+        category: LogCategory.developer,
+        metadata: {
+          'tag': 'sync_diagnostics',
+          'local_only': true,
+          if (metadata != null) ...metadata,
+        },
+      );
+    } catch (e) {
+      debugPrint('⚠️ [Logger] Sync diagnostic failed: $e');
+    }
+  }
+
   /// فحص حالة وضع المطور من SharedPreferences
   /// (يستخدم SharedPreferences مباشرة — ليعمل من أي isolate)
   static Future<bool> _shouldLogDev({bool verbose = false}) async {
