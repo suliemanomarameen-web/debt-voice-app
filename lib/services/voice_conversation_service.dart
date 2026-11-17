@@ -105,10 +105,58 @@ class VoiceConversationService {
   // المعالجة الرئيسية
   // ═══════════════════════════════════════════════════════════
 
+  /// فحص موحّد لأوامر الإلغاء قبل تحليل أي نص أو دمجه في الجلسة.
+  /// الرسالة الموحدة التي تُعرض وتُنطق عند إلغاء أي مسار صوتي.
+  /// تُحترم العبارة المخصصة في الإعدادات، مع نص احتياطي عند فراغها.
+  static String getCancellationMessage() {
+    final configuredMessage = VoicePromptsService.getResponse(
+      VoicePromptsService.rCancelled,
+    ).trim();
+    return configuredMessage.isEmpty ? 'تم إلغاء العملية' : configuredMessage;
+  }
+
+  static bool isCancelCommand(String text) {
+    final normalized = text
+        .trim()
+        .replaceAll('ـ', '')
+        .replaceAll(RegExp(r'[.!،,؟?]+$'), '')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return false;
+
+    final configuredWord = VoicePromptsService.getPrompt(
+      VoicePromptsService.pCancelWord,
+    ).trim();
+    if (configuredWord.isNotEmpty && normalized == configuredWord) {
+      return true;
+    }
+
+    const cancelCommands = {
+      'إلغاء', 'الغاء', 'الغي', 'الغى', 'ألغي', 'ألغى',
+      'إلغاء العملية', 'إلغاء العمليه',
+      'الغاء العملية', 'الغاء العمليه',
+      'الغ العملية', 'الغ العمليه',
+      'الغي العملية', 'الغي العمليه',
+      'ألغي العملية', 'ألغى العملية',
+      'إلغاء الأمر', 'الغاء الامر',
+    };
+    return cancelCommands.contains(normalized);
+  }
+
   static Future<VoiceConversationResult> processText(
     String text, {
     String? expecting,
   }) async {
+    // فحص الإلغاء قبل إنشاء جلسة أو تحليل/دمج أي جزء من الأمر.
+    if (isCancelCommand(text)) {
+      cancelSession();
+      final message = getCancellationMessage();
+      return VoiceConversationResult(
+        step: ConversationStep.failed,
+        errorMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
+        ttsMessage: message.isEmpty ? 'تم إلغاء العملية' : message,
+      );
+    }
+
     if (_session == null) startSession();
     final session = _session!;
 

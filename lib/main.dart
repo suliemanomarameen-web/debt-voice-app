@@ -458,23 +458,7 @@ void _cancelSTTInMain() async {
 }
 
 bool _isCancelCommand(String text) {
-  final t = text.trim();
-  final cancelWord = VoicePromptsService.getPrompt(
-    VoicePromptsService.pCancelWord,
-  ).trim();
-  if (t == cancelWord) return true;
-  const singles = {'إلغاء', 'الغاء', 'الغي', 'الغى', 'ألغي', 'ألغى'};
-  if (singles.contains(t)) return true;
-  const phrases = {
-    'الغ العمليه', 'الغ العملية',
-    'الغي العمليه', 'الغي العملية',
-    'إلغاء العمليه', 'إلغاء العملية',
-    'الغاء العمليه', 'الغاء العملية',
-  };
-  for (final p in phrases) {
-    if (t.contains(p)) return true;
-  }
-  return false;
+  return VoiceConversationService.isCancelCommand(text);
 }
 
 /// 🆕 التنقل بين الشاشات من الزر العائم بعد تنفيذ الأمر الصوتي

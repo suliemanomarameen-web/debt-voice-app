@@ -64,6 +64,15 @@ class OverlayHandler {
     }
     if (text.isEmpty) return;
 
+    // الإلغاء له الأولوية على الاستعلام والحوار والوضع القديم.
+    if (VoiceConversationService.isCancelCommand(text)) {
+      VoiceConversationService.cancelSession();
+      final message = VoiceConversationService.getCancellationMessage(); // توحيد رسالة الإلغاء مع الإعدادات.
+      await TtsService.speak(message);
+      await NotificationService.show('تم الإلغاء', message);
+      return;
+    }
+
     // حلّل النية أولاً حتى لا تلتقط خدمة الاستعلام عبارة إنشاء الحساب
     // بسبب كلمة "حساب" أو كلمة مخصصة أضيفت لفئة أخرى.
     final check = ParserService.parsePartial(text);
