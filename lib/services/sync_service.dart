@@ -1044,26 +1044,28 @@ class SyncService {
 
   static String _resolveSoftDeleteConflictMode(
       bool modificationAlwaysWins, bool softDeleteAlwaysWins) {
-    if (softDeleteAlwaysWins && modificationAlwaysWins) {
+    final mode = DeleteConflictPolicy.resolveSoftDelete(
+      modificationAlwaysWins: modificationAlwaysWins,
+      deleteAlwaysWins: softDeleteAlwaysWins,
+    );
+    if (modificationAlwaysWins && softDeleteAlwaysWins) {
       debugPrint(
           '⚠️ [Sync] Both soft-delete policies enabled — delete wins for safety');
-      return 'soft_delete';
     }
-    if (softDeleteAlwaysWins) return 'soft_delete';
-    if (modificationAlwaysWins) return 'modification';
-    return 'default';
+    return mode;
   }
 
   static String _resolveConflictMode(
       bool modificationAlwaysWins, bool permanentDeleteAlwaysWins) {
+    final mode = DeleteConflictPolicy.resolvePermanentDelete(
+      modificationAlwaysWins: modificationAlwaysWins,
+      deleteAlwaysWins: permanentDeleteAlwaysWins,
+    );
     if (permanentDeleteAlwaysWins && modificationAlwaysWins) {
       debugPrint(
           '⚠️ [Sync] Both modes enabled — falling back to "permanent delete wins" for safety');
-      return 'permanent_delete';
     }
-    if (permanentDeleteAlwaysWins) return 'permanent_delete';
-    if (modificationAlwaysWins) return 'modification';
-    return 'default';
+    return mode;
   }
 
   static Future<void> _notifyRestoration({
