@@ -547,12 +547,10 @@ class SyncService {
           }
         } else {
           if (cloudRowIsActive) {
-            final cloudTime = DateTime.tryParse(
-                  cloudRow!['updated_at'] as String? ??
-                      cloudRow!['created_at'] as String? ??
-                      '',
-                ) ??
-                DateTime(2000);
+            final cloudTime = resolveConflictTimestamp(
+              preferred: cloudRow!['updated_at'] as String?,
+              fallback: cloudRow!['created_at'] as String?,
+            );
             if (cloudTime.isAfter(tombstoneTime)) {
               await dbi.delete('deleted_tombstones',
                   where: 'cloud_id = ?', whereArgs: [cloudId]);
@@ -564,12 +562,10 @@ class SyncService {
           }
           if (localRows.isNotEmpty) {
             final local = localRows.first;
-            final localTime = DateTime.tryParse(
-                  local['updated_at'] as String? ??
-                      local['created_at'] as String? ??
-                      '',
-                ) ??
-                DateTime(2000);
+            final localTime = resolveConflictTimestamp(
+              preferred: local['updated_at'] as String?,
+              fallback: local['created_at'] as String?,
+            );
             if (localTime.isAfter(tombstoneTime)) {
               await dbi.delete('deleted_tombstones',
                   where: 'cloud_id = ?', whereArgs: [cloudId]);
@@ -1141,18 +1137,14 @@ class SyncService {
       final activeRow = localPerm ? cloudRow : localRow;
       final deletedIsLocal = localPerm;
 
-      final activeTime = DateTime.tryParse(
-            activeRow['updated_at'] as String? ??
-                activeRow['created_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
-      final deletedTime = DateTime.tryParse(
-            deletedRow['deleted_at'] as String? ??
-                deletedRow['updated_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
+      final activeTime = resolveConflictTimestamp(
+        preferred: activeRow['updated_at'] as String?,
+        fallback: activeRow['created_at'] as String?,
+      );
+      final deletedTime = resolveConflictTimestamp(
+        preferred: deletedRow['deleted_at'] as String?,
+        fallback: deletedRow['updated_at'] as String?,
+      );
 
       final isActiveNewer = activeTime.isAfter(deletedTime);
       final activeName = activeRow['name'] as String? ?? '';
@@ -1387,18 +1379,14 @@ class SyncService {
       final activeRow = localDeleted ? cloudRow : localRow;
       final deletedIsLocal = localDeleted;
 
-      final activeTime = DateTime.tryParse(
-            activeRow['updated_at'] as String? ??
-                activeRow['created_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
-      final deletedTime = DateTime.tryParse(
-            deletedRow['deleted_at'] as String? ??
-                deletedRow['updated_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
+      final activeTime = resolveConflictTimestamp(
+        preferred: activeRow['updated_at'] as String?,
+        fallback: activeRow['created_at'] as String?,
+      );
+      final deletedTime = resolveConflictTimestamp(
+        preferred: deletedRow['deleted_at'] as String?,
+        fallback: deletedRow['updated_at'] as String?,
+      );
 
       final isActiveNewer = activeTime.isAfter(deletedTime);
 
