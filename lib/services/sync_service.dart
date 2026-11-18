@@ -12,6 +12,7 @@ import 'device_service.dart';
 import 'code_service.dart';
 import 'notification_service.dart';
 import 'duplicate_detector.dart';
+import 'delete_conflict_policy.dart';
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
