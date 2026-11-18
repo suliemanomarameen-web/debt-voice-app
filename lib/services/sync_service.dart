@@ -611,14 +611,20 @@ class SyncService {
       final existingLogKeys = <String>{};
       final existingLogKeysWithoutAccountant = <String>{};
       if (SettingsService.getBool(AppSettings.syncLogs)) {
-        for (final row in await db.allLogEventsRaw()) {
-          final action = row['action'] as String? ?? '';
-          final createdAt = row['created_at'] as String? ?? '';
-          if (action.isEmpty || createdAt.isEmpty) continue;
-          existingLogKeysWithoutAccountant
-              .add(jsonEncode([action, createdAt]));
-          existingLogKeys.add(jsonEncode(
-              [action, createdAt, row['accountant'] as String?]));
+        try {
+          for (final row in await db.allLogEventsRaw()) {
+            final action = row['action'] as String? ?? '';
+            final createdAt = row['created_at'] as String? ?? '';
+            if (action.isEmpty || createdAt.isEmpty) continue;
+            existingLogKeysWithoutAccountant
+                .add(jsonEncode([action, createdAt]));
+            existingLogKeys.add(jsonEncode(
+                [action, createdAt, row['accountant'] as String?]));
+          }
+        } catch (e) {
+          // logEventExists كان يعيد false عند تعذر القراءة؛ نحتفظ بسلوك
+          // محاولة الإدراج بدلاً من إيقاف دمج بقية البيانات.
+          debugPrint('⚠️ [Sync] Could not preload log keys: $e');
         }
       }
 
