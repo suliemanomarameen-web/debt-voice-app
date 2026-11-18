@@ -536,45 +536,33 @@ class SyncService {
         final cloudRowIsActive =
             cloudRow != null && cloudRow['is_deleted'] != 1;
 
-        if (mode == 'modification') {
-          if (localRows.isNotEmpty || cloudRowIsActive) {
-            await dbi.delete('deleted_tombstones',
-                where: 'cloud_id = ?', whereArgs: [cloudId]);
-            deferred++;
-            debugPrint(
-                '⏸️ [Sync] Permanent tombstone ignored by modification-wins policy: $cloudId');
-            continue;
-          }
-        } else {
-          if (cloudRowIsActive) {
-            final cloudTime = resolveConflictTimestamp(
-              preferred: cloudRow!['updated_at'] as String?,
-              fallback: cloudRow!['created_at'] as String?,
-            );
-            if (cloudTime.isAfter(tombstoneTime)) {
-              await dbi.delete('deleted_tombstones',
-                  where: 'cloud_id = ?', whereArgs: [cloudId]);
-              deferred++;
-              debugPrint(
-                  '⏸️ [Sync] Newer cloud transaction kept over tombstone: $cloudId');
-              continue;
-            }
-          }
-          if (localRows.isNotEmpty) {
-            final local = localRows.first;
-            final localTime = resolveConflictTimestamp(
-              preferred: local['updated_at'] as String?,
-              fallback: local['created_at'] as String?,
-            );
-            if (localTime.isAfter(tombstoneTime)) {
-              await dbi.delete('deleted_tombstones',
-                  where: 'cloud_id = ?', whereArgs: [cloudId]);
-              deferred++;
-              debugPrint(
-                  '⏸️ [Sync] Newer local transaction kept over tombstone: $cloudId');
-              continue;
-            }
-          }
+        final cloudTime = resolveConflictTimestamp(
+          preferred: cloudRow?['updated_at'] as String?,
+          fallback: cloudRow?['created_at'] as String?,
+        );
+        final localTime = localRows.isEmpty
+            ? DateTime(2000)
+            : resolveConflictTimestamp(
+                preferred: localRows.first['updated_at'] as String?,
+                fallback: localRows.first['created_at'] as String?,
+              );
+
+        final shouldApply = shouldApplyPermanentTombstone(
+          mode: mode,
+          hasLocalRow: localRows.isNotEmpty,
+          cloudRowIsActive: cloudRowIsActive,
+          tombstoneTime: tombstoneTime,
+          localTime: localTime,
+          cloudTime: cloudTime,
+        );
+
+        if (!shouldApply) {
+          await dbi.delete('deleted_tombstones',
+              where: 'cloud_id = ?', whereArgs: [cloudId]);
+          deferred++;
+          debugPrint(
+              '⏸️ [Sync] Active transaction kept over permanent tombstone (mode=$mode): $cloudId');
+          continue;
         }
       }
 
