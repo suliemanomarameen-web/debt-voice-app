@@ -433,6 +433,8 @@ class SettingsService {
       'actor_accountant_id': request['actor_accountant_id'],
       'actor_device_id': request['actor_device_id'],
       'request_id': request['request_id'],
+      'request_status': 'approved',
+      'last_processed_request_id': request['request_id'],
       'updated_at': DateTime.now().toIso8601String(),
       'settings': {
         for (final key in _policyKeys)
@@ -444,15 +446,32 @@ class SettingsService {
     return approval;
   }
 
+  /// يسجل نتيجة الطلب حتى يتمكن الجهاز صاحب الطلب من إزالته من قائمته.
+  static Future<void> markDeletePolicyRequestProcessed(
+      String? requestId, String status) async {
+    if (requestId == null || requestId.isEmpty) return;
+    final sp = await SharedPreferences.getInstance();
+    final approval = await getDeletePolicyApproval();
+    approval['last_processed_request_id'] = requestId;
+    approval['request_status'] = status;
+    await sp.setString(_policyApprovalKey, jsonEncode(approval));
+  }
+
   /// تطبيق سياسة اعتمدها الجهاز الأساسي فقط.
   static Future<bool> applyApprovedDeletePolicy(
       Map<String, dynamic> approval) async {
     if (approval['approved'] != true || approval['revision'] is! int) return false;
-    final revision = approval['revision'] as int;
-    if (revision <= await getDeletePolicyRevision()) return false;
     final expectedPrimary = await DeviceService.getPrimaryDeviceId();
     if (expectedPrimary == null ||
         approval['approved_by_device_id'] != expectedPrimary) return false;
+
+    final processedRequestId =
+        approval['last_processed_request_id']?.toString() ??
+        approval['request_id']?.toString();
+    await removePendingDeletePolicyRequest(processedRequestId);
+
+    final revision = approval['revision'] as int;
+    if (revision <= await getDeletePolicyRevision()) return false;
     final settings = Map<String, dynamic>.from(approval['settings'] as Map? ?? {});
     if (_policyKeys.any((key) => settings[key] is! bool) ||
         (settings[AppSettings.permanentDeleteAlwaysWins] == true &&
