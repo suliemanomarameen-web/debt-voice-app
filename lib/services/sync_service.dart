@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -607,6 +608,20 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
+      final existingLogKeys = <String>{};
+      final existingLogKeysWithoutAccountant = <String>{};
+      if (SettingsService.getBool(AppSettings.syncLogs)) {
+        for (final row in await db.allLogEventsRaw()) {
+          final action = row['action'] as String? ?? '';
+          final createdAt = row['created_at'] as String? ?? '';
+          if (action.isEmpty || createdAt.isEmpty) continue;
+          existingLogKeysWithoutAccountant
+              .add(jsonEncode([action, createdAt]));
+          existingLogKeys.add(jsonEncode(
+              [action, createdAt, row['accountant'] as String?]));
+        }
+      }
+
       // شواهد القبور ثابتة خلال الدمج؛ تحميلها مرة واحدة يمنع استعلام
       // SQLite منفصل لكل عميل أو عملية سحابية.
       final mergeTombstoneCloudIds = <String>{};
@@ -844,16 +859,20 @@ class SyncService {
           if (action.isEmpty || createdAt.isEmpty) continue;
 
           final accountant = cl['accountant'] as String?;
-          final exists = await db.logEventExists(
-            action: action,
-            createdAt: createdAt,
-            accountant: accountant,
-          );
+          final exists = accountant != null && accountant.isNotEmpty
+              ? existingLogKeys.contains(
+                  jsonEncode([action, createdAt, accountant]))
+              : existingLogKeysWithoutAccountant
+                  .contains(jsonEncode([action, createdAt]));
 
           if (!exists) {
             final newMap = Map<String, dynamic>.from(cl);
             newMap.remove('id');
             await db.insertLogEventRaw(newMap);
+            existingLogKeysWithoutAccountant
+                .add(jsonEncode([action, createdAt]));
+            existingLogKeys
+                .add(jsonEncode([action, createdAt, accountant]));
             addedLogs++;
           }
         }
