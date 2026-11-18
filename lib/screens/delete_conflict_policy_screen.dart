@@ -16,6 +16,14 @@ class _DeleteConflictPolicyScreenState
     extends State<DeleteConflictPolicyScreen> {
   bool _busy = false;
 
+  @override
+  void initState() {
+    super.initState();
+    SettingsService.init().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   String get _softMode {
     if (SettingsService.getBool(AppSettings.softDeleteAlwaysWins)) {
       return 'delete';
