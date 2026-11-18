@@ -230,7 +230,8 @@ class SyncService {
       await GDriveService.trySilentSignIn();
     }
     if (!GDriveService.isSignedIn) return;
-    await _uploadCurrentState();
+    final cloudData = await GDriveService.downloadSyncFile();
+    await _uploadCurrentState(knownCloudData: cloudData);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
     await prefs.setString(_keyLastUpload, DateTime.now().toIso8601String());
@@ -240,7 +241,7 @@ class SyncService {
 
   static Future<void> mergeDataDirectly(Map<String, dynamic> cloudData) async {
     await _mergeCloudData(cloudData);
-    await _uploadCurrentState();
+    await _uploadCurrentState(knownCloudData: cloudData);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
     await _saveHasPendingChanges(false);
@@ -1658,7 +1659,9 @@ class SyncService {
     }
   }
 
-  static Future<bool> _uploadCurrentState({\n    Map<String, dynamic>? knownCloudData,\n  }) async {
+  static Future<bool> _uploadCurrentState({
+    Map<String, dynamic>? knownCloudData,
+  }) async {
     try {
       await _ensureCloudIds();
 
