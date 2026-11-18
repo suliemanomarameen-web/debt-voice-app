@@ -27,3 +27,23 @@ class DeleteConflictPolicy {
     return 'default';
   }
 }
+
+
+/// Parses the first valid timestamp, falling back when the preferred field is
+/// null, empty, or malformed. Keeps legacy records with created_at usable.
+DateTime resolveConflictTimestamp({
+  required String? preferred,
+  required String? fallback,
+}) {
+  final preferredTime =
+      preferred == null || preferred.trim().isEmpty
+          ? null
+          : DateTime.tryParse(preferred);
+  if (preferredTime != null) return preferredTime;
+
+  final fallbackTime =
+      fallback == null || fallback.trim().isEmpty
+          ? null
+          : DateTime.tryParse(fallback);
+  return fallbackTime ?? DateTime(2000);
+}
