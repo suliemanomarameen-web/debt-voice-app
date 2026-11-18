@@ -581,7 +581,11 @@ class SyncService {
         }
       }
 
-      await db.addTombstone(cloudId: cloudId, type: type);
+      await db.addTombstone(
+        cloudId: cloudId,
+        type: type,
+        deletedAt: tomb['deleted_at'] as String?,
+      );
       applied++;
 
       if (mode != 'permanent_delete' && type != 'transaction') {
