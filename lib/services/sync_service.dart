@@ -416,7 +416,7 @@ class SyncService {
 
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
-        final uploadOk = await _uploadCurrentState();
+        final uploadOk = await _uploadCurrentState(knownCloudData: cloudData);
 
         if (!uploadOk) {
           if (!silent) _setStatus(SyncStatus.error);
@@ -1658,7 +1658,7 @@ class SyncService {
     }
   }
 
-  static Future<bool> _uploadCurrentState() async {
+  static Future<bool> _uploadCurrentState({\n    Map<String, dynamic>? knownCloudData,\n  }) async {
     try {
       await _ensureCloudIds();
 
@@ -1672,12 +1672,39 @@ class SyncService {
 
       final primaryDeviceId = await DeviceService.getPrimaryDeviceId();
 
-      final tombstones = SettingsService.getBool(
+      final syncPermanentDeletes = SettingsService.getBool(
         AppSettings.syncDeletedBin,
         defaultValue: true,
-      )
-          ? await db.allTombstonesRaw()
-          : <Map<String, dynamic>>[];
+      );
+      final localTombstones = await db.allTombstonesRaw();
+      List<Map<String, dynamic>> tombstones;
+      if (syncPermanentDeletes) {
+        tombstones = localTombstones;
+      } else {
+        // The sync file is a full snapshot. Never replace its existing
+        // permanent-delete markers with [] merely because this device has
+        // disabled publishing new tombstones.
+        final cloudSnapshot =
+            knownCloudData ?? await GDriveService.downloadSyncFile();
+        if (cloudSnapshot == null) {
+          final linkedId = await GDriveService.getLinkedFileId();
+          final primaryId = await GDriveService.getPrimarySyncFileId();
+          final ownId = await GDriveService.getSyncFileId();
+          final hasKnownRemoteFile = [linkedId, primaryId, ownId]
+              .any((id) => id != null && id.isNotEmpty);
+          if (hasKnownRemoteFile) {
+            debugPrint(
+                '🚫 [Sync] Upload blocked: could not read existing tombstones while permanent-delete sync is disabled');
+            return false;
+          }
+        }
+        tombstones = resolveTombstonesForUpload(
+          syncEnabled: false,
+          localTombstones: localTombstones,
+          cloudTombstones:
+              (cloudSnapshot?['tombstones'] as List?) ?? const [],
+        );
+      }
 
       debugPrint(
           '📤 [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions');
