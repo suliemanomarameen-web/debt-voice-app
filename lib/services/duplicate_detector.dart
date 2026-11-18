@@ -152,12 +152,22 @@ class DuplicateDetector {
     // في وضع الرمز، لا داعي لفحص كل العمليات المحلية؛ الفهرس يحتفظ
     // بترتيب القائمة الأصلية ويعيد فقط العمليات ذات الرمز المطابق تماماً.
     final localTransactionsByCode = <String, List<Transaction>>{};
+    final localTransactionsByCustomerAndType =
+        <String, List<Transaction>>{};
     if (transactionDuplicateMode == 'code') {
       for (final transaction in localTransactions) {
         final code = transaction.code;
         if (code == null || code.isEmpty) continue;
         localTransactionsByCode
             .putIfAbsent(code, () => <Transaction>[])
+            .add(transaction);
+      }
+    } else if (transactionDuplicateMode == 'basic' ||
+        transactionDuplicateMode == 'window') {
+      for (final transaction in localTransactions) {
+        final key = jsonEncode([transaction.customerId, transaction.type]);
+        localTransactionsByCustomerAndType
+            .putIfAbsent(key, () => <Transaction>[])
             .add(transaction);
       }
     }
@@ -176,6 +186,20 @@ class DuplicateDetector {
         transactionCandidates = code == null || code.isEmpty
             ? const <Transaction>[]
             : (localTransactionsByCode[code] ?? const <Transaction>[]);
+      } else if (transactionDuplicateMode == 'basic' ||
+          transactionDuplicateMode == 'window') {
+        final cloudCustomerId = cloudT['customer_id'] as int?;
+        final localCustomerId = cloudCustomerId == null
+            ? null
+            : cloudCustomerIdToLocal[cloudCustomerId];
+        final cloudType = cloudT['type'] as String?;
+        if (localCustomerId == null || cloudType == null) {
+          transactionCandidates = const <Transaction>[];
+        } else {
+          final key = jsonEncode([localCustomerId, cloudType]);
+          transactionCandidates = localTransactionsByCustomerAndType[key] ??
+              const <Transaction>[];
+        }
       } else {
         transactionCandidates = localTransactions;
       }
