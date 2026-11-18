@@ -317,6 +317,7 @@ class PermissionCache {
     'view_all_transactions', 'view_stats', 'export_data',
     'view_logs', 'access_advanced_settings', 'manage_backups',
     'manage_accountants', 'can_become_primary',
+    'change_delete_conflict_policy',
   ];
 
   static Future<void> refresh() async {
