@@ -47,3 +47,26 @@ DateTime resolveConflictTimestamp({
           : DateTime.tryParse(fallback);
   return fallbackTime ?? DateTime(2000);
 }
+
+/// Determines whether a permanent-delete tombstone should be applied to a
+/// transaction. This is kept pure so the synchronization decision is testable.
+bool shouldApplyPermanentTombstone({
+  required String mode,
+  required bool hasLocalRow,
+  required bool cloudRowIsActive,
+  required DateTime tombstoneTime,
+  required DateTime localTime,
+  required DateTime cloudTime,
+}) {
+  if (mode == 'permanent_delete') return true;
+
+  if (mode == 'modification') {
+    // An existing local row or active cloud row wins, regardless of age.
+    return !hasLocalRow && !cloudRowIsActive;
+  }
+
+  // Latest wins: only a strictly newer active record defeats the tombstone.
+  if (cloudRowIsActive && cloudTime.isAfter(tombstoneTime)) return false;
+  if (hasLocalRow && localTime.isAfter(tombstoneTime)) return false;
+  return true;
+}
