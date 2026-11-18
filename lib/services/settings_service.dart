@@ -418,11 +418,23 @@ class SettingsService {
   static Future<void> resetAll() async {
     try {
       final sp = await SharedPreferences.getInstance();
+      final isPrimary = await DeviceService.isPrimaryDevice();
+      final canChangePolicy = isPrimary ||
+          await AccountantsService.hasPermission('change_delete_conflict_policy');
+      final preservedPolicy = <String, dynamic>{
+        for (final key in _policyKeys)
+          if (!canChangePolicy) key: getBool(
+            key,
+            defaultValue: AppSettings.defaults[key] as bool,
+          ),
+      };
       for (final key in AppSettings.defaults.keys) {
+        if (_policyKeys.contains(key) && !canChangePolicy) continue;
         await sp.remove(key);
       }
       _cache.clear();
       _cache.addAll(AppSettings.defaults);
+      _cache.addAll(preservedPolicy);
       debugPrint('✅ [Settings] All reset to defaults');
       try {
         onChanged?.call();
