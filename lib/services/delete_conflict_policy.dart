@@ -61,7 +61,7 @@ bool shouldApplyPermanentTombstone({
   if (mode == 'permanent_delete') return true;
 
   if (mode == 'modification') {
-    // An existing local row or active cloud row wins, regardless of age.
+    // An active local row or active cloud row wins, regardless of age.
     return !localRowIsActive && !cloudRowIsActive;
   }
 
