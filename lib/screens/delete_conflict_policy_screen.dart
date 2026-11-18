@@ -3,6 +3,7 @@ import '../config/app_settings.dart';
 import '../services/settings_service.dart';
 import '../services/permission_gate.dart';
 import '../services/logger_service.dart';
+import '../services/device_service.dart';
 
 class DeleteConflictPolicyScreen extends StatefulWidget {
   const DeleteConflictPolicyScreen({super.key});
@@ -82,12 +83,14 @@ class _DeleteConflictPolicyScreenState
 
     if (!mounted) return;
     setState(() {});
+    final isPrimary = await DeviceService.isPrimaryDevice();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          softDelete
-              ? 'تم حفظ طلب تغيير سياسة الحذف المؤقت'
-              : 'تم حفظ طلب تغيير سياسة الحذف النهائي',
+          isPrimary
+              ? 'تم اعتماد السياسة وسيتم نشرها على الأجهزة الأخرى'
+              : 'تم إرسال الطلب إلى الجهاز الأساسي؛ ستتغير السياسة بعد اعتمادها',
         ),
       ),
     );
