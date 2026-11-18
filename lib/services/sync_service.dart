@@ -537,6 +537,8 @@ class SyncService {
 
         if (mode == 'modification') {
           if (localRows.isNotEmpty || cloudRowIsActive) {
+            await dbi.delete('deleted_tombstones',
+                where: 'cloud_id = ?', whereArgs: [cloudId]);
             deferred++;
             debugPrint(
                 '⏸️ [Sync] Permanent tombstone ignored by modification-wins policy: $cloudId');
@@ -552,6 +554,8 @@ class SyncService {
                 ) ??
                 DateTime(2000);
             if (localTime.isAfter(tombstoneTime)) {
+              await dbi.delete('deleted_tombstones',
+                  where: 'cloud_id = ?', whereArgs: [cloudId]);
               deferred++;
               debugPrint(
                   '⏸️ [Sync] Newer local transaction kept over tombstone: $cloudId');
@@ -565,6 +569,8 @@ class SyncService {
                 ) ??
                 DateTime(2000);
             if (cloudTime.isAfter(tombstoneTime)) {
+              await dbi.delete('deleted_tombstones',
+                  where: 'cloud_id = ?', whereArgs: [cloudId]);
               deferred++;
               debugPrint(
                   '⏸️ [Sync] Newer cloud transaction kept over tombstone: $cloudId');
