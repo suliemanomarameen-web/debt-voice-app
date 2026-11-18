@@ -244,8 +244,16 @@ class SettingsService {
       keys[1]: modificationWins,
     };
 
+    final previousValues = <String, bool>{
+      for (final key in keys)
+        key: getBool(key, defaultValue: AppSettings.defaults[key] as bool),
+    };
+    int? previousRevision;
+    String? previousApproval;
     try {
       final sp = await SharedPreferences.getInstance();
+      previousRevision = sp.getInt(_policyRevisionKey);
+      previousApproval = sp.getString(_policyApprovalKey);
       _writingPolicyInternally = true;
       for (final entry in values.entries) {
         if (!await sp.setBool(entry.key, entry.value)) {
@@ -292,6 +300,24 @@ class SettingsService {
       _notifyIfShared(keys.first);
       return true;
     } catch (e) {
+      _writingPolicyInternally = true;
+      try {
+        final rollbackSp = await SharedPreferences.getInstance();
+        for (final entry in previousValues.entries) {
+          await rollbackSp.setBool(entry.key, entry.value);
+          _cache[entry.key] = entry.value;
+        }
+        if (previousRevision == null) {
+          await rollbackSp.remove(_policyRevisionKey);
+        } else {
+          await rollbackSp.setInt(_policyRevisionKey, previousRevision);
+        }
+        if (previousApproval == null) {
+          await rollbackSp.remove(_policyApprovalKey);
+        } else {
+          await rollbackSp.setString(_policyApprovalKey, previousApproval);
+        }
+      } catch (_) {}
       _writingPolicyInternally = false;
       debugPrint('❌ [Settings] setDeleteConflictPolicy: $e');
       return false;
@@ -344,7 +370,7 @@ class SettingsService {
         return Map<String, dynamic>.from(jsonDecode(raw) as Map);
       } catch (_) {}
     }
-    final fallback = {
+    final Map<String, dynamic> fallback = {
       'approved': true,
       'revision': sp.getInt(_policyRevisionKey) ?? 0,
       'approved_by_device_id': await DeviceService.getPrimaryDeviceId(),
