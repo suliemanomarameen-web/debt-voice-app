@@ -545,6 +545,22 @@ class SyncService {
             continue;
           }
         } else {
+          if (cloudRowIsActive) {
+            final cloudTime = DateTime.tryParse(
+                  cloudRow!['updated_at'] as String? ??
+                      cloudRow['created_at'] as String? ??
+                      '',
+                ) ??
+                DateTime(2000);
+            if (cloudTime.isAfter(tombstoneTime)) {
+              await dbi.delete('deleted_tombstones',
+                  where: 'cloud_id = ?', whereArgs: [cloudId]);
+              deferred++;
+              debugPrint(
+                  '⏸️ [Sync] Newer cloud transaction kept over tombstone: $cloudId');
+              continue;
+            }
+          }
           if (localRows.isNotEmpty) {
             final local = localRows.first;
             final localTime = DateTime.tryParse(
@@ -559,21 +575,6 @@ class SyncService {
               deferred++;
               debugPrint(
                   '⏸️ [Sync] Newer local transaction kept over tombstone: $cloudId');
-              continue;
-            }
-          } else if (cloudRowIsActive) {
-            final cloudTime = DateTime.tryParse(
-                  cloudRow!['updated_at'] as String? ??
-                      cloudRow['created_at'] as String? ??
-                      '',
-                ) ??
-                DateTime(2000);
-            if (cloudTime.isAfter(tombstoneTime)) {
-              await dbi.delete('deleted_tombstones',
-                  where: 'cloud_id = ?', whereArgs: [cloudId]);
-              deferred++;
-              debugPrint(
-                  '⏸️ [Sync] Newer cloud transaction kept over tombstone: $cloudId');
               continue;
             }
           }
