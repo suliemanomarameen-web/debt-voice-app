@@ -567,8 +567,8 @@ class SyncService {
       }
     }
 
-    await _applyCloudTombstones(cloudData);
     await _processDeletePolicySync(cloudData);
+    await _applyCloudTombstones(cloudData);
 
     int addedCustomers = 0;
     int addedTransactions = 0;
