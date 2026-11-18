@@ -103,6 +103,48 @@ void main() {
     );
   });
 
+  group('tombstones selected for upload', () {
+    final local = [
+      {'cloud_id': 'local-delete', 'type': 'transaction'},
+    ];
+    final cloud = [
+      {'cloud_id': 'cloud-delete', 'type': 'transaction'},
+    ];
+
+    test('publishes local tombstones when permanent-delete sync is enabled', () {
+      expect(
+        resolveTombstonesForUpload(
+          syncEnabled: true,
+          localTombstones: local,
+          cloudTombstones: cloud,
+        ),
+        local,
+      );
+    });
+
+    test('preserves existing cloud tombstones when sync is disabled', () {
+      expect(
+        resolveTombstonesForUpload(
+          syncEnabled: false,
+          localTombstones: local,
+          cloudTombstones: cloud,
+        ),
+        cloud,
+      );
+    });
+
+    test('uses an empty list when sync is disabled and cloud has no tombstones', () {
+      expect(
+        resolveTombstonesForUpload(
+          syncEnabled: false,
+          localTombstones: local,
+          cloudTombstones: const [],
+        ),
+        isEmpty,
+      );
+    });
+  });
+
   group('permanent tombstone application decision', () {
     final tombstone = DateTime.parse('2026-11-10T10:00:00');
     final older = DateTime.parse('2026-11-09T10:00:00');
