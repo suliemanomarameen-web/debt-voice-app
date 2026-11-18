@@ -550,7 +550,7 @@ class SyncService {
 
         final shouldApply = shouldApplyPermanentTombstone(
           mode: mode,
-          hasLocalRow: localRows.isNotEmpty,
+          localRowIsActive: localRows.isNotEmpty && localRows.first['is_deleted'] != 1,
           cloudRowIsActive: cloudRowIsActive,
           tombstoneTime: tombstoneTime,
           localTime: localTime,
