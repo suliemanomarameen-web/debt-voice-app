@@ -19,6 +19,9 @@ class AppSettings {
       'permanent_delete_always_wins';
   static const String modificationAlwaysWins =
       'modification_always_wins';
+  static const String softDeleteAlwaysWins = 'soft_delete_always_wins';
+  static const String softModificationAlwaysWins =
+      'soft_modification_always_wins';
 
   // ═══════════════════════════════════════════════════════════
   // ✏️ مجموعة التعديل
@@ -206,6 +209,8 @@ class AppSettings {
     // إعدادات التعارض
     permanentDeleteAlwaysWins: true,
     modificationAlwaysWins: false,
+    softDeleteAlwaysWins: false,
+    softModificationAlwaysWins: false,
 
     // ✏️ التعديل
     allowEditTransactions: true,
@@ -328,6 +333,8 @@ class AppSettings {
     blockTransactionDeletion,
     permanentDeleteAlwaysWins,
     modificationAlwaysWins,
+    softDeleteAlwaysWins,
+    softModificationAlwaysWins,
   };
 
   static const Set<String> sharedSettings = {
@@ -340,6 +347,8 @@ class AppSettings {
     blockTransactionDeletion,
     permanentDeleteAlwaysWins,
     modificationAlwaysWins,
+    softDeleteAlwaysWins,
+    softModificationAlwaysWins,
     // 🔀 كشف التكرار — مُزامَن
     duplicateDetectionEnabled,
     duplicateDetectionLevel,
