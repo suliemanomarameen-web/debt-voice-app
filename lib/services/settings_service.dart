@@ -248,7 +248,9 @@ class SettingsService {
       final sp = await SharedPreferences.getInstance();
       _writingPolicyInternally = true;
       for (final entry in values.entries) {
-        if (!await sp.setBool(entry.key, entry.value)) return false;
+        if (!await sp.setBool(entry.key, entry.value)) {
+          throw StateError('تعذر حفظ سياسة التعارض');
+        }
         _cache[entry.key] = entry.value;
       }
       _writingPolicyInternally = false;
@@ -342,7 +344,7 @@ class SettingsService {
         return Map<String, dynamic>.from(jsonDecode(raw) as Map);
       } catch (_) {}
     }
-    return {
+    final fallback = {
       'approved': true,
       'revision': sp.getInt(_policyRevisionKey) ?? 0,
       'approved_by_device_id': await DeviceService.getPrimaryDeviceId(),
@@ -352,6 +354,13 @@ class SettingsService {
           key: getBool(key, defaultValue: AppSettings.defaults[key] as bool),
       },
     };
+    // يحفظ الجهاز الأساسي رقم الإصدار الابتدائي حتى لا يرفض أول طلب
+    // قادم من جهاز ثانوي استقبل هذه السياسة.
+    if (await DeviceService.isPrimaryDevice()) {
+      await sp.setInt(_policyRevisionKey, fallback['revision'] as int);
+      await sp.setString(_policyApprovalKey, jsonEncode(fallback));
+    }
+    return fallback;
   }
 
   static Future<int> getDeletePolicyRevision() async {
@@ -371,7 +380,6 @@ class SettingsService {
     // لا نقبل طلباً بُني على سياسة أقدم من السياسة المعتمدة حالياً.
     // على الجهاز الثانوي أن يستقبل السياسة الأحدث أولاً ثم يعيد إرسال طلبه.
     if (baseRevision != currentRevision) {
-      await sp.remove(_pendingPolicyRequestKey);
       return await getDeletePolicyApproval();
     }
     if (_policyKeys.any((key) => settings[key] is! bool) ||
