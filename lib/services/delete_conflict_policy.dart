@@ -70,3 +70,19 @@ bool shouldApplyPermanentTombstone({
   if (hasLocalRow && localTime.isAfter(tombstoneTime)) return false;
   return true;
 }
+
+
+/// Chooses which tombstones to publish when building a full sync snapshot.
+/// When permanent-delete sync is disabled, preserve the cloud tombstones
+/// instead of replacing them with an empty list and erasing prior deletions.
+List<Map<String, dynamic>> resolveTombstonesForUpload({
+  required bool syncEnabled,
+  required List<Map<String, dynamic>> localTombstones,
+  required List<dynamic> cloudTombstones,
+}) {
+  if (syncEnabled) return localTombstones;
+  return cloudTombstones
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
+}
