@@ -532,3 +532,4 @@ class NameComparison {
 // Duplicate Detector v1: نظام الكشف عن التكرارات (تطبيع عربي + مقارنة + حظر) — المرحلة 2
 // Duplicate Detector v2: ربط transactionDuplicateMode وtransactionWindowMinutes وmaxDuplicatesPerSync
 // Duplicate Detector v3: إضافة scanLocalDuplicates لاكتشاف التكرار المحلي
+// Duplicate Detector v4: فهرسة معرّفات السجلات وشواهد القبور والتكرارات المفتوحة لتقليل استعلامات SQLite أثناء المزامنة.
