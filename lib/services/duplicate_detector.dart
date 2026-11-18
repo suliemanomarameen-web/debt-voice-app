@@ -33,6 +33,44 @@ class DuplicateDetector {
     final cloudCustomers = (cloudData['customers'] as List?) ?? [];
     final localCustomers = await db.allCustomersWithDeleted();
 
+    // تحميل شواهد القبور والتكرارات المفتوحة مرة واحدة بدلاً من استعلام
+    // SQLite متكرر لكل سجل أو لكل زوج مرشح.
+    final tombstoneCloudIds = <String>{};
+    try {
+      for (final row in await db.allTombstonesRaw()) {
+        final id = row['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) tombstoneCloudIds.add(id);
+      }
+    } catch (e) {
+      // hasTombstone كان يعيد false عند تعذر القراءة؛ نحافظ على هذا السلوك.
+      debugPrint('⚠️ [Detector] Could not preload tombstones: $e');
+    }
+
+    final existingDuplicateKeys = <String>{};
+    for (final row in await db.getUnresolvedDuplicatesRaw()) {
+      final type = row['type'] as String?;
+      final localId = row['local_cloud_id'] as String?;
+      final cloudId = row['cloud_cloud_id'] as String?;
+      if (type != null && localId != null && cloudId != null) {
+        existingDuplicateKeys.add(_duplicateKey(type, localId, cloudId));
+      }
+    }
+
+    // فهرس سريع لهويات العملاء المحلية؛ تبقى قائمة العملاء الأصلية كما هي
+    // حتى لا يتغير ترتيب فحص تشابه الأسماء.
+    final localCustomerCloudIds = localCustomers
+        .map((customer) => customer.cloudId)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final localCustomerByCloudId = <String, dynamic>{};
+    for (final customer in localCustomers) {
+      final id = customer.cloudId;
+      if (id != null && id.isNotEmpty && customer.id != null) {
+        localCustomerByCloudId.putIfAbsent(id, () => customer);
+      }
+    }
+
     for (final cloudC in cloudCustomers) {
       if (reachedMax()) break;
 
@@ -40,16 +78,8 @@ class DuplicateDetector {
       final cloudName = cloudC['name'] as String? ?? '';
 
       if (cloudId == null || cloudId.isEmpty) continue;
-      if (await db.hasTombstone(cloudId)) continue;
-
-      bool isSameRecord = false;
-      for (final localC in localCustomers) {
-        if (localC.cloudId == cloudId) {
-          isSameRecord = true;
-          break;
-        }
-      }
-      if (isSameRecord) continue;
+      if (tombstoneCloudIds.contains(cloudId)) continue;
+      if (localCustomerCloudIds.contains(cloudId)) continue;
 
       for (final localC in localCustomers) {
         if (reachedMax()) break;
@@ -61,20 +91,9 @@ class DuplicateDetector {
         if (cmp.level == 'different') continue;
         if (!_isLevelEnabled(cmp.level)) continue;
 
-        final existing = await db.database.then((d) => d.query(
-              'pending_duplicates',
-              where:
-                  'local_cloud_id = ? AND cloud_cloud_id = ? AND type = ? AND status IN (?, ?)',
-              whereArgs: [
-                localC.cloudId,
-                cloudId,
-                'customer',
-                'pending',
-                'skipped',
-              ],
-              limit: 1,
-            ));
-        if (existing.isNotEmpty) continue;
+        final duplicateKey =
+            _duplicateKey('customer', localC.cloudId!, cloudId);
+        if (existingDuplicateKeys.contains(duplicateKey)) continue;
 
         await db.insertPendingDuplicate({
           'type': 'customer',
@@ -91,6 +110,7 @@ class DuplicateDetector {
             'cloud_phone': cloudC['phone'],
           }),
         });
+        existingDuplicateKeys.add(duplicateKey);
         found++;
         debugPrint(
             '🔀 [Detector] Customer: "${localC.name}" ↔ "$cloudName" (${cmp.level})');
@@ -111,34 +131,80 @@ class DuplicateDetector {
           cloudCloudId.isEmpty) {
         continue;
       }
-      for (final localC in localCustomers) {
-        if (localC.cloudId == cloudCloudId && localC.id != null) {
-          cloudCustomerIdToLocal[cloudId] = localC.id!;
-          break;
-        }
+      final localCustomer = localCustomerByCloudId[cloudCloudId];
+      if (localCustomer != null && localCustomer.id != null) {
+        cloudCustomerIdToLocal[cloudId] = localCustomer.id!;
       }
     }
 
     final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
     final localTransactions = await db.allTransactionsWithDeleted();
+    final localTransactionCloudIds = localTransactions
+        .map((transaction) => transaction.cloudId)
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final transactionDuplicateMode = SettingsService.getString(
+      AppSettings.transactionDuplicateMode,
+      defaultValue: 'code',
+    );
+
+    // في وضع الرمز، لا داعي لفحص كل العمليات المحلية؛ الفهرس يحتفظ
+    // بترتيب القائمة الأصلية ويعيد فقط العمليات ذات الرمز المطابق تماماً.
+    final localTransactionsByCode = <String, List<Transaction>>{};
+    final localTransactionsByCustomerAndType =
+        <String, List<Transaction>>{};
+    if (transactionDuplicateMode == 'code') {
+      for (final transaction in localTransactions) {
+        final code = transaction.code;
+        if (code == null || code.isEmpty) continue;
+        localTransactionsByCode
+            .putIfAbsent(code, () => <Transaction>[])
+            .add(transaction);
+      }
+    } else if (transactionDuplicateMode == 'basic' ||
+        transactionDuplicateMode == 'window') {
+      for (final transaction in localTransactions) {
+        final key = jsonEncode([transaction.customerId, transaction.type]);
+        localTransactionsByCustomerAndType
+            .putIfAbsent(key, () => <Transaction>[])
+            .add(transaction);
+      }
+    }
 
     for (final cloudT in cloudTransactions) {
       if (reachedMax()) break;
 
       final cloudId = cloudT['cloud_id'] as String?;
       if (cloudId == null || cloudId.isEmpty) continue;
-      if (await db.hasTombstone(cloudId)) continue;
+      if (tombstoneCloudIds.contains(cloudId)) continue;
+      if (localTransactionCloudIds.contains(cloudId)) continue;
 
-      bool isSameRecord = false;
-      for (final localT in localTransactions) {
-        if (localT.cloudId == cloudId) {
-          isSameRecord = true;
-          break;
+      final List<Transaction> transactionCandidates;
+      if (transactionDuplicateMode == 'code') {
+        final code = cloudT['code'] as String?;
+        transactionCandidates = code == null || code.isEmpty
+            ? const <Transaction>[]
+            : (localTransactionsByCode[code] ?? const <Transaction>[]);
+      } else if (transactionDuplicateMode == 'basic' ||
+          transactionDuplicateMode == 'window') {
+        final cloudCustomerId = cloudT['customer_id'] as int?;
+        final localCustomerId = cloudCustomerId == null
+            ? null
+            : cloudCustomerIdToLocal[cloudCustomerId];
+        final cloudType = cloudT['type'] as String?;
+        if (localCustomerId == null || cloudType == null) {
+          transactionCandidates = const <Transaction>[];
+        } else {
+          final key = jsonEncode([localCustomerId, cloudType]);
+          transactionCandidates = localTransactionsByCustomerAndType[key] ??
+              const <Transaction>[];
         }
+      } else {
+        transactionCandidates = localTransactions;
       }
-      if (isSameRecord) continue;
 
-      for (final localT in localTransactions) {
+      for (final localT in transactionCandidates) {
         if (reachedMax()) break;
         if (localT.cloudId == cloudId) continue;
         if (localT.cloudId == null || localT.cloudId!.isEmpty) continue;
@@ -149,28 +215,15 @@ class DuplicateDetector {
           localT: localT,
           cloudT: cloudT,
           cloudCustomerIdToLocal: cloudCustomerIdToLocal,
+          mode: transactionDuplicateMode,
         );
         if (!isDup) continue;
 
-        final existing = await db.database.then((d) => d.query(
-              'pending_duplicates',
-              where:
-                  'local_cloud_id = ? AND cloud_cloud_id = ? AND type = ? AND status IN (?, ?)',
-              whereArgs: [
-                localT.cloudId,
-                cloudId,
-                'transaction',
-                'pending',
-                'skipped',
-              ],
-              limit: 1,
-            ));
-        if (existing.isNotEmpty) continue;
+        final duplicateKey =
+            _duplicateKey('transaction', localT.cloudId!, cloudId);
+        if (existingDuplicateKeys.contains(duplicateKey)) continue;
 
-        final mode = SettingsService.getString(
-          AppSettings.transactionDuplicateMode,
-          defaultValue: 'code',
-        );
+        final mode = transactionDuplicateMode;
 
         await db.insertPendingDuplicate({
           'type': 'transaction',
@@ -187,6 +240,7 @@ class DuplicateDetector {
             'mode': mode,
           }),
         });
+        existingDuplicateKeys.add(duplicateKey);
         found++;
         debugPrint(
             '🔀 [Detector] Transaction: ${cloudT['code'] ?? cloudT['amount']} (mode=$mode)');
@@ -266,16 +320,18 @@ class DuplicateDetector {
     return found;
   }
 
+  static String _duplicateKey(String type, String localId, String cloudId) {
+    // JSON encoding avoids collisions even if an ID contains a separator.
+    return jsonEncode([type, localId, cloudId]);
+  }
+
   /// 🆕 هل العملية مكررة بناءً على الوضع المختار؟
   static bool _isTransactionDuplicate({
     required Transaction localT,
     required Map<String, dynamic> cloudT,
     required Map<int, int> cloudCustomerIdToLocal,
+    required String mode,
   }) {
-    final mode = SettingsService.getString(
-      AppSettings.transactionDuplicateMode,
-      defaultValue: 'code',
-    );
 
     switch (mode) {
       case 'code':
@@ -523,3 +579,4 @@ class NameComparison {
 // Duplicate Detector v1: نظام الكشف عن التكرارات (تطبيع عربي + مقارنة + حظر) — المرحلة 2
 // Duplicate Detector v2: ربط transactionDuplicateMode وtransactionWindowMinutes وmaxDuplicatesPerSync
 // Duplicate Detector v3: إضافة scanLocalDuplicates لاكتشاف التكرار المحلي
+// Duplicate Detector v4: فهرسة معرّفات السجلات وشواهد القبور والتكرارات المفتوحة لتقليل استعلامات SQLite أثناء المزامنة.

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -320,7 +321,6 @@ class SyncService {
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
@@ -329,6 +329,17 @@ class SyncService {
       final hasCloudChanges = forcePull ||
           (cloudModified != null &&
               (lastSync == null || cloudModified.isAfter(lastSync)));
+
+      // لا ننزّل ملف المزامنة كاملاً إذا أكد Google Drive أن الملف لم يتغير.
+      // عند تعذّر قراءة وقت التعديل أو أول مزامنة، نبقي التنزيل الاحتياطي
+      // حفاظاً على سلوك التوافق والحماية الحالي.
+      final shouldDownloadCloud = forcePull ||
+          cloudModified == null ||
+          lastSync == null ||
+          cloudModified.isAfter(lastSync);
+      final cloudData = shouldDownloadCloud
+          ? await GDriveService.downloadSyncFile()
+          : null;
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
@@ -597,6 +608,127 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
+      final existingLogKeys = <String>{};
+      final existingLogKeysWithoutAccountant = <String>{};
+      if (SettingsService.getBool(AppSettings.syncLogs)) {
+        try {
+          for (final row in await db.allLogEventsRaw()) {
+            final action = row['action'] as String? ?? '';
+            final createdAt = row['created_at'] as String? ?? '';
+            if (action.isEmpty || createdAt.isEmpty) continue;
+            existingLogKeysWithoutAccountant
+                .add(jsonEncode([action, createdAt]));
+            existingLogKeys.add(jsonEncode(
+                [action, createdAt, row['accountant'] as String?]));
+          }
+        } catch (e) {
+          // logEventExists كان يعيد false عند تعذر القراءة؛ نحتفظ بسلوك
+          // محاولة الإدراج بدلاً من إيقاف دمج بقية البيانات.
+          debugPrint('⚠️ [Sync] Could not preload log keys: $e');
+        }
+      }
+
+      // شواهد القبور ثابتة خلال الدمج؛ تحميلها مرة واحدة يمنع استعلام
+      // SQLite منفصل لكل عميل أو عملية سحابية.
+      final mergeTombstoneCloudIds = <String>{};
+      try {
+        for (final row in await db.allTombstonesRaw()) {
+          final id = row['cloud_id'] as String?;
+          if (id != null && id.isNotEmpty) {
+            mergeTombstoneCloudIds.add(id);
+          }
+        }
+      } catch (e) {
+        // hasTombstone كان يعيد false عند تعذر القراءة.
+        debugPrint('⚠️ [Sync] Could not preload tombstones: $e');
+      }
+
+      // فهرسة السجلات المحلية حسب cloud_id. نستخدم الفهرس للسجلات السحابية
+      // ذات المعرّف الفريد فقط؛ إذا تكرر المعرّف في الملف السحابي نحتفظ
+      // بالاستعلام المتتابع القديم حتى يرى كل تكرار نتيجة التعديل السابق.
+      final cloudCustomerIdCounts = <String, int>{};
+      for (final item in cloudCustomers) {
+        if (item is! Map) continue;
+        final id = item['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          cloudCustomerIdCounts[id] = (cloudCustomerIdCounts[id] ?? 0) + 1;
+        }
+      }
+
+      final localCustomersByCloudId = <String, Map<String, dynamic>>{};
+      final customerIdsToLookup = cloudCustomerIdCounts.entries
+          .where((entry) => entry.value == 1)
+          .map((entry) => entry.key)
+          .toList();
+      try {
+        final database = await db.database;
+        for (var offset = 0;
+            offset < customerIdsToLookup.length;
+            offset += 500) {
+          final ids = customerIdsToLookup.skip(offset).take(500).toList();
+          final rows = await database.query(
+            'customers',
+            where: 'cloud_id IN (${List.filled(ids.length, '?').join(',')})',
+            whereArgs: ids,
+          );
+          for (final row in rows) {
+            final id = row['cloud_id'] as String?;
+            if (id != null && id.isNotEmpty) {
+              localCustomersByCloudId.putIfAbsent(id, () => row);
+            }
+          }
+        }
+      } catch (e) {
+        // عند فشل التحميل المسبق نستخدم استعلام السجل الفردي القديم.
+        debugPrint('⚠️ [Sync] Could not preload customers: $e');
+        for (final id in cloudCustomerIdCounts.keys.toList()) {
+          cloudCustomerIdCounts[id] = (cloudCustomerIdCounts[id] ?? 0) + 1;
+        }
+      }
+
+      final cloudTransactionIdCounts = <String, int>{};
+      for (final item in cloudTransactions) {
+        if (item is! Map) continue;
+        final id = item['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          cloudTransactionIdCounts[id] =
+              (cloudTransactionIdCounts[id] ?? 0) + 1;
+        }
+      }
+
+      final localTransactionsByCloudId = <String, Map<String, dynamic>>{};
+      final transactionIdsToLookup = cloudTransactionIdCounts.entries
+          .where((entry) => entry.value == 1)
+          .map((entry) => entry.key)
+          .toList();
+      try {
+        final database = await db.database;
+        for (var offset = 0;
+            offset < transactionIdsToLookup.length;
+            offset += 500) {
+          final ids =
+              transactionIdsToLookup.skip(offset).take(500).toList();
+          final rows = await database.query(
+            'transactions',
+            where: 'cloud_id IN (${List.filled(ids.length, '?').join(',')})',
+            whereArgs: ids,
+          );
+          for (final row in rows) {
+            final id = row['cloud_id'] as String?;
+            if (id != null && id.isNotEmpty) {
+              localTransactionsByCloudId.putIfAbsent(id, () => row);
+            }
+          }
+        }
+      } catch (e) {
+        // عند فشل التحميل المسبق نستخدم استعلام السجل الفردي القديم.
+        debugPrint('⚠️ [Sync] Could not preload transactions: $e');
+        for (final id in cloudTransactionIdCounts.keys.toList()) {
+          cloudTransactionIdCounts[id] =
+              (cloudTransactionIdCounts[id] ?? 0) + 1;
+        }
+      }
+
       debugPrint(
           '📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
 
@@ -623,7 +755,7 @@ class SyncService {
 
         if (cloudId != null && cloudId.isNotEmpty) {
           if (mode == 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
         }
@@ -639,14 +771,23 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('customers',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final Map<String, dynamic>? localCustomerRow;
+        if (cloudCustomerIdCounts[cloudId] == 1) {
+          localCustomerRow = localCustomersByCloudId[cloudId];
+        } else {
+          final rows = await db.database.then((d) => d.query(
+              'customers',
+              where: 'cloud_id = ?',
+              whereArgs: [cloudId],
+              limit: 1));
+          localCustomerRow = rows.isEmpty ? null : rows.first;
+        }
 
         final oldCloudId = cc['id'] as int?;
 
-        if (localRows.isEmpty) {
+        if (localCustomerRow == null) {
           if (mode != 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             final cloudPerm = cc['is_permanently_deleted'] == 1;
             if (cloudPerm) {
               continue;
@@ -667,11 +808,11 @@ class SyncService {
             );
           }
         } else {
-          final localId = localRows.first['id'] as int;
+          final localId = localCustomerRow['id'] as int;
           if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = localId;
 
           final resolution = await _resolveCustomerConflict(
-            localRow: localRows.first,
+            localRow: localCustomerRow,
             cloudRow: cc,
           );
 
@@ -693,7 +834,7 @@ class SyncService {
 
         if (cloudId != null && cloudId.isNotEmpty) {
           if (mode == 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
         }
@@ -722,12 +863,21 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('transactions',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final Map<String, dynamic>? localTransactionRow;
+        if (cloudTransactionIdCounts[cloudId] == 1) {
+          localTransactionRow = localTransactionsByCloudId[cloudId];
+        } else {
+          final rows = await db.database.then((d) => d.query(
+              'transactions',
+              where: 'cloud_id = ?',
+              whereArgs: [cloudId],
+              limit: 1));
+          localTransactionRow = rows.isEmpty ? null : rows.first;
+        }
 
-        if (localRows.isEmpty) {
+        if (localTransactionRow == null) {
           if (mode != 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
 
@@ -747,7 +897,7 @@ class SyncService {
           }
         } else {
           final resolution = await _resolveTransactionConflict(
-            localRow: localRows.first,
+            localRow: localTransactionRow,
             cloudRow: ct,
           );
 
@@ -768,16 +918,20 @@ class SyncService {
           if (action.isEmpty || createdAt.isEmpty) continue;
 
           final accountant = cl['accountant'] as String?;
-          final exists = await db.logEventExists(
-            action: action,
-            createdAt: createdAt,
-            accountant: accountant,
-          );
+          final exists = accountant != null && accountant.isNotEmpty
+              ? existingLogKeys.contains(
+                  jsonEncode([action, createdAt, accountant]))
+              : existingLogKeysWithoutAccountant
+                  .contains(jsonEncode([action, createdAt]));
 
           if (!exists) {
             final newMap = Map<String, dynamic>.from(cl);
             newMap.remove('id');
             await db.insertLogEventRaw(newMap);
+            existingLogKeysWithoutAccountant
+                .add(jsonEncode([action, createdAt]));
+            existingLogKeys
+                .add(jsonEncode([action, createdAt, accountant]));
             addedLogs++;
           }
         }
