@@ -48,6 +48,7 @@ class Accountant {
     'manage_backups': false,
     'manage_accountants': false,
     'can_become_primary': false,
+    'change_delete_conflict_policy': false,
   };
 
   static const Map<String, String> permissionLabelsAr = {
@@ -67,6 +68,7 @@ class Accountant {
     'manage_backups': 'إدارة النسخ الاحتياطية',
     'manage_accountants': 'إدارة المحاسبين الآخرين',
     'can_become_primary': 'يمكنه أن يصبح أساسياً',
+    'change_delete_conflict_policy': 'تغيير سياسة الحذف والتعديل',
   };
 
   Map<String, dynamic> toMap() => {
