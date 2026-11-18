@@ -607,6 +607,16 @@ class SyncService {
       final cloudUsedCodes = (cloudData['used_codes'] as List?) ?? [];
       final cloudLogs = (cloudData['log_events'] as List?) ?? [];
 
+      // شواهد القبور ثابتة خلال الدمج؛ تحميلها مرة واحدة يمنع استعلام
+      // SQLite منفصل لكل عميل أو عملية سحابية.
+      final mergeTombstoneCloudIds = <String>{};
+      for (final row in await db.allTombstonesRaw()) {
+        final id = row['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          mergeTombstoneCloudIds.add(id);
+        }
+      }
+
       debugPrint(
           '📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
 
@@ -633,7 +643,7 @@ class SyncService {
 
         if (cloudId != null && cloudId.isNotEmpty) {
           if (mode == 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
         }
@@ -656,7 +666,7 @@ class SyncService {
 
         if (localRows.isEmpty) {
           if (mode != 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             final cloudPerm = cc['is_permanently_deleted'] == 1;
             if (cloudPerm) {
               continue;
@@ -703,7 +713,7 @@ class SyncService {
 
         if (cloudId != null && cloudId.isNotEmpty) {
           if (mode == 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
         }
@@ -737,7 +747,7 @@ class SyncService {
 
         if (localRows.isEmpty) {
           if (mode != 'permanent_delete' &&
-              await db.hasTombstone(cloudId)) {
+              mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
           }
 
