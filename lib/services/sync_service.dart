@@ -320,7 +320,6 @@ class SyncService {
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
       final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
@@ -329,6 +328,17 @@ class SyncService {
       final hasCloudChanges = forcePull ||
           (cloudModified != null &&
               (lastSync == null || cloudModified.isAfter(lastSync)));
+
+      // لا ننزّل ملف المزامنة كاملاً إذا أكد Google Drive أن الملف لم يتغير.
+      // عند تعذّر قراءة وقت التعديل أو أول مزامنة، نبقي التنزيل الاحتياطي
+      // حفاظاً على سلوك التوافق والحماية الحالي.
+      final shouldDownloadCloud = forcePull ||
+          cloudModified == null ||
+          lastSync == null ||
+          cloudModified.isAfter(lastSync);
+      final cloudData = shouldDownloadCloud
+          ? await GDriveService.downloadSyncFile()
+          : null;
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
