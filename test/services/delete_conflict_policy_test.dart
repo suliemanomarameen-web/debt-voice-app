@@ -102,4 +102,46 @@ void main() {
       'modification',
     );
   });
+
+  group('conflict timestamp parsing', () {
+    test('uses preferred timestamp when valid', () {
+      expect(
+        resolveConflictTimestamp(
+          preferred: '2026-11-19T10:00:00.000',
+          fallback: '2026-11-18T10:00:00.000',
+        ),
+        DateTime.parse('2026-11-19T10:00:00.000'),
+      );
+    });
+
+    test('falls back when preferred timestamp is empty', () {
+      expect(
+        resolveConflictTimestamp(
+          preferred: '',
+          fallback: '2026-11-18T10:00:00.000',
+        ),
+        DateTime.parse('2026-11-18T10:00:00.000'),
+      );
+    });
+
+    test('falls back when preferred timestamp is malformed', () {
+      expect(
+        resolveConflictTimestamp(
+          preferred: 'not-a-date',
+          fallback: '2026-11-18T10:00:00.000',
+        ),
+        DateTime.parse('2026-11-18T10:00:00.000'),
+      );
+    });
+
+    test('uses safe epoch when both timestamps are invalid', () {
+      expect(
+        resolveConflictTimestamp(
+          preferred: null,
+          fallback: 'not-a-date',
+        ),
+        DateTime(2000),
+      );
+    });
+  });
 }
