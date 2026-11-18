@@ -920,17 +920,36 @@ class SyncService {
               !actor.can('change_delete_conflict_policy')) {
             debugPrint(
                 '🚫 [Sync] Rejected delete policy request: unauthorized actor');
+            await SettingsService.markDeletePolicyRequestProcessed(
+                request['request_id']?.toString(), 'rejected_unauthorized');
             await SettingsService.removePendingDeletePolicyRequest(
                 request['request_id']?.toString());
             continue;
           }
 
+          final requestId = request['request_id']?.toString();
+          final currentRevision =
+              await SettingsService.getDeletePolicyRevision();
+          final baseRevision = request['base_revision'] is int
+              ? request['base_revision'] as int
+              : -1;
+          if (baseRevision != currentRevision) {
+            await SettingsService.markDeletePolicyRequestProcessed(
+                requestId, 'rejected_stale');
+            await SettingsService.removePendingDeletePolicyRequest(requestId);
+            debugPrint('⚠️ [Sync] Rejected stale delete policy request');
+            continue;
+          }
+
           final approval =
               await SettingsService.approveDeletePolicyRequest(request);
-          await SettingsService.removePendingDeletePolicyRequest(
-              request['request_id']?.toString());
+          if (approval['request_id'] != requestId) {
+            await SettingsService.markDeletePolicyRequestProcessed(
+                requestId, 'rejected_invalid');
+          }
+          await SettingsService.removePendingDeletePolicyRequest(requestId);
           debugPrint(
-              '✅ [Sync] Delete policy request processed (revision=${approval['revision']})');
+              '✅ [Sync] Delete policy request handled (revision=${approval['revision']})');
         }
       } else {
         final rawApproval = cloudData['delete_policy_approval'];
