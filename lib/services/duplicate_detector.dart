@@ -149,6 +149,19 @@ class DuplicateDetector {
       defaultValue: 'code',
     );
 
+    // في وضع الرمز، لا داعي لفحص كل العمليات المحلية؛ الفهرس يحتفظ
+    // بترتيب القائمة الأصلية ويعيد فقط العمليات ذات الرمز المطابق تماماً.
+    final localTransactionsByCode = <String, List<Transaction>>{};
+    if (transactionDuplicateMode == 'code') {
+      for (final transaction in localTransactions) {
+        final code = transaction.code;
+        if (code == null || code.isEmpty) continue;
+        localTransactionsByCode
+            .putIfAbsent(code, () => <Transaction>[])
+            .add(transaction);
+      }
+    }
+
     for (final cloudT in cloudTransactions) {
       if (reachedMax()) break;
 
@@ -157,7 +170,17 @@ class DuplicateDetector {
       if (tombstoneCloudIds.contains(cloudId)) continue;
       if (localTransactionCloudIds.contains(cloudId)) continue;
 
-      for (final localT in localTransactions) {
+      final List<Transaction> transactionCandidates;
+      if (transactionDuplicateMode == 'code') {
+        final code = cloudT['code'] as String?;
+        transactionCandidates = code == null || code.isEmpty
+            ? const <Transaction>[]
+            : (localTransactionsByCode[code] ?? const <Transaction>[]);
+      } else {
+        transactionCandidates = localTransactions;
+      }
+
+      for (final localT in transactionCandidates) {
         if (reachedMax()) break;
         if (localT.cloudId == cloudId) continue;
         if (localT.cloudId == null || localT.cloudId!.isEmpty) continue;
