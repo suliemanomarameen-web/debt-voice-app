@@ -414,6 +414,13 @@ class SettingsService {
     if (expectedPrimary == null ||
         approval['approved_by_device_id'] != expectedPrimary) return false;
     final settings = Map<String, dynamic>.from(approval['settings'] as Map? ?? {});
+    if (_policyKeys.any((key) => settings[key] is! bool) ||
+        (settings[AppSettings.permanentDeleteAlwaysWins] == true &&
+            settings[AppSettings.modificationAlwaysWins] == true) ||
+        (settings[AppSettings.softDeleteAlwaysWins] == true &&
+            settings[AppSettings.softModificationAlwaysWins] == true)) {
+      return false;
+    }
     await _applyDeletePolicyValues(settings);
     final sp = await SharedPreferences.getInstance();
     await sp.setInt(_policyRevisionKey, revision);
