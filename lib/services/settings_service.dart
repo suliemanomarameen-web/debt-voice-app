@@ -426,6 +426,15 @@ class SettingsService {
     await _applyDeletePolicyValues(settings);
     await sp.setInt(_policyRevisionKey, revision);
     final primaryId = await DeviceService.getDeviceId();
+    final previousApproval = await getDeletePolicyApproval();
+    final processedIds = List<String>.from(
+        (previousApproval['processed_request_ids'] as List? ?? [])
+            .map((e) => e.toString()));
+    final requestId = request['request_id']?.toString();
+    if (requestId != null && requestId.isNotEmpty &&
+        !processedIds.contains(requestId)) {
+      processedIds.add(requestId);
+    }
     final approval = {
       'approved': true,
       'revision': revision,
@@ -435,6 +444,7 @@ class SettingsService {
       'request_id': request['request_id'],
       'request_status': 'approved',
       'last_processed_request_id': request['request_id'],
+      'processed_request_ids': processedIds,
       'updated_at': DateTime.now().toIso8601String(),
       'settings': {
         for (final key in _policyKeys)
@@ -452,6 +462,11 @@ class SettingsService {
     if (requestId == null || requestId.isEmpty) return;
     final sp = await SharedPreferences.getInstance();
     final approval = await getDeletePolicyApproval();
+    final processedIds = List<String>.from(
+        (approval['processed_request_ids'] as List? ?? [])
+            .map((e) => e.toString()));
+    if (!processedIds.contains(requestId)) processedIds.add(requestId);
+    approval['processed_request_ids'] = processedIds;
     approval['last_processed_request_id'] = requestId;
     approval['request_status'] = status;
     await sp.setString(_policyApprovalKey, jsonEncode(approval));
@@ -465,10 +480,17 @@ class SettingsService {
     if (expectedPrimary == null ||
         approval['approved_by_device_id'] != expectedPrimary) return false;
 
-    final processedRequestId =
-        approval['last_processed_request_id']?.toString() ??
-        approval['request_id']?.toString();
-    await removePendingDeletePolicyRequest(processedRequestId);
+    final processedRequestIds = <String>{
+      ...((approval['processed_request_ids'] as List? ?? [])
+          .map((e) => e.toString())),
+      if (approval['last_processed_request_id'] != null)
+        approval['last_processed_request_id'].toString(),
+      if (approval['request_id'] != null)
+        approval['request_id'].toString(),
+    };
+    for (final requestId in processedRequestIds) {
+      await removePendingDeletePolicyRequest(requestId);
+    }
 
     final revision = approval['revision'] as int;
     if (revision <= await getDeletePolicyRevision()) return false;
