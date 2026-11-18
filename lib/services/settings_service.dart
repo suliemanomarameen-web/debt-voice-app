@@ -254,22 +254,25 @@ class SettingsService {
       final sp = await SharedPreferences.getInstance();
       previousRevision = sp.getInt(_policyRevisionKey);
       previousApproval = sp.getString(_policyApprovalKey);
-      _writingPolicyInternally = true;
-      for (final entry in values.entries) {
-        if (!await sp.setBool(entry.key, entry.value)) {
-          throw StateError('تعذر حفظ سياسة التعارض');
-        }
-        _cache[entry.key] = entry.value;
-      }
-      _writingPolicyInternally = false;
-
       final deviceId = await DeviceService.getDeviceId();
+
       final currentSettings = <String, bool>{
         for (final key in _policyKeys)
           key: getBool(key, defaultValue: AppSettings.defaults[key] as bool),
       };
 
       if (isPrimary) {
+        // الجهاز الأساسي يعتمد التغيير محلياً ثم يرفعه كسياسة معتمدة.
+        _writingPolicyInternally = true;
+        for (final entry in values.entries) {
+          if (!await sp.setBool(entry.key, entry.value)) {
+            throw StateError('تعذر حفظ سياسة التعارض');
+          }
+          _cache[entry.key] = entry.value;
+          currentSettings[entry.key] = entry.value;
+        }
+        _writingPolicyInternally = false;
+
         final revision = (sp.getInt(_policyRevisionKey) ?? -1) + 1;
         await sp.setInt(_policyRevisionKey, revision);
         final primaryId = await DeviceService.getPrimaryDeviceId() ?? deviceId;
@@ -281,13 +284,16 @@ class SettingsService {
           'settings': currentSettings,
         }));
       } else {
+        // الجهاز الثانوي لا يطبّق الطلب محلياً قبل اعتماده من الأساسي.
+        final requestedSettings = Map<String, bool>.from(currentSettings)
+          ..addAll(values);
         final request = {
           'request_id': '$deviceId-${DateTime.now().microsecondsSinceEpoch}',
           'actor_accountant_id': accountant!.id,
           'actor_device_id': deviceId,
           'created_at': DateTime.now().toIso8601String(),
           'base_revision': sp.getInt(_policyRevisionKey) ?? -1,
-          'settings': currentSettings,
+          'settings': requestedSettings,
         };
         final existing = await getPendingDeletePolicyRequests();
         existing.removeWhere((item) =>
