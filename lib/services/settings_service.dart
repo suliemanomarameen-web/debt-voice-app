@@ -18,7 +18,7 @@ class SettingsService {
   static final Map<String, dynamic> _cache = {};
   static bool _loaded = false;
 
-  static const String _pendingPolicyRequestKey = 'pending_delete_policy_request_v1';
+  static const String _pendingPolicyRequestKey = 'pending_delete_policy_requests_v1';
   static const String _policyApprovalKey = 'delete_policy_approval_v1';
   static const String _policyRevisionKey = 'delete_policy_revision_v1';
   static bool _writingPolicyInternally = false;
@@ -271,14 +271,20 @@ class SettingsService {
           'settings': currentSettings,
         }));
       } else {
-        await sp.setString(_pendingPolicyRequestKey, jsonEncode({
+        final request = {
           'request_id': '$deviceId-${DateTime.now().microsecondsSinceEpoch}',
           'actor_accountant_id': accountant!.id,
           'actor_device_id': deviceId,
           'created_at': DateTime.now().toIso8601String(),
           'base_revision': sp.getInt(_policyRevisionKey) ?? -1,
           'settings': currentSettings,
-        }));
+        };
+        final existing = await getPendingDeletePolicyRequests();
+        existing.removeWhere((item) =>
+            item['actor_accountant_id'] == accountant.id &&
+            item['actor_device_id'] == deviceId);
+        existing.add(request);
+        await sp.setString(_pendingPolicyRequestKey, jsonEncode(existing));
       }
 
       _notifyIfShared(keys.first);
@@ -290,15 +296,42 @@ class SettingsService {
     }
   }
 
-  static Future<Map<String, dynamic>?> getPendingDeletePolicyRequest() async {
+  static Future<List<Map<String, dynamic>>> getPendingDeletePolicyRequests() async {
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString(_pendingPolicyRequestKey);
-    if (raw == null || raw.isEmpty) return null;
+    if (raw == null || raw.isEmpty) return [];
     try {
-      return Map<String, dynamic>.from(jsonDecode(raw) as Map);
-    } catch (_) {
-      return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+      }
+      if (decoded is Map) return [Map<String, dynamic>.from(decoded)];
+    } catch (_) {}
+    return [];
+  }
+
+  static Future<void> mergePendingDeletePolicyRequests(List<dynamic> incoming) async {
+    final sp = await SharedPreferences.getInstance();
+    final merged = await getPendingDeletePolicyRequests();
+    final ids = merged.map((e) => e['request_id']?.toString()).toSet();
+    for (final item in incoming) {
+      if (item is! Map) continue;
+      final request = Map<String, dynamic>.from(item);
+      final id = request['request_id']?.toString();
+      if (id != null && id.isNotEmpty && ids.add(id)) merged.add(request);
     }
+    await sp.setString(_pendingPolicyRequestKey, jsonEncode(merged));
+  }
+
+  static Future<void> removePendingDeletePolicyRequest(String? requestId) async {
+    if (requestId == null || requestId.isEmpty) return;
+    final sp = await SharedPreferences.getInstance();
+    final requests = await getPendingDeletePolicyRequests();
+    requests.removeWhere((item) => item['request_id']?.toString() == requestId);
+    await sp.setString(_pendingPolicyRequestKey, jsonEncode(requests));
   }
 
   static Future<Map<String, dynamic>> getDeletePolicyApproval() async {
@@ -337,8 +370,16 @@ class SettingsService {
         : -1;
     // لا نقبل طلباً بُني على سياسة أقدم من السياسة المعتمدة حالياً.
     // على الجهاز الثانوي أن يستقبل السياسة الأحدث أولاً ثم يعيد إرسال طلبه.
-    if (baseRevision < currentRevision) {
+    if (baseRevision != currentRevision) {
       await sp.remove(_pendingPolicyRequestKey);
+      return await getDeletePolicyApproval();
+    }
+    if (_policyKeys.any((key) => settings[key] is! bool) ||
+        (settings[AppSettings.permanentDeleteAlwaysWins] == true &&
+            settings[AppSettings.modificationAlwaysWins] == true) ||
+        (settings[AppSettings.softDeleteAlwaysWins] == true &&
+            settings[AppSettings.softModificationAlwaysWins] == true)) {
+      await removePendingDeletePolicyRequest(request['request_id']?.toString());
       return await getDeletePolicyApproval();
     }
     final revision = currentRevision + 1;
@@ -351,6 +392,7 @@ class SettingsService {
       'approved_by_device_id': primaryId,
       'actor_accountant_id': request['actor_accountant_id'],
       'actor_device_id': request['actor_device_id'],
+      'request_id': request['request_id'],
       'updated_at': DateTime.now().toIso8601String(),
       'settings': {
         for (final key in _policyKeys)
@@ -358,7 +400,7 @@ class SettingsService {
       },
     };
     await sp.setString(_policyApprovalKey, jsonEncode(approval));
-    await sp.remove(_pendingPolicyRequestKey);
+    await removePendingDeletePolicyRequest(request['request_id']?.toString());
     return approval;
   }
 
@@ -376,7 +418,7 @@ class SettingsService {
     final sp = await SharedPreferences.getInstance();
     await sp.setInt(_policyRevisionKey, revision);
     await sp.setString(_policyApprovalKey, jsonEncode(approval));
-    await sp.remove(_pendingPolicyRequestKey);
+    await removePendingDeletePolicyRequest(approval['request_id']?.toString());
     return true;
   }
 
