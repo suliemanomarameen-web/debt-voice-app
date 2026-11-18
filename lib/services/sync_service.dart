@@ -656,11 +656,26 @@ class SyncService {
       }
 
       final localCustomersByCloudId = <String, Map<String, dynamic>>{};
+      final customerIdsToLookup = cloudCustomerIdCounts.entries
+          .where((entry) => entry.value == 1)
+          .map((entry) => entry.key)
+          .toList();
       try {
-        for (final row in await db.allCustomersRaw()) {
-          final id = row['cloud_id'] as String?;
-          if (id != null && id.isNotEmpty) {
-            localCustomersByCloudId.putIfAbsent(id, () => row);
+        final database = await db.database;
+        for (var offset = 0;
+            offset < customerIdsToLookup.length;
+            offset += 500) {
+          final ids = customerIdsToLookup.skip(offset).take(500).toList();
+          final rows = await database.query(
+            'customers',
+            where: 'cloud_id IN (${List.filled(ids.length, '?').join(',')})',
+            whereArgs: ids,
+          );
+          for (final row in rows) {
+            final id = row['cloud_id'] as String?;
+            if (id != null && id.isNotEmpty) {
+              localCustomersByCloudId.putIfAbsent(id, () => row);
+            }
           }
         }
       } catch (e) {
@@ -682,11 +697,27 @@ class SyncService {
       }
 
       final localTransactionsByCloudId = <String, Map<String, dynamic>>{};
+      final transactionIdsToLookup = cloudTransactionIdCounts.entries
+          .where((entry) => entry.value == 1)
+          .map((entry) => entry.key)
+          .toList();
       try {
-        for (final row in await db.allTransactionsRaw()) {
-          final id = row['cloud_id'] as String?;
-          if (id != null && id.isNotEmpty) {
-            localTransactionsByCloudId.putIfAbsent(id, () => row);
+        final database = await db.database;
+        for (var offset = 0;
+            offset < transactionIdsToLookup.length;
+            offset += 500) {
+          final ids =
+              transactionIdsToLookup.skip(offset).take(500).toList();
+          final rows = await database.query(
+            'transactions',
+            where: 'cloud_id IN (${List.filled(ids.length, '?').join(',')})',
+            whereArgs: ids,
+          );
+          for (final row in rows) {
+            final id = row['cloud_id'] as String?;
+            if (id != null && id.isNotEmpty) {
+              localTransactionsByCloudId.putIfAbsent(id, () => row);
+            }
           }
         }
       } catch (e) {
