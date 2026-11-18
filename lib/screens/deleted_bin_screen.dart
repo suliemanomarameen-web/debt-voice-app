@@ -205,7 +205,14 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     if (confirm != true) return;
 
     final accountant = await _getAccountantName();
-    await db.hardDeleteTransaction(t.id!);
+    final deleted = await db.hardDeleteTransaction(t.id!);
+
+    if (deleted != 1) {
+      if (!mounted) return;
+      _showSnack('تعذر حذف العملية نهائيًا، لم يتم تأكيد حذفها', Colors.red);
+      await _load();
+      return;
+    }
 
     await LoggerService.log(
       action: '🗑️ حذف نهائي لعملية',
@@ -218,7 +225,7 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 
     if (!mounted) return;
     _showSnack('تم الحذف النهائي', Colors.red);
-    _load();
+    await _load();
   }
 
   Future<void> _emptyBin() async {
