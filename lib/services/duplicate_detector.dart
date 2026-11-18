@@ -66,7 +66,7 @@ class DuplicateDetector {
     final localCustomerByCloudId = <String, dynamic>{};
     for (final customer in localCustomers) {
       final id = customer.cloudId;
-      if (id != null && id.isNotEmpty) {
+      if (id != null && id.isNotEmpty && customer.id != null) {
         localCustomerByCloudId.putIfAbsent(id, () => customer);
       }
     }
