@@ -1847,32 +1847,45 @@ class DatabaseHelper {
   Future<int> hardDeleteTransaction(int id) async {
     try {
       final db = await database;
-      final rows = await db.query('transactions',
-          where: 'id = ?', whereArgs: [id], limit: 1);
-      String? cloudId;
-      if (rows.isNotEmpty) {
-        cloudId = rows.first['cloud_id'] as String?;
-      }
-
-      final now = _now();
-      final r = await db.update(
+      final rows = await db.query(
         'transactions',
-        {
-          'is_deleted': 1,
-          'deleted_at': now,
-          'updated_at': now,
-        },
+        columns: ['cloud_id'],
         where: 'id = ?',
         whereArgs: [id],
+        limit: 1,
       );
 
-      if (cloudId != null && cloudId.isNotEmpty) {
-        await addTombstone(cloudId: cloudId, type: 'transaction');
-      }
+      if (rows.isEmpty) return 0;
 
-      _notifyChanged();
-      return r;
+      final cloudId = rows.first['cloud_id'] as String?;
+      final now = _now();
+
+      // الحذف النهائي يجب أن يزيل العملية فعليًا من قاعدة البيانات،
+      // مع حفظ شاهد القبر في المعاملة نفسها حتى لا تعود من جهاز آخر.
+      final deleted = await db.transaction((txn) async {
+        if (cloudId != null && cloudId.isNotEmpty) {
+          await txn.insert(
+            'deleted_tombstones',
+            {
+              'cloud_id': cloudId,
+              'type': 'transaction',
+              'deleted_at': now,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+
+        return txn.delete(
+          'transactions',
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      });
+
+      if (deleted > 0) _notifyChanged();
+      return deleted;
     } catch (e) {
+      debugPrint('❌ hardDeleteTransaction: $e');
       return 0;
     }
   }
