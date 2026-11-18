@@ -52,7 +52,7 @@ DateTime resolveConflictTimestamp({
 /// transaction. This is kept pure so the synchronization decision is testable.
 bool shouldApplyPermanentTombstone({
   required String mode,
-  required bool hasLocalRow,
+  required bool localRowIsActive,
   required bool cloudRowIsActive,
   required DateTime tombstoneTime,
   required DateTime localTime,
@@ -62,12 +62,12 @@ bool shouldApplyPermanentTombstone({
 
   if (mode == 'modification') {
     // An existing local row or active cloud row wins, regardless of age.
-    return !hasLocalRow && !cloudRowIsActive;
+    return !localRowIsActive && !cloudRowIsActive;
   }
 
   // Latest wins: only a strictly newer active record defeats the tombstone.
   if (cloudRowIsActive && cloudTime.isAfter(tombstoneTime)) return false;
-  if (hasLocalRow && localTime.isAfter(tombstoneTime)) return false;
+  if (localRowIsActive && localTime.isAfter(tombstoneTime)) return false;
   return true;
 }
 
