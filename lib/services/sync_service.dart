@@ -548,7 +548,7 @@ class SyncService {
           if (cloudRowIsActive) {
             final cloudTime = DateTime.tryParse(
                   cloudRow!['updated_at'] as String? ??
-                      cloudRow['created_at'] as String? ??
+                      cloudRow!['created_at'] as String? ??
                       '',
                 ) ??
                 DateTime(2000);
