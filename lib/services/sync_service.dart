@@ -568,6 +568,7 @@ class SyncService {
     }
 
     await _applyCloudTombstones(cloudData);
+    await _processDeletePolicySync(cloudData);
 
     int addedCustomers = 0;
     int addedTransactions = 0;
@@ -803,6 +804,50 @@ class SyncService {
     };
   }
 
+  /// يعالج طلب تغيير سياسة الحذف على الجهاز الأساسي، ويطبق السياسة
+  /// المعتمدة فقط على الأجهزة الثانوية.
+  static Future<void> _processDeletePolicySync(
+      Map<String, dynamic> cloudData) async {
+    try {
+      final isPrimary = await DeviceService.isPrimaryDevice();
+      if (isPrimary) {
+        final raw = cloudData['delete_policy_request'];
+        if (raw is! Map) return;
+        final request = Map<String, dynamic>.from(raw);
+        final actorId = request['actor_accountant_id'] as String?;
+        final actorDeviceId = request['actor_device_id'] as String?;
+        if (actorId == null || actorId.isEmpty ||
+            actorDeviceId == null || actorDeviceId.isEmpty) return;
+
+        // التحقق من سجل المحاسب المحلي المعتمد قبل قبول أي طلب قادم من السحابة.
+        final actor = AccountantsService.getById(actorId);
+        if (actor == null ||
+            actor.status != 'active' ||
+            actor.deviceId != actorDeviceId ||
+            !actor.can('change_delete_conflict_policy')) {
+          debugPrint('🚫 [Sync] Rejected delete policy request: unauthorized actor');
+          return;
+        }
+
+        final approval =
+            await SettingsService.approveDeletePolicyRequest(request);
+        debugPrint(
+            '✅ [Sync] Delete policy request processed (revision=${approval['revision']})');
+      } else {
+        final raw = cloudData['delete_policy_approval'];
+        if (raw is Map) {
+          final applied = await SettingsService.applyApprovedDeletePolicy(
+              Map<String, dynamic>.from(raw));
+          if (applied) {
+            debugPrint('✅ [Sync] Applied primary-approved delete policy');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Sync] Delete policy sync error: $e');
+    }
+  }
+
   static Future<void> _importSharedSettings(Map<String, dynamic> data) async {
     final settingsMap = data['settings'] as Map<String, dynamic>?;
     if (settingsMap == null) return;
@@ -810,7 +855,13 @@ class SyncService {
     _isImportingSettings = true;
     try {
       for (final entry in settingsMap.entries) {
-        if (AppSettings.sharedSettings.contains(entry.key)) {
+        if (AppSettings.sharedSettings.contains(entry.key) &&
+            !{
+              AppSettings.permanentDeleteAlwaysWins,
+              AppSettings.modificationAlwaysWins,
+              AppSettings.softDeleteAlwaysWins,
+              AppSettings.softModificationAlwaysWins,
+            }.contains(entry.key)) {
           try {
             await SettingsService.set(entry.key, entry.value);
           } catch (e) {
@@ -871,6 +922,18 @@ class SyncService {
     } finally {
       _isImportingSettings = false;
     }
+  }
+
+  static String _resolveSoftDeleteConflictMode(
+      bool modificationAlwaysWins, bool softDeleteAlwaysWins) {
+    if (softDeleteAlwaysWins && modificationAlwaysWins) {
+      debugPrint(
+          '⚠️ [Sync] Both soft-delete policies enabled — delete wins for safety');
+      return 'soft_delete';
+    }
+    if (softDeleteAlwaysWins) return 'soft_delete';
+    if (modificationAlwaysWins) return 'modification';
+    return 'default';
   }
 
   static String _resolveConflictMode(
@@ -1191,11 +1254,11 @@ class SyncService {
     final customerName = cloudRow['customer_name'] as String? ??
         localRow['customer_name'] as String?;
 
-    final mode = _resolveConflictMode(
-      SettingsService.getBool(AppSettings.modificationAlwaysWins,
+    final mode = _resolveSoftDeleteConflictMode(
+      SettingsService.getBool(AppSettings.softModificationAlwaysWins,
           defaultValue: false),
-      SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
-          defaultValue: true),
+      SettingsService.getBool(AppSettings.softDeleteAlwaysWins,
+          defaultValue: false),
     );
 
     if (localDeleted != cloudDeleted) {
@@ -1247,7 +1310,7 @@ class SyncService {
         }
       }
 
-      if (mode == 'permanent_delete') {
+      if (mode == 'soft_delete') {
         if (deletedIsLocal) {
           return _ResolutionResult('no_change');
         } else {
@@ -1566,6 +1629,10 @@ class SyncService {
         'tombstones': tombstones,
         'settings': sharedSettingsMap,
         'code_settings': codeSettingsMap,
+        'delete_policy_request':
+            await SettingsService.getPendingDeletePolicyRequest(),
+        'delete_policy_approval':
+            await SettingsService.getDeletePolicyApproval(),
         ...accountantsData,
       };
 
