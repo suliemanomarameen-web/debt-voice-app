@@ -631,11 +631,16 @@ class SyncService {
       // شواهد القبور ثابتة خلال الدمج؛ تحميلها مرة واحدة يمنع استعلام
       // SQLite منفصل لكل عميل أو عملية سحابية.
       final mergeTombstoneCloudIds = <String>{};
-      for (final row in await db.allTombstonesRaw()) {
-        final id = row['cloud_id'] as String?;
-        if (id != null && id.isNotEmpty) {
-          mergeTombstoneCloudIds.add(id);
+      try {
+        for (final row in await db.allTombstonesRaw()) {
+          final id = row['cloud_id'] as String?;
+          if (id != null && id.isNotEmpty) {
+            mergeTombstoneCloudIds.add(id);
+          }
         }
+      } catch (e) {
+        // hasTombstone كان يعيد false عند تعذر القراءة.
+        debugPrint('⚠️ [Sync] Could not preload tombstones: $e');
       }
 
       // فهرسة السجلات المحلية حسب cloud_id. نستخدم الفهرس للسجلات السحابية
@@ -651,10 +656,18 @@ class SyncService {
       }
 
       final localCustomersByCloudId = <String, Map<String, dynamic>>{};
-      for (final row in await db.allCustomersRaw()) {
-        final id = row['cloud_id'] as String?;
-        if (id != null && id.isNotEmpty) {
-          localCustomersByCloudId.putIfAbsent(id, () => row);
+      try {
+        for (final row in await db.allCustomersRaw()) {
+          final id = row['cloud_id'] as String?;
+          if (id != null && id.isNotEmpty) {
+            localCustomersByCloudId.putIfAbsent(id, () => row);
+          }
+        }
+      } catch (e) {
+        // عند فشل التحميل المسبق نستخدم استعلام السجل الفردي القديم.
+        debugPrint('⚠️ [Sync] Could not preload customers: $e');
+        for (final id in cloudCustomerIdCounts.keys.toList()) {
+          cloudCustomerIdCounts[id] = (cloudCustomerIdCounts[id] ?? 0) + 1;
         }
       }
 
@@ -669,10 +682,19 @@ class SyncService {
       }
 
       final localTransactionsByCloudId = <String, Map<String, dynamic>>{};
-      for (final row in await db.allTransactionsRaw()) {
-        final id = row['cloud_id'] as String?;
-        if (id != null && id.isNotEmpty) {
-          localTransactionsByCloudId.putIfAbsent(id, () => row);
+      try {
+        for (final row in await db.allTransactionsRaw()) {
+          final id = row['cloud_id'] as String?;
+          if (id != null && id.isNotEmpty) {
+            localTransactionsByCloudId.putIfAbsent(id, () => row);
+          }
+        }
+      } catch (e) {
+        // عند فشل التحميل المسبق نستخدم استعلام السجل الفردي القديم.
+        debugPrint('⚠️ [Sync] Could not preload transactions: $e');
+        for (final id in cloudTransactionIdCounts.keys.toList()) {
+          cloudTransactionIdCounts[id] =
+              (cloudTransactionIdCounts[id] ?? 0) + 1;
         }
       }
 
