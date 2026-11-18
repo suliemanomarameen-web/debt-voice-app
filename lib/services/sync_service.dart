@@ -514,7 +514,7 @@ class SyncService {
 
       // سياسة الحذف النهائي مستقلة عن الحذف المؤقت. عند اختيار التعديل
       // أو الأحدث، لا نسمح لشاهد قبر أقدم بإزالة عملية عُدّلت بعده.
-      if (type == 'transaction' && mode != 'permanent_delete') {
+      if (type == 'transaction') {
         final localRows = await dbi.query(
           'transactions',
           where: 'cloud_id = ?',
