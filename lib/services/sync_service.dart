@@ -617,6 +617,44 @@ class SyncService {
         }
       }
 
+      // فهرسة السجلات المحلية حسب cloud_id. نستخدم الفهرس للسجلات السحابية
+      // ذات المعرّف الفريد فقط؛ إذا تكرر المعرّف في الملف السحابي نحتفظ
+      // بالاستعلام المتتابع القديم حتى يرى كل تكرار نتيجة التعديل السابق.
+      final cloudCustomerIdCounts = <String, int>{};
+      for (final item in cloudCustomers) {
+        if (item is! Map) continue;
+        final id = item['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          cloudCustomerIdCounts[id] = (cloudCustomerIdCounts[id] ?? 0) + 1;
+        }
+      }
+
+      final localCustomersByCloudId = <String, Map<String, dynamic>>{};
+      for (final row in await db.allCustomersRaw()) {
+        final id = row['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          localCustomersByCloudId.putIfAbsent(id, () => row);
+        }
+      }
+
+      final cloudTransactionIdCounts = <String, int>{};
+      for (final item in cloudTransactions) {
+        if (item is! Map) continue;
+        final id = item['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          cloudTransactionIdCounts[id] =
+              (cloudTransactionIdCounts[id] ?? 0) + 1;
+        }
+      }
+
+      final localTransactionsByCloudId = <String, Map<String, dynamic>>{};
+      for (final row in await db.allTransactionsRaw()) {
+        final id = row['cloud_id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          localTransactionsByCloudId.putIfAbsent(id, () => row);
+        }
+      }
+
       debugPrint(
           '📊 [Sync] Cloud data: ${cloudCustomers.length} customers, ${cloudTransactions.length} transactions');
 
@@ -659,12 +697,21 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('customers',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final Map<String, dynamic>? localCustomerRow;
+        if (cloudCustomerIdCounts[cloudId] == 1) {
+          localCustomerRow = localCustomersByCloudId[cloudId];
+        } else {
+          final rows = await db.database.then((d) => d.query(
+              'customers',
+              where: 'cloud_id = ?',
+              whereArgs: [cloudId],
+              limit: 1));
+          localCustomerRow = rows.isEmpty ? null : rows.first;
+        }
 
         final oldCloudId = cc['id'] as int?;
 
-        if (localRows.isEmpty) {
+        if (localCustomerRow == null) {
           if (mode != 'permanent_delete' &&
               mergeTombstoneCloudIds.contains(cloudId)) {
             final cloudPerm = cc['is_permanently_deleted'] == 1;
@@ -687,11 +734,11 @@ class SyncService {
             );
           }
         } else {
-          final localId = localRows.first['id'] as int;
+          final localId = localCustomerRow['id'] as int;
           if (oldCloudId != null) cloudIdToLocalId[oldCloudId] = localId;
 
           final resolution = await _resolveCustomerConflict(
-            localRow: localRows.first,
+            localRow: localCustomerRow,
             cloudRow: cc,
           );
 
@@ -742,10 +789,19 @@ class SyncService {
           continue;
         }
 
-        final localRows = await db.database.then((d) => d.query('transactions',
-            where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1));
+        final Map<String, dynamic>? localTransactionRow;
+        if (cloudTransactionIdCounts[cloudId] == 1) {
+          localTransactionRow = localTransactionsByCloudId[cloudId];
+        } else {
+          final rows = await db.database.then((d) => d.query(
+              'transactions',
+              where: 'cloud_id = ?',
+              whereArgs: [cloudId],
+              limit: 1));
+          localTransactionRow = rows.isEmpty ? null : rows.first;
+        }
 
-        if (localRows.isEmpty) {
+        if (localTransactionRow == null) {
           if (mode != 'permanent_delete' &&
               mergeTombstoneCloudIds.contains(cloudId)) {
             continue;
@@ -767,7 +823,7 @@ class SyncService {
           }
         } else {
           final resolution = await _resolveTransactionConflict(
-            localRow: localRows.first,
+            localRow: localTransactionRow,
             cloudRow: ct,
           );
 
