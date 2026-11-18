@@ -335,7 +335,13 @@ class SettingsService {
     final baseRevision = request['base_revision'] is int
         ? request['base_revision'] as int
         : -1;
-    final revision = (currentRevision > baseRevision ? currentRevision : baseRevision) + 1;
+    // لا نقبل طلباً بُني على سياسة أقدم من السياسة المعتمدة حالياً.
+    // على الجهاز الثانوي أن يستقبل السياسة الأحدث أولاً ثم يعيد إرسال طلبه.
+    if (baseRevision < currentRevision) {
+      await sp.remove(_pendingPolicyRequestKey);
+      return await getDeletePolicyApproval();
+    }
+    final revision = currentRevision + 1;
     await _applyDeletePolicyValues(settings);
     await sp.setInt(_policyRevisionKey, revision);
     final primaryId = await DeviceService.getDeviceId();
