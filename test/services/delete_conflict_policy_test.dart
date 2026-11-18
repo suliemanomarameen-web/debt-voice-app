@@ -103,6 +103,89 @@ void main() {
     );
   });
 
+  group('permanent tombstone application decision', () {
+    final tombstone = DateTime.parse('2026-11-10T10:00:00');
+    final older = DateTime.parse('2026-11-09T10:00:00');
+    final newer = DateTime.parse('2026-11-11T10:00:00');
+
+    test('permanent-delete policy always applies the tombstone', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'permanent_delete',
+        hasLocalRow: true,
+        cloudRowIsActive: true,
+        tombstoneTime: tombstone,
+        localTime: newer,
+        cloudTime: newer,
+      ), isTrue);
+    });
+
+    test('modification policy defers when a local row exists', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'modification',
+        hasLocalRow: true,
+        cloudRowIsActive: false,
+        tombstoneTime: tombstone,
+        localTime: older,
+        cloudTime: older,
+      ), isFalse);
+    });
+
+    test('modification policy defers when a cloud row is active', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'modification',
+        hasLocalRow: false,
+        cloudRowIsActive: true,
+        tombstoneTime: tombstone,
+        localTime: older,
+        cloudTime: older,
+      ), isFalse);
+    });
+
+    test('modification policy applies when no local or active cloud row remains', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'modification',
+        hasLocalRow: false,
+        cloudRowIsActive: false,
+        tombstoneTime: tombstone,
+        localTime: older,
+        cloudTime: older,
+      ), isTrue);
+    });
+
+    test('latest policy keeps a newer active cloud row', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'default',
+        hasLocalRow: false,
+        cloudRowIsActive: true,
+        tombstoneTime: tombstone,
+        localTime: older,
+        cloudTime: newer,
+      ), isFalse);
+    });
+
+    test('latest policy keeps a newer local row', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'default',
+        hasLocalRow: true,
+        cloudRowIsActive: false,
+        tombstoneTime: tombstone,
+        localTime: newer,
+        cloudTime: older,
+      ), isFalse);
+    });
+
+    test('latest policy applies when the tombstone is newer', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'default',
+        hasLocalRow: true,
+        cloudRowIsActive: true,
+        tombstoneTime: tombstone,
+        localTime: older,
+        cloudTime: older,
+      ), isTrue);
+    });
+  });
+
   group('conflict timestamp parsing', () {
     test('uses preferred timestamp when valid', () {
       expect(
