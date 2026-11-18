@@ -447,6 +447,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                   final isDangerous = key.startsWith('manage_') ||
                       key == 'access_advanced_settings' ||
                       key == 'can_become_primary' ||
+                      key == 'change_delete_conflict_policy' ||
                       key == 'delete_customers' ||
                       key == 'delete_transactions';
                   return SwitchListTile(

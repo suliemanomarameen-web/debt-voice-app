@@ -8,6 +8,7 @@ import '../services/voice_prompts_service.dart';
 import '../models/log_event.dart';
 import 'logs_screen.dart';
 import 'voice_prompts_screen.dart';
+import 'delete_conflict_policy_screen.dart';
 
 class AdvancedSettingsScreen extends StatefulWidget {
   const AdvancedSettingsScreen({super.key});
@@ -526,8 +527,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   AppSettings.autoCleanupDeleted,
                   AppSettings.blockCustomerDeletion,
                   AppSettings.blockTransactionDeletion,
-                  AppSettings.permanentDeleteAlwaysWins,
-                  AppSettings.modificationAlwaysWins,
                 ],
                 children: [
                   _buildBoolTile(AppSettings.blockDeleteNonzeroBalance),
@@ -540,8 +539,25 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.blockCustomerDeletion),
                   _buildBoolTile(AppSettings.blockTransactionDeletion),
                   const Divider(height: 1),
-                  _buildBoolTile(AppSettings.permanentDeleteAlwaysWins),
-                  _buildBoolTile(AppSettings.modificationAlwaysWins),
+                  ListTile(
+                    leading: const Icon(Icons.rule, color: Colors.deepPurple),
+                    title: const Text('سياسة الحذف والتعديل'),
+                    subtitle: const Text(
+                      'تحديد أيهما يفوز عند تعارض الحذف المؤقت أو النهائي مع التعديل',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DeleteConflictPolicyScreen(),
+                        ),
+                      ).then((_) {
+                        if (mounted) setState(() {});
+                      });
+                    },
+                  ),
                 ]),
             _buildGroup(
                 title: '🔀 نظام التكرار',

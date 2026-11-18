@@ -1129,6 +1129,7 @@ class DatabaseHelper {
   Future<void> addTombstone({
     required String cloudId,
     required String type,
+    String? deletedAt,
   }) async {
     try {
       final db = await database;
@@ -1137,7 +1138,7 @@ class DatabaseHelper {
         {
           'cloud_id': cloudId,
           'type': type,
-          'deleted_at': _now(),
+          'deleted_at': deletedAt ?? _now(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );

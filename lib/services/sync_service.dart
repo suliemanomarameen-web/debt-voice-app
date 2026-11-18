@@ -12,6 +12,7 @@ import 'device_service.dart';
 import 'code_service.dart';
 import 'notification_service.dart';
 import 'duplicate_detector.dart';
+import 'delete_conflict_policy.dart';
 import '../models/log_event.dart';
 
 enum SyncStatus { idle, uploading, downloading, syncing, conflict, error }
@@ -229,7 +230,8 @@ class SyncService {
       await GDriveService.trySilentSignIn();
     }
     if (!GDriveService.isSignedIn) return;
-    await _uploadCurrentState();
+    final cloudData = await GDriveService.downloadSyncFile();
+    await _uploadCurrentState(knownCloudData: cloudData);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
     await prefs.setString(_keyLastUpload, DateTime.now().toIso8601String());
@@ -239,7 +241,7 @@ class SyncService {
 
   static Future<void> mergeDataDirectly(Map<String, dynamic> cloudData) async {
     await _mergeCloudData(cloudData);
-    await _uploadCurrentState();
+    await _uploadCurrentState(knownCloudData: cloudData);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastSyncTime, DateTime.now().toIso8601String());
     await _saveHasPendingChanges(false);
@@ -415,7 +417,7 @@ class SyncService {
 
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
-        final uploadOk = await _uploadCurrentState();
+        final uploadOk = await _uploadCurrentState(knownCloudData: cloudData);
 
         if (!uploadOk) {
           if (!silent) _setStatus(SyncStatus.error);
@@ -492,12 +494,14 @@ class SyncService {
     if (tombstones == null || tombstones.isEmpty) return;
 
     final db = DatabaseHelper.instance;
+    final dbi = await db.database;
     final mode = _resolveConflictMode(
       SettingsService.getBool(AppSettings.modificationAlwaysWins,
           defaultValue: false),
       SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
           defaultValue: true),
     );
+    final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
 
     int applied = 0;
     int deletedLocal = 0;
@@ -509,19 +513,76 @@ class SyncService {
       final type = tomb['type'] as String?;
       if (cloudId == null || cloudId.isEmpty || type == null) continue;
 
-      await db.addTombstone(cloudId: cloudId, type: type);
+      // سياسة الحذف النهائي مستقلة عن الحذف المؤقت. عند اختيار التعديل
+      // أو الأحدث، لا نسمح لشاهد قبر أقدم بإزالة عملية عُدّلت بعده.
+      if (type == 'transaction') {
+        final localRows = await dbi.query(
+          'transactions',
+          where: 'cloud_id = ?',
+          whereArgs: [cloudId],
+          limit: 1,
+        );
+        Map<String, dynamic>? cloudRow;
+        for (final item in cloudTransactions) {
+          if (item is Map && item['cloud_id'] == cloudId) {
+            cloudRow = Map<String, dynamic>.from(item);
+            break;
+          }
+        }
+
+        final tombstoneTime = DateTime.tryParse(
+              tomb['deleted_at'] as String? ?? '',
+            ) ??
+            DateTime(2000);
+        final cloudRowIsActive =
+            cloudRow != null && cloudRow['is_deleted'] != 1;
+
+        final cloudTime = resolveConflictTimestamp(
+          preferred: cloudRow?['updated_at'] as String?,
+          fallback: cloudRow?['created_at'] as String?,
+        );
+        final localTime = localRows.isEmpty
+            ? DateTime(2000)
+            : resolveConflictTimestamp(
+                preferred: localRows.first['updated_at'] as String?,
+                fallback: localRows.first['created_at'] as String?,
+              );
+
+        final shouldApply = shouldApplyPermanentTombstone(
+          mode: mode,
+          localRowIsActive: localRows.isNotEmpty && localRows.first['is_deleted'] != 1,
+          cloudRowIsActive: cloudRowIsActive,
+          tombstoneTime: tombstoneTime,
+          localTime: localTime,
+          cloudTime: cloudTime,
+        );
+
+        if (!shouldApply) {
+          await dbi.delete('deleted_tombstones',
+              where: 'cloud_id = ?', whereArgs: [cloudId]);
+          deferred++;
+          debugPrint(
+              '⏸️ [Sync] Active transaction kept over permanent tombstone (mode=$mode): $cloudId');
+          continue;
+        }
+      }
+
+      await db.addTombstone(
+        cloudId: cloudId,
+        type: type,
+        deletedAt: tomb['deleted_at'] as String?,
+      );
       applied++;
 
-      if (mode != 'permanent_delete') {
+      if (mode != 'permanent_delete' && type != 'transaction') {
         debugPrint(
-            '⏸️ [Sync] Deferring tombstone deletion for $cloudId (mode=$mode)');
+            '⏸️ [Sync] Deferring non-transaction tombstone deletion for $cloudId (mode=$mode)');
         deferred++;
         continue;
       }
 
       try {
         if (type == 'customer') {
-          final dbi = await db.database;
           final rows = await dbi.query('customers',
               where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
           if (rows.isNotEmpty) {
@@ -533,7 +594,6 @@ class SyncService {
             deletedLocal++;
           }
         } else if (type == 'transaction') {
-          final dbi = await db.database;
           final rows = await dbi.query('transactions',
               where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
           if (rows.isNotEmpty) {
@@ -548,7 +608,7 @@ class SyncService {
       }
     }
 
-    if (applied > 0) {
+    if (applied > 0 || deferred > 0) {
       debugPrint(
           '🪦 [Sync] Tombstones: applied=$applied, deleted=$deletedLocal, deferred=$deferred (mode=$mode)');
     }
@@ -567,6 +627,7 @@ class SyncService {
       }
     }
 
+    await _processDeletePolicySync(cloudData);
     await _applyCloudTombstones(cloudData);
 
     int addedCustomers = 0;
@@ -803,6 +864,94 @@ class SyncService {
     };
   }
 
+  /// يعالج طلب تغيير سياسة الحذف على الجهاز الأساسي، ويطبق السياسة
+  /// المعتمدة فقط على الأجهزة الثانوية.
+  /// يعالج طلبات تغيير السياسة على الجهاز الأساسي، ويحافظ على الطلبات
+  /// غير المعتمدة أثناء مزامنة الأجهزة الثانوية.
+  static Future<void> _processDeletePolicySync(
+      Map<String, dynamic> cloudData) async {
+    try {
+      final rawRequests = cloudData['delete_policy_requests'];
+      final requests = <Map<String, dynamic>>[];
+      if (rawRequests is List) {
+        requests.addAll(rawRequests
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item)));
+      } else if (cloudData['delete_policy_request'] is Map) {
+        // توافق مع طلبات الإصدار التجريبي السابق.
+        requests.add(Map<String, dynamic>.from(
+            cloudData['delete_policy_request'] as Map));
+      }
+
+      await SettingsService.mergePendingDeletePolicyRequests(requests);
+
+      final isPrimary = await DeviceService.isPrimaryDevice();
+      if (isPrimary) {
+        final queued = await SettingsService.getPendingDeletePolicyRequests();
+        for (final request in queued) {
+          final actorId = request['actor_accountant_id'] as String?;
+          final actorDeviceId = request['actor_device_id'] as String?;
+          if (actorId == null || actorId.isEmpty ||
+              actorDeviceId == null || actorDeviceId.isEmpty) {
+            await SettingsService.removePendingDeletePolicyRequest(
+                request['request_id']?.toString());
+            continue;
+          }
+
+          // التحقق من سجل المحاسب المحلي المعتمد قبل قبول أي طلب قادم من السحابة.
+          final actor = AccountantsService.getById(actorId);
+          if (actor == null ||
+              actor.status != 'active' ||
+              actor.deviceId != actorDeviceId ||
+              !actor.can('change_delete_conflict_policy')) {
+            debugPrint(
+                '🚫 [Sync] Rejected delete policy request: unauthorized actor');
+            await SettingsService.markDeletePolicyRequestProcessed(
+                request['request_id']?.toString(), 'rejected_unauthorized');
+            await SettingsService.removePendingDeletePolicyRequest(
+                request['request_id']?.toString());
+            continue;
+          }
+
+          final requestId = request['request_id']?.toString();
+          final currentRevision =
+              await SettingsService.getDeletePolicyRevision();
+          final baseRevision = request['base_revision'] is int
+              ? request['base_revision'] as int
+              : -1;
+          if (baseRevision != currentRevision) {
+            await SettingsService.markDeletePolicyRequestProcessed(
+                requestId, 'rejected_stale');
+            await SettingsService.removePendingDeletePolicyRequest(requestId);
+            debugPrint('⚠️ [Sync] Rejected stale delete policy request');
+            continue;
+          }
+
+          final approval =
+              await SettingsService.approveDeletePolicyRequest(request);
+          if (approval['request_id'] != requestId) {
+            await SettingsService.markDeletePolicyRequestProcessed(
+                requestId, 'rejected_invalid');
+          }
+          await SettingsService.removePendingDeletePolicyRequest(requestId);
+          debugPrint(
+              '✅ [Sync] Delete policy request handled (revision=${approval['revision']})');
+        }
+      } else {
+        final rawApproval = cloudData['delete_policy_approval'];
+        if (rawApproval is Map) {
+          final applied = await SettingsService.applyApprovedDeletePolicy(
+              Map<String, dynamic>.from(rawApproval));
+          if (applied) {
+            debugPrint('✅ [Sync] Applied primary-approved delete policy');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Sync] Delete policy sync error: $e');
+    }
+  }
+
   static Future<void> _importSharedSettings(Map<String, dynamic> data) async {
     final settingsMap = data['settings'] as Map<String, dynamic>?;
     if (settingsMap == null) return;
@@ -810,7 +959,13 @@ class SyncService {
     _isImportingSettings = true;
     try {
       for (final entry in settingsMap.entries) {
-        if (AppSettings.sharedSettings.contains(entry.key)) {
+        if (AppSettings.sharedSettings.contains(entry.key) &&
+            !{
+              AppSettings.permanentDeleteAlwaysWins,
+              AppSettings.modificationAlwaysWins,
+              AppSettings.softDeleteAlwaysWins,
+              AppSettings.softModificationAlwaysWins,
+            }.contains(entry.key)) {
           try {
             await SettingsService.set(entry.key, entry.value);
           } catch (e) {
@@ -873,16 +1028,30 @@ class SyncService {
     }
   }
 
+  static String _resolveSoftDeleteConflictMode(
+      bool modificationAlwaysWins, bool softDeleteAlwaysWins) {
+    final mode = DeleteConflictPolicy.resolveSoftDelete(
+      modificationAlwaysWins: modificationAlwaysWins,
+      deleteAlwaysWins: softDeleteAlwaysWins,
+    );
+    if (modificationAlwaysWins && softDeleteAlwaysWins) {
+      debugPrint(
+          '⚠️ [Sync] Both soft-delete policies enabled — delete wins for safety');
+    }
+    return mode;
+  }
+
   static String _resolveConflictMode(
       bool modificationAlwaysWins, bool permanentDeleteAlwaysWins) {
+    final mode = DeleteConflictPolicy.resolvePermanentDelete(
+      modificationAlwaysWins: modificationAlwaysWins,
+      deleteAlwaysWins: permanentDeleteAlwaysWins,
+    );
     if (permanentDeleteAlwaysWins && modificationAlwaysWins) {
       debugPrint(
           '⚠️ [Sync] Both modes enabled — falling back to "permanent delete wins" for safety');
-      return 'permanent_delete';
     }
-    if (permanentDeleteAlwaysWins) return 'permanent_delete';
-    if (modificationAlwaysWins) return 'modification';
-    return 'default';
+    return mode;
   }
 
   static Future<void> _notifyRestoration({
@@ -957,18 +1126,14 @@ class SyncService {
       final activeRow = localPerm ? cloudRow : localRow;
       final deletedIsLocal = localPerm;
 
-      final activeTime = DateTime.tryParse(
-            activeRow['updated_at'] as String? ??
-                activeRow['created_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
-      final deletedTime = DateTime.tryParse(
-            deletedRow['deleted_at'] as String? ??
-                deletedRow['updated_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
+      final activeTime = resolveConflictTimestamp(
+        preferred: activeRow['updated_at'] as String?,
+        fallback: activeRow['created_at'] as String?,
+      );
+      final deletedTime = resolveConflictTimestamp(
+        preferred: deletedRow['deleted_at'] as String?,
+        fallback: deletedRow['updated_at'] as String?,
+      );
 
       final isActiveNewer = activeTime.isAfter(deletedTime);
       final activeName = activeRow['name'] as String? ?? '';
@@ -1191,11 +1356,11 @@ class SyncService {
     final customerName = cloudRow['customer_name'] as String? ??
         localRow['customer_name'] as String?;
 
-    final mode = _resolveConflictMode(
-      SettingsService.getBool(AppSettings.modificationAlwaysWins,
+    final mode = _resolveSoftDeleteConflictMode(
+      SettingsService.getBool(AppSettings.softModificationAlwaysWins,
           defaultValue: false),
-      SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
-          defaultValue: true),
+      SettingsService.getBool(AppSettings.softDeleteAlwaysWins,
+          defaultValue: false),
     );
 
     if (localDeleted != cloudDeleted) {
@@ -1203,18 +1368,14 @@ class SyncService {
       final activeRow = localDeleted ? cloudRow : localRow;
       final deletedIsLocal = localDeleted;
 
-      final activeTime = DateTime.tryParse(
-            activeRow['updated_at'] as String? ??
-                activeRow['created_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
-      final deletedTime = DateTime.tryParse(
-            deletedRow['deleted_at'] as String? ??
-                deletedRow['updated_at'] as String? ??
-                '',
-          ) ??
-          DateTime(2000);
+      final activeTime = resolveConflictTimestamp(
+        preferred: activeRow['updated_at'] as String?,
+        fallback: activeRow['created_at'] as String?,
+      );
+      final deletedTime = resolveConflictTimestamp(
+        preferred: deletedRow['deleted_at'] as String?,
+        fallback: deletedRow['updated_at'] as String?,
+      );
 
       final isActiveNewer = activeTime.isAfter(deletedTime);
 
@@ -1247,7 +1408,7 @@ class SyncService {
         }
       }
 
-      if (mode == 'permanent_delete') {
+      if (mode == 'soft_delete') {
         if (deletedIsLocal) {
           return _ResolutionResult('no_change');
         } else {
@@ -1257,8 +1418,8 @@ class SyncService {
                 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
             deletedBy: cloudRow['deleted_by'] as String?,
             deletedAt: cloudRow['deleted_at'] as String?,
-            restoredBy: 'لا — الحذف النهائي نهائي',
-            reason: 'حذف سحابي يفوز دائماً',
+            restoredBy: 'لا — الحذف المؤقت يفوز دائماً',
+            reason: 'حذف مؤقت سحابي يفوز دائماً',
           );
           return _ResolutionResult('conflict');
         }
@@ -1498,7 +1659,9 @@ class SyncService {
     }
   }
 
-  static Future<bool> _uploadCurrentState() async {
+  static Future<bool> _uploadCurrentState({
+    Map<String, dynamic>? knownCloudData,
+  }) async {
     try {
       await _ensureCloudIds();
 
@@ -1512,12 +1675,39 @@ class SyncService {
 
       final primaryDeviceId = await DeviceService.getPrimaryDeviceId();
 
-      final tombstones = SettingsService.getBool(
+      final syncPermanentDeletes = SettingsService.getBool(
         AppSettings.syncDeletedBin,
         defaultValue: true,
-      )
-          ? await db.allTombstonesRaw()
-          : <Map<String, dynamic>>[];
+      );
+      final localTombstones = await db.allTombstonesRaw();
+      List<Map<String, dynamic>> tombstones;
+      if (syncPermanentDeletes) {
+        tombstones = localTombstones;
+      } else {
+        // The sync file is a full snapshot. Never replace its existing
+        // permanent-delete markers with [] merely because this device has
+        // disabled publishing new tombstones.
+        final cloudSnapshot =
+            knownCloudData ?? await GDriveService.downloadSyncFile();
+        if (cloudSnapshot == null) {
+          final linkedId = await GDriveService.getLinkedFileId();
+          final primaryId = await GDriveService.getPrimarySyncFileId();
+          final ownId = await GDriveService.getSyncFileId();
+          final hasKnownRemoteFile = [linkedId, primaryId, ownId]
+              .any((id) => id != null && id.isNotEmpty);
+          if (hasKnownRemoteFile) {
+            debugPrint(
+                '🚫 [Sync] Upload blocked: could not read existing tombstones while permanent-delete sync is disabled');
+            return false;
+          }
+        }
+        tombstones = resolveTombstonesForUpload(
+          syncEnabled: false,
+          localTombstones: localTombstones,
+          cloudTombstones:
+              (cloudSnapshot?['tombstones'] as List?) ?? const [],
+        );
+      }
 
       debugPrint(
           '📤 [Sync] Uploading: ${customers.length} customers, ${transactions.length} transactions');
@@ -1566,6 +1756,10 @@ class SyncService {
         'tombstones': tombstones,
         'settings': sharedSettingsMap,
         'code_settings': codeSettingsMap,
+        'delete_policy_requests':
+            await SettingsService.getPendingDeletePolicyRequests(),
+        'delete_policy_approval':
+            await SettingsService.getDeletePolicyApproval(),
         ...accountantsData,
       };
 

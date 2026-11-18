@@ -36,6 +36,7 @@ import '../screens/accountants_screen.dart';
 import '../screens/advanced_settings_screen.dart';
 import '../screens/deleted_bin_screen.dart';
 import '../screens/duplicates_screen.dart';
+import '../screens/delete_conflict_policy_screen.dart';
 import '../screens/gdrive_screen.dart';
 import '../screens/keywords_screen.dart';
 import '../screens/logs_screen.dart';
@@ -1793,6 +1794,8 @@ class _SettingsTabState extends State<SettingsTab> {
 
     final canManageAccountants = PermissionCache.has('manage_accountants');
     final canAdvancedSettings = PermissionCache.has('access_advanced_settings');
+    final canChangeDeletePolicy =
+        PermissionCache.has('change_delete_conflict_policy');
     final canViewLogs = PermissionCache.has('view_logs');
     final canViewStats = PermissionCache.has('view_stats');
     final canManageBackups = PermissionCache.has('manage_backups');
@@ -2688,25 +2691,44 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ),
 
-          if (canAdvancedSettings) ...[
-            const _SectionHeader('التحكم الكامل'),
-            ListTile(
-              leading: const Icon(Icons.tune, color: Colors.deepPurple),
-              title: const Text('الإعدادات المتقدمة'),
-              subtitle: const Text(
-                  'التحكم الكامل في سلوك التطبيق'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdvancedSettingsScreen(),
-                  ),
-                ).then((_) {
-                  if (mounted) setState(() {});
-                });
-              },
-            ),
+          if (canAdvancedSettings || canChangeDeletePolicy) ...[
+            const _SectionHeader('التحكم في السياسات'),
+            if (canAdvancedSettings)
+              ListTile(
+                leading: const Icon(Icons.tune, color: Colors.deepPurple),
+                title: const Text('الإعدادات المتقدمة'),
+                subtitle: const Text(
+                    'التحكم الكامل في سلوك التطبيق'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AdvancedSettingsScreen(),
+                    ),
+                  ).then((_) {
+                    if (mounted) setState(() {});
+                  });
+                },
+              ),
+            if (canChangeDeletePolicy)
+              ListTile(
+                leading: const Icon(Icons.rule, color: Colors.deepPurple),
+                title: const Text('سياسة الحذف والتعديل'),
+                subtitle: const Text(
+                    'تغيير سياسة تعارض الحذف دون فتح بقية الإعدادات المتقدمة'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const DeleteConflictPolicyScreen(),
+                    ),
+                  ).then((_) {
+                    if (mounted) setState(() {});
+                  });
+                },
+              ),
           ],
 
           const _SectionHeader('🔀 التكرارات'),
