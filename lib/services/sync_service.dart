@@ -1438,8 +1438,8 @@ class SyncService {
                 'عملية ${code.isNotEmpty ? "($code)" : ""} بمبلغ ${amount.toStringAsFixed(0)}',
             deletedBy: cloudRow['deleted_by'] as String?,
             deletedAt: cloudRow['deleted_at'] as String?,
-            restoredBy: 'لا — الحذف النهائي نهائي',
-            reason: 'حذف سحابي يفوز دائماً',
+            restoredBy: 'لا — الحذف المؤقت يفوز دائماً',
+            reason: 'حذف مؤقت سحابي يفوز دائماً',
           );
           return _ResolutionResult('conflict');
         }
