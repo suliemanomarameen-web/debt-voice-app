@@ -153,7 +153,7 @@ void main() {
     test('permanent-delete policy always applies the tombstone', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'permanent_delete',
-        hasLocalRow: true,
+        localRowIsActive: true,
         cloudRowIsActive: true,
         tombstoneTime: tombstone,
         localTime: newer,
@@ -164,7 +164,7 @@ void main() {
     test('modification policy defers when a local row exists', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'modification',
-        hasLocalRow: true,
+        localRowIsActive: true,
         cloudRowIsActive: false,
         tombstoneTime: tombstone,
         localTime: older,
@@ -175,7 +175,7 @@ void main() {
     test('modification policy defers when a cloud row is active', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'modification',
-        hasLocalRow: false,
+        localRowIsActive: false,
         cloudRowIsActive: true,
         tombstoneTime: tombstone,
         localTime: older,
@@ -186,7 +186,7 @@ void main() {
     test('modification policy applies when no local or active cloud row remains', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'modification',
-        hasLocalRow: false,
+        localRowIsActive: false,
         cloudRowIsActive: false,
         tombstoneTime: tombstone,
         localTime: older,
@@ -197,7 +197,7 @@ void main() {
     test('latest policy keeps a newer active cloud row', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'default',
-        hasLocalRow: false,
+        localRowIsActive: false,
         cloudRowIsActive: true,
         tombstoneTime: tombstone,
         localTime: older,
@@ -208,7 +208,7 @@ void main() {
     test('latest policy keeps a newer local row', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'default',
-        hasLocalRow: true,
+        localRowIsActive: true,
         cloudRowIsActive: false,
         tombstoneTime: tombstone,
         localTime: newer,
@@ -216,10 +216,32 @@ void main() {
       ), isFalse);
     });
 
+    test('latest policy does not let a soft-deleted local row block a tombstone', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'default',
+        localRowIsActive: false,
+        cloudRowIsActive: false,
+        tombstoneTime: tombstone,
+        localTime: newer,
+        cloudTime: older,
+      ), isTrue);
+    });
+
+    test('modification policy does not let a soft-deleted local row block a tombstone', () {
+      expect(shouldApplyPermanentTombstone(
+        mode: 'modification',
+        localRowIsActive: false,
+        cloudRowIsActive: false,
+        tombstoneTime: tombstone,
+        localTime: newer,
+        cloudTime: older,
+      ), isTrue);
+    });
+
     test('latest policy applies when the tombstone is newer', () {
       expect(shouldApplyPermanentTombstone(
         mode: 'default',
-        hasLocalRow: true,
+        localRowIsActive: true,
         cloudRowIsActive: true,
         tombstoneTime: tombstone,
         localTime: older,
