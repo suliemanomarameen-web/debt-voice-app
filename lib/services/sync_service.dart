@@ -806,38 +806,63 @@ class SyncService {
 
   /// يعالج طلب تغيير سياسة الحذف على الجهاز الأساسي، ويطبق السياسة
   /// المعتمدة فقط على الأجهزة الثانوية.
+  /// يعالج طلبات تغيير السياسة على الجهاز الأساسي، ويحافظ على الطلبات
+  /// غير المعتمدة أثناء مزامنة الأجهزة الثانوية.
   static Future<void> _processDeletePolicySync(
       Map<String, dynamic> cloudData) async {
     try {
+      final rawRequests = cloudData['delete_policy_requests'];
+      final requests = <Map<String, dynamic>>[];
+      if (rawRequests is List) {
+        requests.addAll(rawRequests
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item)));
+      } else if (cloudData['delete_policy_request'] is Map) {
+        // توافق مع طلبات الإصدار التجريبي السابق.
+        requests.add(Map<String, dynamic>.from(
+            cloudData['delete_policy_request'] as Map));
+      }
+
+      await SettingsService.mergePendingDeletePolicyRequests(requests);
+
       final isPrimary = await DeviceService.isPrimaryDevice();
       if (isPrimary) {
-        final raw = cloudData['delete_policy_request'];
-        if (raw is! Map) return;
-        final request = Map<String, dynamic>.from(raw);
-        final actorId = request['actor_accountant_id'] as String?;
-        final actorDeviceId = request['actor_device_id'] as String?;
-        if (actorId == null || actorId.isEmpty ||
-            actorDeviceId == null || actorDeviceId.isEmpty) return;
+        final queued = await SettingsService.getPendingDeletePolicyRequests();
+        for (final request in queued) {
+          final actorId = request['actor_accountant_id'] as String?;
+          final actorDeviceId = request['actor_device_id'] as String?;
+          if (actorId == null || actorId.isEmpty ||
+              actorDeviceId == null || actorDeviceId.isEmpty) {
+            await SettingsService.removePendingDeletePolicyRequest(
+                request['request_id']?.toString());
+            continue;
+          }
 
-        // التحقق من سجل المحاسب المحلي المعتمد قبل قبول أي طلب قادم من السحابة.
-        final actor = AccountantsService.getById(actorId);
-        if (actor == null ||
-            actor.status != 'active' ||
-            actor.deviceId != actorDeviceId ||
-            !actor.can('change_delete_conflict_policy')) {
-          debugPrint('🚫 [Sync] Rejected delete policy request: unauthorized actor');
-          return;
+          // التحقق من سجل المحاسب المحلي المعتمد قبل قبول أي طلب قادم من السحابة.
+          final actor = AccountantsService.getById(actorId);
+          if (actor == null ||
+              actor.status != 'active' ||
+              actor.deviceId != actorDeviceId ||
+              !actor.can('change_delete_conflict_policy')) {
+            debugPrint(
+                '🚫 [Sync] Rejected delete policy request: unauthorized actor');
+            await SettingsService.removePendingDeletePolicyRequest(
+                request['request_id']?.toString());
+            continue;
+          }
+
+          final approval =
+              await SettingsService.approveDeletePolicyRequest(request);
+          await SettingsService.removePendingDeletePolicyRequest(
+              request['request_id']?.toString());
+          debugPrint(
+              '✅ [Sync] Delete policy request processed (revision=${approval['revision']})');
         }
-
-        final approval =
-            await SettingsService.approveDeletePolicyRequest(request);
-        debugPrint(
-            '✅ [Sync] Delete policy request processed (revision=${approval['revision']})');
       } else {
-        final raw = cloudData['delete_policy_approval'];
-        if (raw is Map) {
+        final rawApproval = cloudData['delete_policy_approval'];
+        if (rawApproval is Map) {
           final applied = await SettingsService.applyApprovedDeletePolicy(
-              Map<String, dynamic>.from(raw));
+              Map<String, dynamic>.from(rawApproval));
           if (applied) {
             debugPrint('✅ [Sync] Applied primary-approved delete policy');
           }
@@ -1629,8 +1654,8 @@ class SyncService {
         'tombstones': tombstones,
         'settings': sharedSettingsMap,
         'code_settings': codeSettingsMap,
-        'delete_policy_request':
-            await SettingsService.getPendingDeletePolicyRequest(),
+        'delete_policy_requests':
+            await SettingsService.getPendingDeletePolicyRequests(),
         'delete_policy_approval':
             await SettingsService.getDeletePolicyApproval(),
         ...accountantsData,
