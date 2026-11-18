@@ -492,12 +492,14 @@ class SyncService {
     if (tombstones == null || tombstones.isEmpty) return;
 
     final db = DatabaseHelper.instance;
+    final dbi = await db.database;
     final mode = _resolveConflictMode(
       SettingsService.getBool(AppSettings.modificationAlwaysWins,
           defaultValue: false),
       SettingsService.getBool(AppSettings.permanentDeleteAlwaysWins,
           defaultValue: true),
     );
+    final cloudTransactions = (cloudData['transactions'] as List?) ?? [];
 
     int applied = 0;
     int deletedLocal = 0;
@@ -509,19 +511,81 @@ class SyncService {
       final type = tomb['type'] as String?;
       if (cloudId == null || cloudId.isEmpty || type == null) continue;
 
+      // سياسة الحذف النهائي مستقلة عن الحذف المؤقت. عند اختيار التعديل
+      // أو الأحدث، لا نسمح لشاهد قبر أقدم بإزالة عملية عُدّلت بعده.
+      if (type == 'transaction' && mode != 'permanent_delete') {
+        final localRows = await dbi.query(
+          'transactions',
+          where: 'cloud_id = ?',
+          whereArgs: [cloudId],
+          limit: 1,
+        );
+        Map<String, dynamic>? cloudRow;
+        for (final item in cloudTransactions) {
+          if (item is Map && item['cloud_id'] == cloudId) {
+            cloudRow = Map<String, dynamic>.from(item);
+            break;
+          }
+        }
+
+        final tombstoneTime = DateTime.tryParse(
+              tomb['deleted_at'] as String? ?? '',
+            ) ??
+            DateTime(2000);
+        final cloudRowIsActive =
+            cloudRow != null && cloudRow['is_deleted'] != 1;
+
+        if (mode == 'modification') {
+          if (localRows.isNotEmpty || cloudRowIsActive) {
+            deferred++;
+            debugPrint(
+                '⏸️ [Sync] Permanent tombstone ignored by modification-wins policy: $cloudId');
+            continue;
+          }
+        } else {
+          if (localRows.isNotEmpty) {
+            final local = localRows.first;
+            final localTime = DateTime.tryParse(
+                  local['updated_at'] as String? ??
+                      local['created_at'] as String? ??
+                      '',
+                ) ??
+                DateTime(2000);
+            if (localTime.isAfter(tombstoneTime)) {
+              deferred++;
+              debugPrint(
+                  '⏸️ [Sync] Newer local transaction kept over tombstone: $cloudId');
+              continue;
+            }
+          } else if (cloudRowIsActive) {
+            final cloudTime = DateTime.tryParse(
+                  cloudRow!['updated_at'] as String? ??
+                      cloudRow['created_at'] as String? ??
+                      '',
+                ) ??
+                DateTime(2000);
+            if (cloudTime.isAfter(tombstoneTime)) {
+              deferred++;
+              debugPrint(
+                  '⏸️ [Sync] Newer cloud transaction kept over tombstone: $cloudId');
+              continue;
+            }
+          }
+        }
+      }
+
       await db.addTombstone(cloudId: cloudId, type: type);
       applied++;
 
-      if (mode != 'permanent_delete') {
+      if (mode != 'permanent_delete' && type != 'transaction') {
         debugPrint(
-            '⏸️ [Sync] Deferring tombstone deletion for $cloudId (mode=$mode)');
+            '⏸️ [Sync] Deferring non-transaction tombstone deletion for $cloudId (mode=$mode)');
         deferred++;
         continue;
       }
 
       try {
         if (type == 'customer') {
-          final dbi = await db.database;
           final rows = await dbi.query('customers',
               where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
           if (rows.isNotEmpty) {
@@ -533,7 +597,6 @@ class SyncService {
             deletedLocal++;
           }
         } else if (type == 'transaction') {
-          final dbi = await db.database;
           final rows = await dbi.query('transactions',
               where: 'cloud_id = ?', whereArgs: [cloudId], limit: 1);
           if (rows.isNotEmpty) {
@@ -548,7 +611,7 @@ class SyncService {
       }
     }
 
-    if (applied > 0) {
+    if (applied > 0 || deferred > 0) {
       debugPrint(
           '🪦 [Sync] Tombstones: applied=$applied, deleted=$deletedLocal, deferred=$deferred (mode=$mode)');
     }
