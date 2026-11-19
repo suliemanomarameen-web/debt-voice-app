@@ -964,7 +964,7 @@ class SyncService {
           String createdAt,
           String accountant,
         ) =>
-            '\${baseKey(action, createdAt)}\u0000$accountant';
+            '${baseKey(action, createdAt)}\u0000$accountant';
 
         for (final row in localLogRows) {
           final action = row['action'] as String? ?? '';
