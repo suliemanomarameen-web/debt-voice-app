@@ -593,6 +593,14 @@ class SyncService {
     }
   }
 
+  // أحداث تشخيص المزامنة محلية للجهاز الذي جمعها، ولا تُرسل إلى بقية المحاسبين.
+  static bool _isSyncDiagnosticLog(Map<String, dynamic> row) {
+    final action = row['action'] as String? ?? '';
+    final metadata = row['metadata'] as String? ?? '';
+    return action.startsWith('⏱️ تشخيص المزامنة:') ||
+        metadata.contains('"sync_diagnostic":true');
+  }
+
   static Future<void> _applyCloudTombstones(
       Map<String, dynamic> cloudData) async {
     if (!SettingsService.getBool(
@@ -877,6 +885,7 @@ class SyncService {
 
       if (SettingsService.getBool(AppSettings.syncLogs)) {
         for (final cl in cloudLogs) {
+          if (_isSyncDiagnosticLog(Map<String, dynamic>.from(cl))) continue;
           final action = cl['action'] as String? ?? '';
           final createdAt = cl['created_at'] as String? ?? '';
           if (action.isEmpty || createdAt.isEmpty) continue;
@@ -1620,7 +1629,9 @@ class SyncService {
       final customers = await db.allCustomersRaw();
       final transactions = await db.allTransactionsRaw();
       final usedCodes = await db.allUsedCodesRaw();
-      final logEvents = await db.allLogEventsRaw();
+      final logEvents = (await db.allLogEventsRaw())
+          .where((event) => !_isSyncDiagnosticLog(event))
+          .toList();
 
       final accountantsData = AccountantsService.getForSync();
 
