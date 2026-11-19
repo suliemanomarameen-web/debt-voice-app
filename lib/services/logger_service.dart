@@ -864,6 +864,8 @@ class LoggerService {
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
+    int uploadedTransactions = 0,
+    int uploadedCustomers = 0,
     int customersUpdated = 0,
     bool hasConflict = false,
     String? accountant,
@@ -871,10 +873,12 @@ class LoggerService {
       success(
         hasConflict ? 'مزامنة مع تعارض' : 'مزامنة ناجحة',
         'تمت المزامنة:'
-            '${transactionsAdded > 0 ? " +$transactionsAdded عملية" : ""}'
-            '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
-            '${customersUpdated > 0 ? " ~$customersUpdated حساب محدّث" : ""}'
-            '${transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات)" : ""}',
+            '${uploadedTransactions > 0 ? " تم رفع $uploadedTransactions عملية" : ""}'
+            '${uploadedCustomers > 0 ? " وتم رفع $uploadedCustomers حساب" : ""}'
+            '${transactionsAdded > 0 ? " تم تنزيل $transactionsAdded عملية" : ""}'
+            '${customersAdded > 0 ? " وتم تنزيل $customersAdded حساب" : ""}'
+            '${customersUpdated > 0 ? " ~$customersUpdated سجل محدّث" : ""}'
+            '${uploadedTransactions == 0 && uploadedCustomers == 0 && transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات جديدة)" : ""}',
         category: LogCategory.sync,
         accountant: accountant,
       );
