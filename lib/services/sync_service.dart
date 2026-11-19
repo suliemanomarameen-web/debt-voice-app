@@ -449,10 +449,10 @@ class SyncService {
       // إذا نجح التنزيل مع غياب metadata، ندمج الملف بدلاً من رفع المحلي فوقه.
       // عند فشل قراءة الوقت والتنزيل معاً نبقي السلوك القديم ولا نغيّر مسار الرفع.
       final hasCloudChanges = forcePull ||
-          (cloudData != null &&
-              (cloudModified == null ||
-                  lastCloudModified == null ||
-                  cloudModified.isAfter(lastCloudModified)));
+          (cloudModified != null &&
+              (lastCloudModified == null ||
+                  cloudModified.isAfter(lastCloudModified))) ||
+          (cloudData != null && cloudModified == null);
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
