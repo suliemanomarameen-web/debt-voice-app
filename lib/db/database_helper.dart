@@ -2223,7 +2223,8 @@ class DatabaseHelper {
     for (final row in rows) {
       final sanitized = <String, dynamic>{};
       for (final entry in row.entries) {
-        if (entry.key != 'id' && validCols.contains(entry.key)) {
+        final isValid = info.isEmpty || validCols.contains(entry.key);
+        if (entry.key != 'id' && isValid) {
           sanitized[entry.key] = entry.value;
         }
       }
