@@ -678,10 +678,15 @@ class GDriveService {
   }
 
   /// رفع ملف المزامنة (مع الأخذ بالاعتبار الملف المشترك)
-  static Future<bool> uploadSyncFile(Map<String, dynamic> data) async {
+  static Future<bool> uploadSyncFile(
+    Map<String, dynamic> data, {
+    Future<void> Function(String stage, int durationMs, String outcome, String details)?
+        onStage,
+  }) async {
     try {
       if (!await ensureSignedIn()) return false;
 
+      var stageWatch = Stopwatch()..start();
       final encryptEnabled = await CryptoService.isEncryptionEnabled();
 
       String content;
@@ -693,11 +698,26 @@ class GDriveService {
         content = jsonEncode(data);
         debugPrint('📄 Uploading PLAIN sync file');
       }
+      stageWatch.stop();
+      await onStage?.call(
+        'تحويل JSON والتشفير',
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'التشفير: ${encryptEnabled ? 'مفعّل' : 'غير مفعّل'}، حجم النص: ${content.length} حرفاً',
+      );
 
+      stageWatch = Stopwatch()..start();
       final bytes = utf8.encode(content);
-
       final targetId = await _resolveSyncFileId();
+      stageWatch.stop();
+      await onStage?.call(
+        'تجهيز ملف Google Drive',
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'حجم الملف: ${bytes.length} بايت، الملف: ${targetId == null ? 'إنشاء جديد' : 'تحديث موجود'}',
+      );
 
+      stageWatch = Stopwatch()..start();
       if (targetId != null) {
         final driveFile = drive.File();
         final media = drive.Media(Stream.value(bytes), bytes.length);
@@ -715,9 +735,17 @@ class GDriveService {
         await _driveApi!.files.create(driveFile, uploadMedia: media);
         debugPrint('✅ Sync file created (own)');
       }
+      stageWatch.stop();
+      await onStage?.call(
+        'إرسال الملف إلى Google Drive',
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'اكتمل إرسال ${utf8.encode(content).length} بايت',
+      );
       return true;
     } catch (e) {
       debugPrint('❌ uploadSyncFile error: $e');
+      await onStage?.call('إرسال الملف إلى Google Drive', 0, 'فشل', e.toString());
       return false;
     }
   }
