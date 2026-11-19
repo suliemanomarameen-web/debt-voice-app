@@ -1,4 +1,5 @@
 name: Build Test APK (PR12)
+# Build from merged main for release 1.0.696.
 
 on:
   push:
