@@ -5,6 +5,7 @@ import 'account_type.dart';
 class Customer {
   final int? id;
   final String? cloudId;
+  final String? createdFromDevice;
   final String name;
   final String? phone;
   final String accountType;
@@ -30,6 +31,7 @@ class Customer {
   Customer({
     this.id,
     this.cloudId,
+    this.createdFromDevice,
     required this.name,
     this.phone,
     this.accountType = AccountType.customer,
@@ -53,6 +55,7 @@ class Customer {
   Map<String, dynamic> toMap() => {
         'id': id,
         'cloud_id': cloudId,
+        'created_from_device': createdFromDevice,
         'name': name,
         'phone': phone,
         'account_type': accountType,
@@ -76,6 +79,7 @@ class Customer {
   factory Customer.fromMap(Map<String, dynamic> m) => Customer(
         id: m['id'],
         cloudId: m['cloud_id'],
+        createdFromDevice: m['created_from_device'],
         name: m['name'],
         phone: m['phone'],
         accountType: m['account_type'] ?? AccountType.customer,
@@ -101,6 +105,7 @@ class Customer {
   Customer copyWith({
     int? id,
     String? cloudId,
+    String? createdFromDevice,
     String? name,
     String? phone,
     String? accountType,
@@ -123,6 +128,7 @@ class Customer {
     return Customer(
       id: id ?? this.id,
       cloudId: cloudId ?? this.cloudId,
+      createdFromDevice: createdFromDevice ?? this.createdFromDevice,
       name: name ?? this.name,
       phone: phone ?? this.phone,
       accountType: accountType ?? this.accountType,
