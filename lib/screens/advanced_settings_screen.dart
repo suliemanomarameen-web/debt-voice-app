@@ -329,6 +329,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.deletionConflictRestore: 'استعادة الحساب دائمًا عند تعارض الحذف',
       AppSettings.syncLogs: 'مزامنة سجل الأحداث',
       AppSettings.syncDeletedBin: 'مزامنة سلة المحذوفات',
+      AppSettings.syncDiagnosticsEnabled: 'تفاصيل المزامنة في سجل الأحداث',
       AppSettings.logEnabled: 'تفعيل السجل',
       AppSettings.logRetentionDays: 'مدة الاحتفاظ بالأحداث',
       AppSettings.logMaxCount: 'الحد الأقصى للأحداث',
@@ -370,6 +371,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.compactMode: 'وضع مضغوط',
       AppSettings.developerModeEnabled: 'تفعيل وضع المطور',
       AppSettings.developerModeVerbose: 'سجل مفصّل (Verbose)',
+      AppSettings.syncDiagnosticsEnabled: 'تفاصيل المزامنة في سجل الأحداث',
     };
     return map[key] ?? key;
   }
@@ -422,6 +424,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.deletionConflictRestore: 'الحذف يُلغى دائمًا',
       AppSettings.syncLogs: 'مزامنة log_events',
       AppSettings.syncDeletedBin: 'مزامنة الحذف النهائي',
+      AppSettings.syncDiagnosticsEnabled:
+          'يسجل مدة كل مرحلة ونتيجتها والأخطاء، على هذا الجهاز فقط',
       AppSettings.logEnabled: 'تفعيل/تعطيل التسجيل',
       AppSettings.logRetentionDays: 'مدة بقاء الحدث',
       AppSettings.logMaxCount: 'أقصى عدد أحداث محفوظة',
@@ -476,6 +480,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'مفعّل: الأخطاء والتحذيرات الحرجة تُسجَّل في سجل الأحداث',
       AppSettings.developerModeVerbose:
           'مفعّل: كل خطوة تُسجَّل (أبطأ، للتشخيص العميق)',
+      AppSettings.syncDiagnosticsEnabled:
+          'يسجل وقت مراحل المزامنة ونتائجها والأخطاء دون بيانات العملاء',
     };
     return map[key] ?? '';
   }
@@ -684,6 +690,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   AppSettings.deletionConflictRestore,
                   AppSettings.syncLogs,
                   AppSettings.syncDeletedBin,
+                  AppSettings.syncDiagnosticsEnabled,
                 ],
                 children: [
                   _buildBoolTile(AppSettings.syncEnabled),
@@ -697,6 +704,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   _buildBoolTile(AppSettings.syncLogs),
                   const Divider(height: 1),
                   _buildBoolTile(AppSettings.syncDeletedBin),
+                  _buildBoolTile(AppSettings.syncDiagnosticsEnabled),
+                  ListTile(
+                    leading: const Icon(Icons.sync, color: Colors.teal),
+                    title: const Text('عرض سجل تفاصيل المزامنة'),
+                    subtitle: const Text(
+                      'فتح أحداث المزامنة المسجلة على هذا الجهاز',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const LogsScreen(
+                          initialCategory: LogCategory.sync,
+                        ),
+                      ),
+                    ),
+                  ),
                 ]),
             _buildGroup(
                 title: '📜 السجل',

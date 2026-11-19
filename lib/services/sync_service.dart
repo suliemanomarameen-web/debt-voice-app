@@ -278,11 +278,108 @@ class SyncService {
     bool forcePull = false,
     bool forceUpload = false,
   }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) {
+      return _performSyncInternal(
+        silent: silent,
+        forcePull: forcePull,
+        forceUpload: forceUpload,
+      );
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final result = await _performSyncInternal(
+      silent: silent,
+      forcePull: forcePull,
+      forceUpload: forceUpload,
+    );
+    stopwatch.stop();
+    await _writeSyncDiagnostic(
+      'الدورة الكاملة',
+      stopwatch.elapsedMilliseconds,
+      result.success ? 'نجاح' : 'فشل',
+      result.message,
+    );
+    return result;
+  }
+
+  static Future<T> _measureSyncStage<T>(
+    String stage,
+    Future<T> Function() operation, {
+    bool Function(T result)? isFailure,
+  }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) {
+      return operation();
+    }
+
+    final stopwatch = Stopwatch()..start();
+    try {
+      final result = await operation();
+      stopwatch.stop();
+      final failed = isFailure?.call(result) ?? false;
+      await _writeSyncDiagnostic(
+        stage,
+        stopwatch.elapsedMilliseconds,
+        failed ? 'فشل' : 'نجاح',
+        failed ? 'أعادت المرحلة نتيجة تدل على عدم الاكتمال' : 'اكتملت المرحلة بنجاح',
+        isError: failed,
+      );
+      return result;
+    } catch (error) {
+      stopwatch.stop();
+      await _writeSyncDiagnostic(
+        stage,
+        stopwatch.elapsedMilliseconds,
+        'فشل',
+        error.toString(),
+        isError: true,
+      );
+      rethrow;
+    }
+  }
+
+  static Future<void> _writeSyncDiagnostic(
+    String stage,
+    int durationMs,
+    String outcome,
+    String details, {
+    bool isError = false,
+  }) async {
+    try {
+      await LoggerService.log(
+        action: '⏱️ تشخيص المزامنة: $stage',
+        description: '$outcome — ${durationMs} مللي ثانية — $details',
+        // تبقى أحداث التشخيص معلوماتية حتى لا تتحول كل محاولة فاشلة إلى عنصر يتطلب إقراراً.
+        level: LogLevel.info,
+        category: LogCategory.sync,
+        metadata: {
+          'sync_diagnostic': true,
+          'stage': stage,
+          'duration_ms': durationMs,
+          'outcome': outcome,
+          'is_error': isError,
+        },
+        needsAck: false,
+      );
+    } catch (error) {
+      debugPrint('⚠️ [SyncDiagnostics] Failed to save diagnostic: $error');
+    }
+  }
+
+  static Future<SyncResult> _performSyncInternal({
+    required bool silent,
+    bool forcePull = false,
+    bool forceUpload = false,
+  }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
       // 🆕 التحقق من وجود تكرارات معلّقة سابقة
-      final existingBlocked = await DuplicateDetector.shouldBlockSync();
+      final existingBlocked = await _measureSyncStage(
+        'فحص التكرارات المعلّقة',
+        DuplicateDetector.shouldBlockSync,
+      );
       if (existingBlocked) {
         if (!silent) _setStatus(SyncStatus.error);
         debugPrint('🚫 [Sync] Blocked by existing duplicates');
@@ -319,8 +416,14 @@ class SyncService {
       final lastLocal =
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
-      final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
+      final cloudModified = await _measureSyncStage(
+        'فحص وقت تعديل الملف السحابي',
+        GDriveService.getSyncFileModifiedTime,
+      );
+      final cloudData = await _measureSyncStage(
+        'تنزيل الملف السحابي',
+        GDriveService.downloadSyncFile,
+      );
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
@@ -367,7 +470,10 @@ class SyncService {
         if (!silent) _setStatus(SyncStatus.downloading);
 
         // 🆕 المرحلة 2: اكتشاف التكرارات قبل الدمج
-        final detected = await DuplicateDetector.detect(cloudData);
+        final detected = await _measureSyncStage(
+          'فحص التكرارات في البيانات السحابية',
+          () => DuplicateDetector.detect(cloudData),
+        );
         if (detected > 0) {
           final blocked = await DuplicateDetector.shouldBlockSync();
           if (blocked) {
@@ -386,7 +492,11 @@ class SyncService {
           }
         }
 
-        final result = await _mergeCloudData(cloudData);
+        final result = await _measureSyncStage(
+          'دمج البيانات السحابية مع قاعدة البيانات',
+          () => _mergeCloudData(cloudData),
+          isFailure: (mergeResult) => (mergeResult['error'] ?? 0) == 1,
+        );
 
         // P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
         if ((result['error'] ?? 0) == 1) {
@@ -415,7 +525,11 @@ class SyncService {
 
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
-        final uploadOk = await _uploadCurrentState();
+        final uploadOk = await _measureSyncStage(
+          'رفع البيانات إلى Google Drive',
+          _uploadCurrentState,
+          isFailure: (uploaded) => !uploaded,
+        );
 
         if (!uploadOk) {
           if (!silent) _setStatus(SyncStatus.error);
