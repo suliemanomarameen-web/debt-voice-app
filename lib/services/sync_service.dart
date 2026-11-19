@@ -346,6 +346,8 @@ class SyncService {
     String details, {
     bool isError = false,
   }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) return;
     try {
       await LoggerService.log(
         action: '⏱️ تشخيص المزامنة: $stage',
@@ -689,7 +691,15 @@ class SyncService {
       }
     }
 
+    final tombstoneWatch = Stopwatch()..start();
     await _applyCloudTombstones(cloudData);
+    tombstoneWatch.stop();
+    await _writeSyncDiagnostic(
+      'تطبيق شواهد القبور',
+      tombstoneWatch.elapsedMilliseconds,
+      'نجاح',
+      'اكتملت معالجة شواهد القبور السحابية',
+    );
 
     int addedCustomers = 0;
     int addedTransactions = 0;
@@ -729,6 +739,7 @@ class SyncService {
             defaultValue: true),
       );
 
+      final usedCodesWatch = Stopwatch()..start();
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -737,8 +748,17 @@ class SyncService {
         if (!exists) await db.addUsedCode(code: code, type: type);
       }
 
+      usedCodesWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج رموز العمليات',
+        usedCodesWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد الرموز السحابية: ${cloudUsedCodes.length}',
+      );
+
       final Map<int, int> cloudIdToLocalId = {};
 
+      final customersWatch = Stopwatch()..start();
       for (final cc in cloudCustomers) {
         final cloudId = cc['cloud_id'] as String?;
         final cloudName = cc['name'] as String? ?? '';
@@ -807,6 +827,15 @@ class SyncService {
         }
       }
 
+      customersWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج الحسابات',
+        customersWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد الحسابات السحابية التي تمت مراجعتها: ${cloudCustomers.length}',
+      );
+
+      final transactionsWatch = Stopwatch()..start();
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
         final cloudCustomerId = ct['customer_id'] as int?;
@@ -883,6 +912,15 @@ class SyncService {
         }
       }
 
+      transactionsWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج العمليات',
+        transactionsWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد العمليات السحابية التي تمت مراجعتها: ${cloudTransactions.length}',
+      );
+
+      final logsWatch = Stopwatch()..start();
       if (SettingsService.getBool(AppSettings.syncLogs)) {
         for (final cl in cloudLogs) {
           if (_isSyncDiagnosticLog(Map<String, dynamic>.from(cl))) continue;
@@ -905,6 +943,14 @@ class SyncService {
           }
         }
       }
+
+      logsWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج سجل الأحداث',
+        logsWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد أحداث السجل السحابية: ${cloudLogs.length}',
+      );
 
       debugPrint(
           '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts (mode=$mode)');
