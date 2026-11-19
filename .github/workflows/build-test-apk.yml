@@ -26,12 +26,10 @@ jobs:
 
       - name: Update version in pubspec.yaml
         run: |
-          # The currently installed production build is 692.
-          # Keep every test build upgrade-compatible with it.
-          BASE_VERSION_CODE=692
-          BUILD_NUMBER=$((BASE_VERSION_CODE + GITHUB_RUN_NUMBER))
-          NEW_VERSION="1.0.${BUILD_NUMBER}+${BUILD_NUMBER}"
-          echo "Building upgrade version: $NEW_VERSION"
+          # This consolidated test build upgrades installed version 1.0.692.
+          BUILD_NUMBER=693
+          NEW_VERSION="1.0.693+693"
+          echo "Building consolidated upgrade version: $NEW_VERSION"
           sed -i "s/^version: .*/version: $NEW_VERSION/" pubspec.yaml
 
       - name: Restore keystore from secret
