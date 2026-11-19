@@ -1,6 +1,7 @@
 class Transaction {
   final int? id;
   final String? cloudId; // 🆕 UUID عالمي فريد (لا يتغير)
+  final String? createdFromDevice;
   final int customerId;
   final String? code;
   final String? accountant;
@@ -26,6 +27,7 @@ class Transaction {
   Transaction({
     this.id,
     this.cloudId,
+    this.createdFromDevice,
     required this.customerId,
     this.code,
     this.accountant,
@@ -47,6 +49,7 @@ class Transaction {
   Map<String, dynamic> toMap() => {
         'id': id,
         'cloud_id': cloudId,
+        'created_from_device': createdFromDevice,
         'customer_id': customerId,
         'code': code,
         'accountant': accountant,
@@ -68,6 +71,7 @@ class Transaction {
   factory Transaction.fromMap(Map<String, dynamic> m) => Transaction(
         id: m['id'],
         cloudId: m['cloud_id'],
+        createdFromDevice: m['created_from_device'],
         customerId: m['customer_id'],
         code: m['code'],
         accountant: m['accountant'],
@@ -89,6 +93,7 @@ class Transaction {
   Transaction copyWith({
     int? id,
     String? cloudId,
+    String? createdFromDevice,
     int? customerId,
     String? code,
     String? accountant,
@@ -109,6 +114,7 @@ class Transaction {
     return Transaction(
       id: id ?? this.id,
       cloudId: cloudId ?? this.cloudId,
+      createdFromDevice: createdFromDevice ?? this.createdFromDevice,
       customerId: customerId ?? this.customerId,
       code: code ?? this.code,
       accountant: accountant ?? this.accountant,
