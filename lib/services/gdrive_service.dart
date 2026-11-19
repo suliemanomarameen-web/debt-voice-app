@@ -678,10 +678,33 @@ class GDriveService {
   }
 
   /// رفع ملف المزامنة (مع الأخذ بالاعتبار الملف المشترك)
-  static Future<bool> uploadSyncFile(Map<String, dynamic> data) async {
+  static Future<bool> uploadSyncFile(
+    Map<String, dynamic> data, {
+    Future<void> Function(String stage, int durationMs, String outcome, String details)?
+        onStage,
+  }) async {
+    var currentStage = 'تجهيز الرفع';
+    var stageWatch = Stopwatch();
+
+    Future<void> reportStage(
+      String stage,
+      int durationMs,
+      String outcome,
+      String details,
+    ) async {
+      try {
+        await onStage?.call(stage, durationMs, outcome, details);
+      } catch (diagnosticError) {
+        // فشل تسجيل التشخيص يجب ألا يغيّر نتيجة رفع ملف المزامنة.
+        debugPrint('⚠️ [GDrive] Upload diagnostic callback failed: $diagnosticError');
+      }
+    }
+
     try {
       if (!await ensureSignedIn()) return false;
 
+      currentStage = 'تحويل JSON والتشفير';
+      stageWatch = Stopwatch()..start();
       final encryptEnabled = await CryptoService.isEncryptionEnabled();
 
       String content;
@@ -693,14 +716,32 @@ class GDriveService {
         content = jsonEncode(data);
         debugPrint('📄 Uploading PLAIN sync file');
       }
+      stageWatch.stop();
+      await reportStage(
+        currentStage,
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'التشفير: ${encryptEnabled ? 'مفعّل' : 'غير مفعّل'}، حجم النص: ${content.length} حرفاً',
+      );
 
+      currentStage = 'تجهيز ملف Google Drive';
+      stageWatch = Stopwatch()..start();
       final bytes = utf8.encode(content);
-
+      final byteLength = bytes.length;
       final targetId = await _resolveSyncFileId();
+      stageWatch.stop();
+      await reportStage(
+        currentStage,
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'حجم الملف: $byteLength بايت، الملف: ${targetId == null ? 'إنشاء جديد' : 'تحديث موجود'}',
+      );
 
+      currentStage = 'إرسال الملف إلى Google Drive';
+      stageWatch = Stopwatch()..start();
       if (targetId != null) {
         final driveFile = drive.File();
-        final media = drive.Media(Stream.value(bytes), bytes.length);
+        final media = drive.Media(Stream.value(bytes), byteLength);
         await _driveApi!.files.update(
           driveFile,
           targetId,
@@ -711,13 +752,27 @@ class GDriveService {
         final driveFile = drive.File()
           ..name = _syncFileName
           ..mimeType = 'application/json';
-        final media = drive.Media(Stream.value(bytes), bytes.length);
+        final media = drive.Media(Stream.value(bytes), byteLength);
         await _driveApi!.files.create(driveFile, uploadMedia: media);
         debugPrint('✅ Sync file created (own)');
       }
+      stageWatch.stop();
+      await reportStage(
+        currentStage,
+        stageWatch.elapsedMilliseconds,
+        'نجاح',
+        'اكتمل إرسال $byteLength بايت',
+      );
       return true;
     } catch (e) {
-      debugPrint('❌ uploadSyncFile error: $e');
+      stageWatch.stop();
+      debugPrint('❌ uploadSyncFile error during $currentStage: $e');
+      await reportStage(
+        currentStage,
+        stageWatch.elapsedMilliseconds,
+        'فشل',
+        e.toString(),
+      );
       return false;
     }
   }
