@@ -1739,6 +1739,7 @@ class SyncService {
   }
 
   static Future<bool> _uploadCurrentState() async {
+    final preparationWatch = Stopwatch()..start();
     try {
       await _ensureCloudIds();
 
@@ -1811,8 +1812,40 @@ class SyncService {
         ...accountantsData,
       };
 
-      return await GDriveService.uploadSyncFile(data);
+      preparationWatch.stop();
+      await _writeSyncDiagnostic(
+        'تجهيز بيانات الرفع',
+        preparationWatch.elapsedMilliseconds,
+        'نجاح',
+        'الحسابات: ${customers.length}، العمليات: ${transactions.length}، '
+            'الأحداث: ${logEvents.length}، الرموز: ${usedCodes.length}',
+      );
+
+      final diagnosticsEnabled = SettingsService.getBool(
+        AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false,
+      );
+      return await GDriveService.uploadSyncFile(
+        data,
+        onStage: diagnosticsEnabled
+            ? (stage, durationMs, outcome, details) => _writeSyncDiagnostic(
+                  'الرفع: $stage',
+                  durationMs,
+                  outcome,
+                  details,
+                  isError: outcome == 'فشل',
+                )
+            : null,
+      );
     } catch (e) {
+      preparationWatch.stop();
+      await _writeSyncDiagnostic(
+        'تجهيز بيانات الرفع',
+        preparationWatch.elapsedMilliseconds,
+        'فشل',
+        e.toString(),
+        isError: true,
+      );
       debugPrint('❌ [Sync] Upload state error: $e');
       return false;
     }
