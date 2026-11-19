@@ -2,7 +2,7 @@ name: Build Test APK (PR12)
 
 on:
   push:
-    branches: [ feature/sync-diagnostics-log ]
+    branches: [ feature/sync-diagnostics-log, feature/build-696-from-main ]
   workflow_dispatch:
 
 permissions:
