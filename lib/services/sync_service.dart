@@ -949,26 +949,70 @@ class SyncService {
 
       final logsWatch = Stopwatch()..start();
       if (SettingsService.getBool(AppSettings.syncLogs)) {
-        for (final cl in cloudLogs) {
-          if (_isSyncDiagnosticLog(Map<String, dynamic>.from(cl))) continue;
-          final action = cl['action'] as String? ?? '';
-          final createdAt = cl['created_at'] as String? ?? '';
+        // Preserve the existing duplicate rule:
+        // - with accountant: match action + created_at + accountant
+        // - without accountant: match action + created_at regardless of accountant
+        // Read local keys once instead of issuing a SELECT for every cloud row.
+        final localLogRows = await db.getLogEventSyncKeys();
+        final localBaseKeys = <String>{};
+        final localAccountantKeys = <String>{};
+
+        String baseKey(String action, String createdAt) =>
+            '$action\u0000$createdAt';
+        String accountantKey(
+          String action,
+          String createdAt,
+          String accountant,
+        ) =>
+            '\${baseKey(action, createdAt)}\u0000$accountant';
+
+        for (final row in localLogRows) {
+          final action = row['action'] as String? ?? '';
+          final createdAt = row['created_at'] as String? ?? '';
           if (action.isEmpty || createdAt.isEmpty) continue;
-
-          final accountant = cl['accountant'] as String?;
-          final exists = await db.logEventExists(
-            action: action,
-            createdAt: createdAt,
-            accountant: accountant,
-          );
-
-          if (!exists) {
-            final newMap = Map<String, dynamic>.from(cl);
-            newMap.remove('id');
-            await db.insertLogEventRaw(newMap);
-            addedLogs++;
+          localBaseKeys.add(baseKey(action, createdAt));
+          final accountant = row['accountant'] as String?;
+          if (accountant != null && accountant.isNotEmpty) {
+            localAccountantKeys.add(
+              accountantKey(action, createdAt, accountant),
+            );
           }
         }
+
+        final rowsToInsert = <Map<String, dynamic>>[];
+        for (final cl in cloudLogs) {
+          final cloudRow = Map<String, dynamic>.from(cl);
+          if (_isSyncDiagnosticLog(cloudRow)) continue;
+
+          final action = cloudRow['action'] as String? ?? '';
+          final createdAt = cloudRow['created_at'] as String? ?? '';
+          if (action.isEmpty || createdAt.isEmpty) continue;
+
+          final accountant = cloudRow['accountant'] as String?;
+          final hasAccountant =
+              accountant != null && accountant.isNotEmpty;
+          final exists = hasAccountant
+              ? localAccountantKeys.contains(
+                  accountantKey(action, createdAt, accountant),
+                )
+              : localBaseKeys.contains(baseKey(action, createdAt));
+
+          if (exists) continue;
+
+          cloudRow.remove('id');
+          rowsToInsert.add(cloudRow);
+
+          // Update in-memory keys immediately to suppress duplicates within
+          // the same cloud snapshot, just as the previous insert-then-query did.
+          localBaseKeys.add(baseKey(action, createdAt));
+          if (hasAccountant) {
+            localAccountantKeys.add(
+              accountantKey(action, createdAt, accountant),
+            );
+          }
+        }
+
+        addedLogs = await db.insertLogEventsRawBatch(rowsToInsert);
       }
 
       logsWatch.stop();
