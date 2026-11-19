@@ -371,7 +371,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.compactMode: 'وضع مضغوط',
       AppSettings.developerModeEnabled: 'تفعيل وضع المطور',
       AppSettings.developerModeVerbose: 'سجل مفصّل (Verbose)',
-      AppSettings.syncDiagnosticsEnabled: 'تفاصيل المزامنة في سجل الأحداث',
     };
     return map[key] ?? key;
   }
