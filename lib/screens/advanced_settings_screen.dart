@@ -479,8 +479,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           'مفعّل: الأخطاء والتحذيرات الحرجة تُسجَّل في سجل الأحداث',
       AppSettings.developerModeVerbose:
           'مفعّل: كل خطوة تُسجَّل (أبطأ، للتشخيص العميق)',
-      AppSettings.syncDiagnosticsEnabled:
-          'يسجل وقت مراحل المزامنة ونتائجها والأخطاء دون بيانات العملاء',
     };
     return map[key] ?? '';
   }
