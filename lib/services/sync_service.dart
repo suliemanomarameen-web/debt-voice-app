@@ -64,6 +64,8 @@ class SyncService {
   static const String _keyLastSyncTime = 'sync_last_time';
   static const String _keyLastUpload = 'sync_last_upload';
   static const String _keyLastDownload = 'sync_last_download';
+  // آخر وقت تعديل سحابي تمت معالجته بنجاح، من ساعة Google Drive نفسها.
+  static const String _keyLastCloudModified = 'sync_last_cloud_modified';
   static const String _keyLastLocalChange = 'sync_last_local_change';
   static const String _keyHasPendingChanges = 'sync_has_pending';
 
@@ -422,18 +424,35 @@ class SyncService {
         'فحص وقت تعديل الملف السحابي',
         GDriveService.getSyncFileModifiedTime,
       );
-      final cloudData = await _measureSyncStage(
-        'تنزيل الملف السحابي',
-        GDriveService.downloadSyncFile,
-      );
+      final lastCloudModifiedStr = prefs.getString(_keyLastCloudModified);
+      final lastCloudModified = lastCloudModifiedStr == null
+          ? null
+          : DateTime.tryParse(lastCloudModifiedStr);
+
+      // لا نقارن وقت Drive بساعة الجهاز؛ نقارن وقتين صادرين من Drive.
+      // إذا غابت بيانات الوقت أو لم يوجد مؤشر سابق، ننزّل كالمعتاد احتياطياً.
+      final shouldDownloadCloud = forcePull ||
+          cloudModified == null ||
+          lastCloudModified == null ||
+          cloudModified.isAfter(lastCloudModified);
+      final cloudData = shouldDownloadCloud
+          ? await _measureSyncStage(
+              'تنزيل الملف السحابي',
+              GDriveService.downloadSyncFile,
+            )
+          : null;
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
               (lastSync == null || lastLocal.isAfter(lastSync)));
 
+      // إذا نجح التنزيل مع غياب metadata، ندمج الملف بدلاً من رفع المحلي فوقه.
+      // عند فشل قراءة الوقت والتنزيل معاً نبقي السلوك القديم ولا نغيّر مسار الرفع.
       final hasCloudChanges = forcePull ||
-          (cloudModified != null &&
-              (lastSync == null || cloudModified.isAfter(lastSync)));
+          (cloudData != null &&
+              (cloudModified == null ||
+                  lastCloudModified == null ||
+                  cloudModified.isAfter(lastCloudModified)));
 
       if (!hasLocalChanges && !hasCloudChanges) {
         final now = DateTime.now();
@@ -523,6 +542,14 @@ class SyncService {
         restoredCustomers = result['customers_restored'] ?? 0;
         addedLogs = result['logs_added'] ?? 0;
         conflictsCount = result['conflicts'] ?? 0;
+
+        // لا نحفظ مؤشر Drive إلا بعد نجاح الدمج؛ حتى يعاد التنزيل إذا تعثر الدمج.
+        if (cloudModified != null) {
+          await prefs.setString(
+            _keyLastCloudModified,
+            cloudModified.toUtc().toIso8601String(),
+          );
+        }
       }
 
       if (hasLocalChanges || hasCloudChanges) {
