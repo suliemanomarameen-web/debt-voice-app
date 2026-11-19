@@ -377,12 +377,6 @@ class _DebtsTabState extends State<DebtsTab> {
         ),
       );
     } else {
-      await LoggerService.logSyncSuccess(
-        transactionsAdded: result.transactionsAdded,
-        customersAdded: result.customersAdded,
-        hasConflict: result.hasConflict,
-      );
-
       if (result.transactionsAdded == 0 &&
           result.customersAdded == 0 &&
           result.message == 'لا توجد تغييرات') {

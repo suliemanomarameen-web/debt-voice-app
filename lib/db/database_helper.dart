@@ -8,6 +8,7 @@ import '../models/customer.dart';
 import '../models/transaction.dart';
 import '../models/log_event.dart';
 import '../services/settings_service.dart';
+import '../services/device_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -28,7 +29,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), file);
     return openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: _createDB,
       onUpgrade: _upgrade,
     );
@@ -52,6 +53,7 @@ class DatabaseHelper {
         max_balance REAL,
         is_active INTEGER DEFAULT 1,
         created_by TEXT,
+        created_from_device TEXT,
         updated_by TEXT,
         updated_at TEXT,
         is_deleted INTEGER DEFAULT 0,
@@ -74,6 +76,7 @@ class DatabaseHelper {
         customer_id INTEGER NOT NULL,
         code TEXT UNIQUE,
         accountant TEXT,
+        created_from_device TEXT,
         source TEXT,
         amount REAL NOT NULL,
         currency TEXT DEFAULT 'YER',
@@ -432,6 +435,29 @@ class DatabaseHelper {
       }
     }
 
+    if (oldV < 17) {
+      await _addColumnIfMissing(db, 'customers', 'created_from_device', 'TEXT');
+      await _addColumnIfMissing(db, 'transactions', 'created_from_device', 'TEXT');
+
+      // Verify both columns exist before allowing SQLite to advance user_version.
+      final customerColumns =
+          await db.rawQuery('PRAGMA table_info(customers)');
+      final transactionColumns =
+          await db.rawQuery('PRAGMA table_info(transactions)');
+      final hasCustomerOrigin =
+          customerColumns.any((column) => column['name'] == 'created_from_device');
+      final hasTransactionOrigin =
+          transactionColumns.any((column) => column['name'] == 'created_from_device');
+
+      if (!hasCustomerOrigin || !hasTransactionOrigin) {
+        throw StateError(
+          'Database v17 migration failed: created_from_device column is missing',
+        );
+      }
+
+      debugPrint('✅ [DB] Upgraded to v17 (created_from_device verified)');
+    }
+
     if (oldV < 16) {
       try {
         await _addColumnIfMissing(
@@ -566,6 +592,42 @@ class DatabaseHelper {
   }
 
   String _now() => DateTime.now().toIso8601String();
+
+  /// Counts active records created by this device since its last successful sync.
+  Future<Map<String, int>> getLocalCreatedCounts({
+    required String deviceId,
+    DateTime? after,
+  }) async {
+    final db = await database;
+    final customerWhere = StringBuffer(
+      "created_from_device = ? AND (is_deleted = 0 OR is_deleted IS NULL) "
+      "AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)",
+    );
+    final transactionWhere = StringBuffer(
+      "created_from_device = ? AND (is_deleted = 0 OR is_deleted IS NULL)",
+    );
+    final customerArgs = <Object?>[deviceId];
+    final transactionArgs = <Object?>[deviceId];
+    if (after != null) {
+      final cutoff = after.toIso8601String();
+      customerWhere.write(' AND created_at > ?');
+      transactionWhere.write(' AND created_at > ?');
+      customerArgs.add(cutoff);
+      transactionArgs.add(cutoff);
+    }
+    final customers = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM customers WHERE $customerWhere',
+      customerArgs,
+    );
+    final transactions = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM transactions WHERE $transactionWhere',
+      transactionArgs,
+    );
+    return {
+      'customers': (customers.first['c'] as int?) ?? 0,
+      'transactions': (transactions.first['c'] as int?) ?? 0,
+    };
+  }
 
   String _generateCloudId() => _uuid.v4();
 
@@ -1181,6 +1243,7 @@ class DatabaseHelper {
   Future<int> insertCustomer(Customer c) async {
     final db = await database;
     final map = c.toMap();
+    map['created_from_device'] ??= await DeviceService.getDeviceId();
 
     // 🆕 تطبيع الاسم
     if (map['name'] != null && (map['name'] as String).isNotEmpty) {
@@ -1678,6 +1741,7 @@ class DatabaseHelper {
   Future<int> insertTransaction(Transaction t) async {
     final db = await database;
     final map = t.toMap();
+    map['created_from_device'] ??= await DeviceService.getDeviceId();
 
     if (map['cloud_id'] == null || (map['cloud_id'] as String).isEmpty) {
       map['cloud_id'] = _generateCloudId();

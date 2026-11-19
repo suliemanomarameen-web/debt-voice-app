@@ -861,23 +861,85 @@ class LoggerService {
         needsAck: true,
       );
 
+  static String _formatSyncRecordCount(
+    int count, {
+    required String one,
+    required String two,
+    required String few,
+    required String many,
+  }) {
+    if (count == 1) return one;
+    if (count == 2) return two;
+    if (count >= 3 && count <= 10) return '$count $few';
+    return '$count $many';
+  }
+
   static Future<void> logSyncSuccess({
     int transactionsAdded = 0,
     int customersAdded = 0,
+    int uploadedTransactions = 0,
+    int uploadedCustomers = 0,
     int customersUpdated = 0,
     bool hasConflict = false,
     String? accountant,
-  }) =>
-      success(
-        hasConflict ? 'مزامنة مع تعارض' : 'مزامنة ناجحة',
-        'تمت المزامنة:'
-            '${transactionsAdded > 0 ? " +$transactionsAdded عملية" : ""}'
-            '${customersAdded > 0 ? " +$customersAdded حساب" : ""}'
-            '${customersUpdated > 0 ? " ~$customersUpdated حساب محدّث" : ""}'
-            '${transactionsAdded == 0 && customersAdded == 0 && customersUpdated == 0 ? " (لا تغييرات)" : ""}',
-        category: LogCategory.sync,
-        accountant: accountant,
-      );
+  }) async {
+    final uploaded = <String>[];
+    if (uploadedTransactions > 0) {
+      uploaded.add(_formatSyncRecordCount(
+        uploadedTransactions,
+        one: 'عملية واحدة',
+        two: 'عمليتين',
+        few: 'عمليات',
+        many: 'عملية',
+      ));
+    }
+    if (uploadedCustomers > 0) {
+      uploaded.add(_formatSyncRecordCount(
+        uploadedCustomers,
+        one: 'حساب واحد',
+        two: 'حسابين',
+        few: 'حسابات',
+        many: 'حسابًا',
+      ));
+    }
+
+    final downloaded = <String>[];
+    if (transactionsAdded > 0) {
+      downloaded.add(_formatSyncRecordCount(
+        transactionsAdded,
+        one: 'عملية واحدة',
+        two: 'عمليتين',
+        few: 'عمليات',
+        many: 'عملية',
+      ));
+    }
+    if (customersAdded > 0) {
+      downloaded.add(_formatSyncRecordCount(
+        customersAdded,
+        one: 'حساب واحد',
+        two: 'حسابين',
+        few: 'حسابات',
+        many: 'حسابًا',
+      ));
+    }
+
+    final details = [
+      if (uploaded.isNotEmpty) 'تم رفع ${uploaded.join(' و')}',
+      if (downloaded.isNotEmpty) 'تم تنزيل ${downloaded.join(' و')}',
+      if (customersUpdated > 0) '~$customersUpdated سجل محدّث',
+      if (uploaded.isEmpty &&
+          downloaded.isEmpty &&
+          customersUpdated == 0)
+        '(لا تغييرات جديدة)',
+    ].join('، ');
+
+    await success(
+      hasConflict ? 'مزامنة مع تعارض' : 'مزامنة ناجحة',
+      'تمت المزامنة: $details',
+      category: LogCategory.sync,
+      accountant: accountant,
+    );
+  }
 
   static Future<void> logSyncUpload(String fileName, {String? accountant}) =>
       info(
