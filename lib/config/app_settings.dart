@@ -44,6 +44,8 @@ class AppSettings {
       'deletion_conflict_restore';
   static const String syncLogs = 'sync_logs';
   static const String syncDeletedBin = 'sync_deleted_bin';
+  /// تشخيص محلي مستقل لقياس مراحل المزامنة في سجل الأحداث.
+  static const String syncDiagnosticsEnabled = 'sync_diagnostics_enabled';
 
   // ═══════════════════════════════════════════════════════════
   // 🔀 مجموعة كشف التكرار (v2.4)
@@ -223,6 +225,8 @@ class AppSettings {
     deletionConflictRestore: true,
     syncLogs: true,
     syncDeletedBin: true,
+    // محلي فقط: لا تتم مزامنته مع أجهزة المحاسبين.
+    syncDiagnosticsEnabled: false,
 
     // 🔀 كشف التكرار
     duplicateDetectionEnabled: true,
@@ -388,6 +392,7 @@ class AppSettings {
     conflictNotification,
     deletionConflictRestore,
     syncLogs,
+    syncDiagnosticsEnabled,
     voiceEnabled,
     voiceAutoSaveHighConfidence,
     voiceConfirmBeforeSave,

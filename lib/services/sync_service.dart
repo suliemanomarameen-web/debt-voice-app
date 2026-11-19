@@ -278,11 +278,110 @@ class SyncService {
     bool forcePull = false,
     bool forceUpload = false,
   }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) {
+      return _performSyncInternal(
+        silent: silent,
+        forcePull: forcePull,
+        forceUpload: forceUpload,
+      );
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final result = await _performSyncInternal(
+      silent: silent,
+      forcePull: forcePull,
+      forceUpload: forceUpload,
+    );
+    stopwatch.stop();
+    await _writeSyncDiagnostic(
+      'الدورة الكاملة',
+      stopwatch.elapsedMilliseconds,
+      result.success ? 'نجاح' : 'فشل',
+      result.message,
+    );
+    return result;
+  }
+
+  static Future<T> _measureSyncStage<T>(
+    String stage,
+    Future<T> Function() operation, {
+    bool Function(T result)? isFailure,
+  }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) {
+      return operation();
+    }
+
+    final stopwatch = Stopwatch()..start();
+    try {
+      final result = await operation();
+      stopwatch.stop();
+      final failed = isFailure?.call(result) ?? false;
+      await _writeSyncDiagnostic(
+        stage,
+        stopwatch.elapsedMilliseconds,
+        failed ? 'فشل' : 'نجاح',
+        failed ? 'أعادت المرحلة نتيجة تدل على عدم الاكتمال' : 'اكتملت المرحلة بنجاح',
+        isError: failed,
+      );
+      return result;
+    } catch (error) {
+      stopwatch.stop();
+      await _writeSyncDiagnostic(
+        stage,
+        stopwatch.elapsedMilliseconds,
+        'فشل',
+        error.toString(),
+        isError: true,
+      );
+      rethrow;
+    }
+  }
+
+  static Future<void> _writeSyncDiagnostic(
+    String stage,
+    int durationMs,
+    String outcome,
+    String details, {
+    bool isError = false,
+  }) async {
+    if (!SettingsService.getBool(AppSettings.syncDiagnosticsEnabled,
+        defaultValue: false)) return;
+    try {
+      await LoggerService.log(
+        action: '⏱️ تشخيص المزامنة: $stage',
+        description: '$outcome — ${durationMs} مللي ثانية — $details',
+        // تبقى أحداث التشخيص معلوماتية حتى لا تتحول كل محاولة فاشلة إلى عنصر يتطلب إقراراً.
+        level: LogLevel.info,
+        category: LogCategory.sync,
+        metadata: {
+          'sync_diagnostic': true,
+          'stage': stage,
+          'duration_ms': durationMs,
+          'outcome': outcome,
+          'is_error': isError,
+        },
+        needsAck: false,
+      );
+    } catch (error) {
+      debugPrint('⚠️ [SyncDiagnostics] Failed to save diagnostic: $error');
+    }
+  }
+
+  static Future<SyncResult> _performSyncInternal({
+    required bool silent,
+    bool forcePull = false,
+    bool forceUpload = false,
+  }) async {
     if (!silent) _setStatus(SyncStatus.syncing);
 
     try {
       // 🆕 التحقق من وجود تكرارات معلّقة سابقة
-      final existingBlocked = await DuplicateDetector.shouldBlockSync();
+      final existingBlocked = await _measureSyncStage(
+        'فحص التكرارات المعلّقة',
+        DuplicateDetector.shouldBlockSync,
+      );
       if (existingBlocked) {
         if (!silent) _setStatus(SyncStatus.error);
         debugPrint('🚫 [Sync] Blocked by existing duplicates');
@@ -319,8 +418,14 @@ class SyncService {
       final lastLocal =
           lastLocalStr != null ? DateTime.parse(lastLocalStr) : null;
 
-      final cloudModified = await GDriveService.getSyncFileModifiedTime();
-      final cloudData = await GDriveService.downloadSyncFile();
+      final cloudModified = await _measureSyncStage(
+        'فحص وقت تعديل الملف السحابي',
+        GDriveService.getSyncFileModifiedTime,
+      );
+      final cloudData = await _measureSyncStage(
+        'تنزيل الملف السحابي',
+        GDriveService.downloadSyncFile,
+      );
 
       final hasLocalChanges = forceUpload ||
           (lastLocal != null &&
@@ -367,7 +472,10 @@ class SyncService {
         if (!silent) _setStatus(SyncStatus.downloading);
 
         // 🆕 المرحلة 2: اكتشاف التكرارات قبل الدمج
-        final detected = await DuplicateDetector.detect(cloudData);
+        final detected = await _measureSyncStage(
+          'فحص التكرارات في البيانات السحابية',
+          () => DuplicateDetector.detect(cloudData),
+        );
         if (detected > 0) {
           final blocked = await DuplicateDetector.shouldBlockSync();
           if (blocked) {
@@ -386,7 +494,11 @@ class SyncService {
           }
         }
 
-        final result = await _mergeCloudData(cloudData);
+        final result = await _measureSyncStage(
+          'دمج البيانات السحابية مع قاعدة البيانات',
+          () => _mergeCloudData(cloudData),
+          isFailure: (mergeResult) => (mergeResult['error'] ?? 0) == 1,
+        );
 
         // P0-X: إذا فشل الدمج → توقف فوراً، لا رفع
         if ((result['error'] ?? 0) == 1) {
@@ -415,7 +527,11 @@ class SyncService {
 
       if (hasLocalChanges || hasCloudChanges) {
         if (!silent) _setStatus(SyncStatus.uploading);
-        final uploadOk = await _uploadCurrentState();
+        final uploadOk = await _measureSyncStage(
+          'رفع البيانات إلى Google Drive',
+          _uploadCurrentState,
+          isFailure: (uploaded) => !uploaded,
+        );
 
         if (!uploadOk) {
           if (!silent) _setStatus(SyncStatus.error);
@@ -477,6 +593,14 @@ class SyncService {
       if (!_resultController.isClosed) _resultController.add(errResult);
       return errResult;
     }
+  }
+
+  // أحداث تشخيص المزامنة محلية للجهاز الذي جمعها، ولا تُرسل إلى بقية المحاسبين.
+  static bool _isSyncDiagnosticLog(Map<String, dynamic> row) {
+    final action = row['action'] as String? ?? '';
+    final metadata = row['metadata'] as String? ?? '';
+    return action.startsWith('⏱️ تشخيص المزامنة:') ||
+        metadata.contains('"sync_diagnostic":true');
   }
 
   static Future<void> _applyCloudTombstones(
@@ -567,7 +691,15 @@ class SyncService {
       }
     }
 
+    final tombstoneWatch = Stopwatch()..start();
     await _applyCloudTombstones(cloudData);
+    tombstoneWatch.stop();
+    await _writeSyncDiagnostic(
+      'تطبيق شواهد القبور',
+      tombstoneWatch.elapsedMilliseconds,
+      'نجاح',
+      'اكتملت معالجة شواهد القبور السحابية',
+    );
 
     int addedCustomers = 0;
     int addedTransactions = 0;
@@ -607,6 +739,7 @@ class SyncService {
             defaultValue: true),
       );
 
+      final usedCodesWatch = Stopwatch()..start();
       for (final uc in cloudUsedCodes) {
         final code = uc['code'] as String?;
         final type = uc['type'] as String?;
@@ -615,8 +748,17 @@ class SyncService {
         if (!exists) await db.addUsedCode(code: code, type: type);
       }
 
+      usedCodesWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج رموز العمليات',
+        usedCodesWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد الرموز السحابية: ${cloudUsedCodes.length}',
+      );
+
       final Map<int, int> cloudIdToLocalId = {};
 
+      final customersWatch = Stopwatch()..start();
       for (final cc in cloudCustomers) {
         final cloudId = cc['cloud_id'] as String?;
         final cloudName = cc['name'] as String? ?? '';
@@ -685,6 +827,15 @@ class SyncService {
         }
       }
 
+      customersWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج الحسابات',
+        customersWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد الحسابات السحابية التي تمت مراجعتها: ${cloudCustomers.length}',
+      );
+
+      final transactionsWatch = Stopwatch()..start();
       for (final ct in cloudTransactions) {
         final cloudId = ct['cloud_id'] as String?;
         final cloudCustomerId = ct['customer_id'] as int?;
@@ -761,8 +912,18 @@ class SyncService {
         }
       }
 
+      transactionsWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج العمليات',
+        transactionsWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد العمليات السحابية التي تمت مراجعتها: ${cloudTransactions.length}',
+      );
+
+      final logsWatch = Stopwatch()..start();
       if (SettingsService.getBool(AppSettings.syncLogs)) {
         for (final cl in cloudLogs) {
+          if (_isSyncDiagnosticLog(Map<String, dynamic>.from(cl))) continue;
           final action = cl['action'] as String? ?? '';
           final createdAt = cl['created_at'] as String? ?? '';
           if (action.isEmpty || createdAt.isEmpty) continue;
@@ -782,6 +943,14 @@ class SyncService {
           }
         }
       }
+
+      logsWatch.stop();
+      await _writeSyncDiagnostic(
+        'دمج سجل الأحداث',
+        logsWatch.elapsedMilliseconds,
+        'نجاح',
+        'عدد أحداث السجل السحابية: ${cloudLogs.length}',
+      );
 
       debugPrint(
           '✅ [Sync] Merged: +$addedCustomers customers, ~$updatedCustomers updated, ~$restoredCustomers restored, +$addedTransactions transactions, ~$updatedTransactions updated, +$addedLogs logs, $conflicts conflicts (mode=$mode)');
@@ -1506,7 +1675,9 @@ class SyncService {
       final customers = await db.allCustomersRaw();
       final transactions = await db.allTransactionsRaw();
       final usedCodes = await db.allUsedCodesRaw();
-      final logEvents = await db.allLogEventsRaw();
+      final logEvents = (await db.allLogEventsRaw())
+          .where((event) => !_isSyncDiagnosticLog(event))
+          .toList();
 
       final accountantsData = AccountantsService.getForSync();
 
