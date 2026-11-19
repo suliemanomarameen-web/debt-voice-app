@@ -486,6 +486,8 @@ class SyncService {
       int restoredCustomers = 0;
       int addedLogs = 0;
       int conflictsCount = 0;
+      int uploadedCustomers = 0;
+      int uploadedTransactions = 0;
 
       if (hasCloudChanges && cloudData != null) {
         if (!silent) _setStatus(SyncStatus.downloading);
@@ -553,6 +555,15 @@ class SyncService {
       }
 
       if (hasLocalChanges || hasCloudChanges) {
+        // Count records created on this device; report only after upload succeeds.
+        final localCreatedCounts =
+            await DatabaseHelper.instance.getLocalCreatedCounts(
+          deviceId: await DeviceService.getDeviceId(),
+          after: lastSync,
+        );
+        uploadedCustomers = localCreatedCounts['customers'] ?? 0;
+        uploadedTransactions = localCreatedCounts['transactions'] ?? 0;
+
         if (!silent) _setStatus(SyncStatus.uploading);
         final uploadOk = await _measureSyncStage(
           'رفع البيانات إلى Google Drive',
@@ -585,6 +596,8 @@ class SyncService {
         await LoggerService.logSyncSuccess(
           transactionsAdded: addedTransactions,
           customersAdded: addedCustomers + restoredCustomers,
+          uploadedTransactions: uploadedTransactions,
+          uploadedCustomers: uploadedCustomers,
           customersUpdated: updatedCustomers + updatedTransactions,
           hasConflict: conflictsCount > 0,
         );
