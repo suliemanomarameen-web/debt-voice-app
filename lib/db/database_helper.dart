@@ -436,13 +436,26 @@ class DatabaseHelper {
     }
 
     if (oldV < 17) {
-      try {
-        await _addColumnIfMissing(db, 'customers', 'created_from_device', 'TEXT');
-        await _addColumnIfMissing(db, 'transactions', 'created_from_device', 'TEXT');
-        debugPrint('✅ [DB] Upgraded to v17 (created_from_device)');
-      } catch (e) {
-        debugPrint('⚠️ [DB v17] $e');
+      await _addColumnIfMissing(db, 'customers', 'created_from_device', 'TEXT');
+      await _addColumnIfMissing(db, 'transactions', 'created_from_device', 'TEXT');
+
+      // Verify both columns exist before allowing SQLite to advance user_version.
+      final customerColumns =
+          await db.rawQuery('PRAGMA table_info(customers)');
+      final transactionColumns =
+          await db.rawQuery('PRAGMA table_info(transactions)');
+      final hasCustomerOrigin =
+          customerColumns.any((column) => column['name'] == 'created_from_device');
+      final hasTransactionOrigin =
+          transactionColumns.any((column) => column['name'] == 'created_from_device');
+
+      if (!hasCustomerOrigin || !hasTransactionOrigin) {
+        throw StateError(
+          'Database v17 migration failed: created_from_device column is missing',
+        );
       }
+
+      debugPrint('✅ [DB] Upgraded to v17 (created_from_device verified)');
     }
 
     if (oldV < 16) {
