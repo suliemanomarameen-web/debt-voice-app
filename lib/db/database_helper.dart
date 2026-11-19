@@ -2198,6 +2198,42 @@ class DatabaseHelper {
     return db.insert('log_events', sanitized);
   }
 
+  /// Reads only the columns used by sync duplicate detection.
+  /// This replaces one SELECT per cloud event with one bounded projection.
+  Future<List<Map<String, dynamic>>> getLogEventSyncKeys() async {
+    final db = await database;
+    return db.query(
+      'log_events',
+      columns: ['action', 'created_at', 'accountant'],
+    );
+  }
+
+  /// Inserts imported sync events in one SQLite batch after applying the
+  /// same table-column sanitization used by insertLogEventRaw.
+  Future<int> insertLogEventsRawBatch(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    if (rows.isEmpty) return 0;
+
+    final db = await database;
+    final info = await db.rawQuery('PRAGMA table_info(log_events)');
+    final validCols = info.map((c) => c['name'] as String).toSet();
+    final batch = db.batch();
+
+    for (final row in rows) {
+      final sanitized = <String, dynamic>{};
+      for (final entry in row.entries) {
+        if (entry.key != 'id' && validCols.contains(entry.key)) {
+          sanitized[entry.key] = entry.value;
+        }
+      }
+      batch.insert('log_events', sanitized);
+    }
+
+    await batch.commit(noResult: true);
+    return rows.length;
+  }
+
   Future<bool> logEventExists({
     required String action,
     required String createdAt,
