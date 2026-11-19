@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -320,10 +320,16 @@ jobs:
             echo "❌ APK not found at $APK_PATH"
           fi
 
-      - name: Upload test APK artifact
-        uses: actions/upload-artifact@v4
+      - name: Create draft test release and upload APK
+        uses: softprops/action-gh-release@v2
         with:
-          name: sync-diagnostics-test-apk-${{ github.run_number }}
-          path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
-          retention-days: 7
+          tag_name: sync-diagnostics-test-${{ github.run_number }}
+          name: Sync Diagnostics Test ${{ github.run_number }}
+          target_commitish: feature/sync-diagnostics-log
+          draft: true
+          prerelease: true
+          generate_release_notes: false
+          files: build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
