@@ -392,6 +392,7 @@ class AppSettings {
     conflictNotification,
     deletionConflictRestore,
     syncLogs,
+    syncDiagnosticsEnabled,
     voiceEnabled,
     voiceAutoSaveHighConfidence,
     voiceConfirmBeforeSave,
