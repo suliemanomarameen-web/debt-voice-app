@@ -2062,7 +2062,11 @@ class DatabaseHelper {
     return (r.first['c'] as int?) ?? 0;
   }
 
-  Future<Map<String, int>> cleanupDeleted({int days = 30, bool deleteCustomers = true}) async {
+  Future<Map<String, int>> cleanupDeleted({
+    int days = 30,
+    bool deleteCustomers = true,
+    bool deleteTransactions = true,
+  }) async {
     int customersDeleted = 0;
     int transactionsDeleted = 0;
 
@@ -2071,11 +2075,13 @@ class DatabaseHelper {
       final cutoff =
           DateTime.now().subtract(Duration(days: days)).toIso8601String();
 
-      transactionsDeleted = await db.delete(
-        'transactions',
-        where: 'is_deleted = 1 AND deleted_at < ?',
-        whereArgs: [cutoff],
-      );
+      if (deleteTransactions) {
+        transactionsDeleted = await db.delete(
+          'transactions',
+          where: 'is_deleted = 1 AND deleted_at < ?',
+          whereArgs: [cutoff],
+        );
+      }
 
       if (deleteCustomers) {
         customersDeleted = await db.delete(

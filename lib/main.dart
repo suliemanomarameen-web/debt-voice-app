@@ -139,6 +139,10 @@ class _BootstrapAppState extends State<BootstrapApp> {
             AppSettings.blockCustomerDeletion,
             defaultValue: false,
           ),
+          deleteTransactions: !SettingsService.getBool(
+            AppSettings.blockTransactionDeletion,
+            defaultValue: false,
+          ),
         );
         if (cleaned['customers']! > 0 || cleaned['transactions']! > 0) {
           debugPrint(
