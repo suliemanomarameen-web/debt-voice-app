@@ -592,16 +592,16 @@ class SyncService {
 
       if (!silent) _setStatus(SyncStatus.idle);
 
-      if (!silent) {
-        await LoggerService.logSyncSuccess(
-          transactionsAdded: addedTransactions,
-          customersAdded: addedCustomers + restoredCustomers,
-          uploadedTransactions: uploadedTransactions,
-          uploadedCustomers: uploadedCustomers,
-          customersUpdated: updatedCustomers + updatedTransactions,
-          hasConflict: conflictsCount > 0,
-        );
-      }
+      // سجّل تفاصيل كل مزامنة نجحت بعد وجود تغييرات فعلية، بما فيها
+      // المزامنة التلقائية الصامتة، حتى لا تضيع أعداد الرفع قبل المزامنة اليدوية التالية.
+      await LoggerService.logSyncSuccess(
+        transactionsAdded: addedTransactions,
+        customersAdded: addedCustomers + restoredCustomers,
+        uploadedTransactions: uploadedTransactions,
+        uploadedCustomers: uploadedCustomers,
+        customersUpdated: updatedCustomers + updatedTransactions,
+        hasConflict: conflictsCount > 0,
+      );
 
       final finalResult = SyncResult(
         success: true,
