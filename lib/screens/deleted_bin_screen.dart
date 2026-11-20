@@ -197,6 +197,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       message: 'ليس لديك صلاحية الحذف النهائي للعمليات',
     )) return;
 
+    if (SettingsService.getBool(
+      AppSettings.blockTransactionDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      _showSnack(
+        'منع حذف العمليات مفعّل؛ لا يمكن حذف العملية نهائياً من سلة المحذوفات.',
+        Colors.orange,
+      );
+      return;
+    }
+
     // 🆕 طلب كلمة مرور قبل الحذف النهائي (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,
@@ -245,12 +257,27 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       AppSettings.blockCustomerDeletion,
       defaultValue: false,
     );
-    final customersToDelete = blockCustomers ? <Customer>[] : _deletedCustomers;
-    final total = customersToDelete.length + _deletedTransactions.length;
+    final blockTransactions = SettingsService.getBool(
+      AppSettings.blockTransactionDeletion,
+      defaultValue: false,
+    );
+    final customersToDelete =
+        blockCustomers ? <Customer>[] : _deletedCustomers;
+    final transactionsToDelete =
+        blockTransactions ? <Transaction>[] : _deletedTransactions;
+    final total = customersToDelete.length + transactionsToDelete.length;
+
     if (total == 0) {
-      if (blockCustomers && _deletedCustomers.isNotEmpty && mounted) {
+      final retained = <String>[];
+      if (blockCustomers && _deletedCustomers.isNotEmpty) {
+        retained.add('${_deletedCustomers.length} حساب');
+      }
+      if (blockTransactions && _deletedTransactions.isNotEmpty) {
+        retained.add('${_deletedTransactions.length} عملية');
+      }
+      if (retained.isNotEmpty && mounted) {
         _showSnack(
-          'منع حذف الحسابات مفعّل؛ بقيت الحسابات في السلة ولم يتم حذفها.',
+          'إعدادات منع الحذف مفعّلة؛ بقيت ${retained.join(' و ')} في السلة.',
           Colors.orange,
         );
       }
@@ -264,14 +291,13 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
           message: 'ليس لديك صلاحية تفريغ سلة الحسابات',
         )) return;
 
-    if (_deletedTransactions.isNotEmpty &&
+    if (transactionsToDelete.isNotEmpty &&
         !await PermissionGate.require(
           context,
           'delete_transactions',
           message: 'ليس لديك صلاحية تفريغ سلة العمليات',
         )) return;
 
-    // 🆕 طلب كلمة مرور قبل تفريغ السلة (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,
       defaultValue: false,
@@ -283,26 +309,35 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       )) return;
     }
 
+    final retained = <String>[];
+    if (blockCustomers && _deletedCustomers.isNotEmpty) {
+      retained.add('${_deletedCustomers.length} حساب');
+    }
+    if (blockTransactions && _deletedTransactions.isNotEmpty) {
+      retained.add('${_deletedTransactions.length} عملية');
+    }
+
+    final confirmMessage = retained.isEmpty
+        ? 'سيتم حذف كل العناصر ($total) نهائيًا. لا يمكن التراجع!'
+        : 'سيتم حذف $total عنصر نهائيًا، وستبقى ${retained.join(' و ')} في السلة بسبب تفعيل إعداد منع الحذف.';
+
     final confirm = await _confirmDelete(
       title: 'تفريغ السلة',
-      message:
-          blockCustomers && _deletedCustomers.isNotEmpty
-              ? 'سيتم حذف العمليات الموجودة ($total) نهائيًا، وستبقى الحسابات (${_deletedCustomers.length}) في السلة لأن منع حذف الحسابات مفعّل.'
-              : 'سيتم حذف **كل** العناصر ($total) نهائيًا. لا يمكن التراجع!',
+      message: confirmMessage,
     );
     if (confirm != true) return;
 
     final accountant = await _getAccountantName();
     int deleted = 0;
 
-    for (final t in _deletedTransactions) {
-      await db.hardDeleteTransaction(t.id!);
-      deleted++;
+    for (final t in transactionsToDelete) {
+      final count = await db.hardDeleteTransaction(t.id!);
+      deleted += count;
     }
 
     for (final c in customersToDelete) {
-      await db.hardDeleteCustomer(c.id!);
-      deleted++;
+      final count = await db.hardDeleteCustomer(c.id!);
+      deleted += count;
     }
 
     await LoggerService.log(
@@ -315,9 +350,9 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
 
     if (!mounted) return;
-    if (blockCustomers && _deletedCustomers.isNotEmpty) {
+    if (retained.isNotEmpty) {
       _showSnack(
-        'تم حذف $deleted عملية، وبقيت ${_deletedCustomers.length} حسابات في السلة بسبب تفعيل منع حذف الحسابات.',
+        'تم حذف $deleted عنصر، وبقيت ${retained.join(' و ')} في السلة بسبب تفعيل منع الحذف.',
         Colors.orange,
       );
     } else {
@@ -446,6 +481,17 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
 
     final canDeleteCustomers = PermissionCache.has('delete_customers');
     final canDeleteTransactions = PermissionCache.has('delete_transactions');
+    final blockCustomers = SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    );
+    final blockTransactions = SettingsService.getBool(
+      AppSettings.blockTransactionDeletion,
+      defaultValue: false,
+    );
+    final canEmptyBin =
+        ( _deletedCustomers.isEmpty || blockCustomers || canDeleteCustomers) &&
+        (_deletedTransactions.isEmpty || blockTransactions || canDeleteTransactions);
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -466,7 +512,7 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
             ],
           ),
           actions: [
-            if (total > 0 && canDeleteCustomers && canDeleteTransactions)
+            if (total > 0 && canEmptyBin)
               IconButton(
                 icon: const Icon(Icons.delete_sweep),
                 tooltip: 'تفريغ السلة',
