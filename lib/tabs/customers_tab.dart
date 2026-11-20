@@ -92,6 +92,20 @@ class _CustomersTabState extends State<CustomersTab> {
       message: 'ليس لديك صلاحية حذف العملاء',
     )) return;
 
+    if (SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('منع حذف الحسابات مفعّل؛ لا يمكن نقل الحساب إلى سلة المحذوفات أو حذفه نهائياً.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final balance = await db.customerBalance(c.id!);
 
     if (SettingsService.getBool(
