@@ -2062,7 +2062,7 @@ class DatabaseHelper {
     return (r.first['c'] as int?) ?? 0;
   }
 
-  Future<Map<String, int>> cleanupDeleted({int days = 30}) async {
+  Future<Map<String, int>> cleanupDeleted({int days = 30, bool deleteCustomers = true}) async {
     int customersDeleted = 0;
     int transactionsDeleted = 0;
 
@@ -2077,12 +2077,14 @@ class DatabaseHelper {
         whereArgs: [cutoff],
       );
 
-      customersDeleted = await db.delete(
-        'customers',
-        where: 'is_deleted = 1 AND deleted_at < ? '
-            'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
-        whereArgs: [cutoff],
-      );
+      if (deleteCustomers) {
+        customersDeleted = await db.delete(
+          'customers',
+          where: 'is_deleted = 1 AND deleted_at < ? '
+              'AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)',
+          whereArgs: [cutoff],
+        );
+      }
 
       if (customersDeleted > 0 || transactionsDeleted > 0) {
         _notifyChanged();
