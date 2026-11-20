@@ -101,6 +101,18 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       message: 'ليس لديك صلاحية الحذف النهائي للحسابات',
     )) return;
 
+    if (SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      _showSnack(
+        'منع حذف الحسابات مفعّل؛ لا يمكن حذف الحساب نهائياً من سلة المحذوفات.',
+        Colors.red,
+      );
+      return;
+    }
+
     // 🆕 طلب كلمة مرور قبل الحذف النهائي (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,
@@ -229,20 +241,35 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
   }
 
   Future<void> _emptyBin() async {
-    final total = _deletedCustomers.length + _deletedTransactions.length;
-    if (total == 0) return;
+    final blockCustomers = SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    );
+    final customersToDelete = blockCustomers ? <Customer>[] : _deletedCustomers;
+    final total = customersToDelete.length + _deletedTransactions.length;
+    if (total == 0) {
+      if (blockCustomers && _deletedCustomers.isNotEmpty && mounted) {
+        _showSnack(
+          'منع حذف الحسابات مفعّل؛ بقيت الحسابات في السلة ولم يتم حذفها.',
+          Colors.orange,
+        );
+      }
+      return;
+    }
 
-    if (!await PermissionGate.require(
-      context,
-      'delete_customers',
-      message: 'ليس لديك صلاحية تفريغ السلة',
-    )) return;
+    if (customersToDelete.isNotEmpty &&
+        !await PermissionGate.require(
+          context,
+          'delete_customers',
+          message: 'ليس لديك صلاحية تفريغ سلة الحسابات',
+        )) return;
 
-    if (!await PermissionGate.require(
-      context,
-      'delete_transactions',
-      message: 'ليس لديك صلاحية تفريغ السلة',
-    )) return;
+    if (_deletedTransactions.isNotEmpty &&
+        !await PermissionGate.require(
+          context,
+          'delete_transactions',
+          message: 'ليس لديك صلاحية تفريغ سلة العمليات',
+        )) return;
 
     // 🆕 طلب كلمة مرور قبل تفريغ السلة (إذا الإعداد مفعل)
     if (SettingsService.getBool(
@@ -259,7 +286,9 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     final confirm = await _confirmDelete(
       title: 'تفريغ السلة',
       message:
-          'سيتم حذف **كل** العناصر ($total) نهائيًا. لا يمكن التراجع!',
+          blockCustomers && _deletedCustomers.isNotEmpty
+              ? 'سيتم حذف العمليات الموجودة ($total) نهائيًا، وستبقى الحسابات (${_deletedCustomers.length}) في السلة لأن منع حذف الحسابات مفعّل.'
+              : 'سيتم حذف **كل** العناصر ($total) نهائيًا. لا يمكن التراجع!',
     );
     if (confirm != true) return;
 
@@ -271,7 +300,7 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       deleted++;
     }
 
-    for (final c in _deletedCustomers) {
+    for (final c in customersToDelete) {
       await db.hardDeleteCustomer(c.id!);
       deleted++;
     }
@@ -286,7 +315,12 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
 
     if (!mounted) return;
-    _showSnack('تم تفريغ السلة ($deleted عنصر)', Colors.red);
+    blockCustomers && _deletedCustomers.isNotEmpty
+        ? _showSnack(
+            'تم حذف $deleted عملية، وبقيت ${_deletedCustomers.length} حسابات في السلة بسبب تفعيل منع حذف الحسابات.',
+            Colors.orange,
+          )
+        : _showSnack('تم تفريغ السلة ($deleted عنصر)', Colors.red);
     _load();
   }
 
