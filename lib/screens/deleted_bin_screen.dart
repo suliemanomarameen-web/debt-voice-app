@@ -315,12 +315,14 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
     );
 
     if (!mounted) return;
-    blockCustomers && _deletedCustomers.isNotEmpty
-        ? _showSnack(
-            'تم حذف $deleted عملية، وبقيت ${_deletedCustomers.length} حسابات في السلة بسبب تفعيل منع حذف الحسابات.',
-            Colors.orange,
-          )
-        : _showSnack('تم تفريغ السلة ($deleted عنصر)', Colors.red);
+    if (blockCustomers && _deletedCustomers.isNotEmpty) {
+      _showSnack(
+        'تم حذف $deleted عملية، وبقيت ${_deletedCustomers.length} حسابات في السلة بسبب تفعيل منع حذف الحسابات.',
+        Colors.orange,
+      );
+    } else {
+      _showSnack('تم تفريغ السلة ($deleted عنصر)', Colors.red);
+    }
     _load();
   }
 
