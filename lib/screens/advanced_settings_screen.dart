@@ -295,7 +295,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.retentionDays: 'مدة الاحتفاظ في السلة',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
       AppSettings.blockCustomerDeletion: 'منع حذف الحسابات',
-      AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
+      AppSettings.blockTransactionDeletion: 'منع حذف العمليات',
       AppSettings.permanentDeleteAlwaysWins: '🪦 الحذف النهائي يفوز دائماً',
       AppSettings.modificationAlwaysWins: '✏️ التعديل يفوز دائماً',
       AppSettings.duplicateDetectionEnabled: 'تفعيل كشف التكرار',
@@ -384,7 +384,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي بعد انتهاء المدة',
       AppSettings.blockCustomerDeletion: 'يمنع نقل الحسابات إلى سلة المحذوفات وحذفها نهائياً من السلة',
       AppSettings.blockTransactionDeletion:
-          'منع حذف أي عملية نهائياً حتى من السلة',
+          'يمنع نقل العمليات إلى سلة المحذوفات وحذفها نهائياً من السلة، ويوقف حذفها التلقائي بعد مدة الاحتفاظ',
       AppSettings.permanentDeleteAlwaysWins:
           'مفعّل: لا استعادة أبداً. يتعارض مع "التعديل يفوز"',
       AppSettings.modificationAlwaysWins:
