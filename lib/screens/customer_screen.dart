@@ -795,7 +795,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('حذف العمليات معطّل من الإعدادات المتقدمة'),
+          content: Text('منع حذف العمليات مفعّل؛ لا يمكن نقل العملية إلى سلة المحذوفات أو حذفها نهائياً.'),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 2),
         ),
