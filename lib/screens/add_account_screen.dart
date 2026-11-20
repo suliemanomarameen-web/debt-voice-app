@@ -331,6 +331,20 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       message: 'ليس لديك صلاحية حذف الحسابات',
     )) return;
 
+    if (SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('منع حذف الحسابات مفعّل؛ لا يمكن نقل الحساب إلى سلة المحذوفات أو حذفه نهائياً.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     // 🆕 طلب كلمة مرور قبل الحذف (إذا الإعداد مفعل)
     if (SettingsService.getBool(
       AppSettings.requirePasswordForDelete,

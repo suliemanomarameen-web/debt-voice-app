@@ -294,7 +294,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.softDeleteEnabled: 'الحذف الناعم (سلة المحذوفات)',
       AppSettings.retentionDays: 'مدة الاحتفاظ في السلة',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي',
-      AppSettings.blockCustomerDeletion: 'منع حذف الحسابات نهائياً',
+      AppSettings.blockCustomerDeletion: 'منع حذف الحسابات',
       AppSettings.blockTransactionDeletion: 'منع حذف العمليات نهائياً',
       AppSettings.permanentDeleteAlwaysWins: '🪦 الحذف النهائي يفوز دائماً',
       AppSettings.modificationAlwaysWins: '✏️ التعديل يفوز دائماً',
@@ -382,7 +382,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       AppSettings.softDeleteEnabled: 'يُحفظ في السلة قبل الحذف النهائي',
       AppSettings.retentionDays: 'مدة بقاء العنصر في السلة (بالأيام)',
       AppSettings.autoCleanupDeleted: 'حذف نهائي تلقائي بعد انتهاء المدة',
-      AppSettings.blockCustomerDeletion: 'منع حذف أي حساب نهائياً حتى من السلة',
+      AppSettings.blockCustomerDeletion: 'يمنع نقل الحسابات إلى سلة المحذوفات وحذفها نهائياً من السلة',
       AppSettings.blockTransactionDeletion:
           'منع حذف أي عملية نهائياً حتى من السلة',
       AppSettings.permanentDeleteAlwaysWins:

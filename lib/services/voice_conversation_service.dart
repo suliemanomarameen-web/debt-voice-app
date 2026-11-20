@@ -543,6 +543,13 @@ class VoiceConversationService {
   static Future<VoiceConversationResult> _executeDelete(VoiceSession session) async {
     if (session.matchedCustomer == null) return _fail('لم يتم تحديد الحساب');
     final customer = Customer.fromMap(session.matchedCustomer!);
+    if (SettingsService.getBool(
+      AppSettings.blockCustomerDeletion,
+      defaultValue: false,
+    )) {
+      session.markCompleted();
+      return _fail('منع حذف الحسابات مفعّل؛ لا يمكن نقل الحساب إلى سلة المحذوفات.');
+    }
     await DatabaseHelper.instance.softDeleteCustomer(customer.id!);
     session.markCompleted();
     return VoiceConversationResult(
