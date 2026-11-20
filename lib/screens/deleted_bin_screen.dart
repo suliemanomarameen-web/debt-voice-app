@@ -490,8 +490,10 @@ class _DeletedBinScreenState extends State<DeletedBinScreen>
       defaultValue: false,
     );
     final canEmptyBin =
-        ( _deletedCustomers.isEmpty || blockCustomers || canDeleteCustomers) &&
-        (_deletedTransactions.isEmpty || blockTransactions || canDeleteTransactions);
+        (_deletedCustomers.isEmpty || blockCustomers || canDeleteCustomers) &&
+        (_deletedTransactions.isEmpty ||
+            blockTransactions ||
+            canDeleteTransactions);
 
     return Directionality(
       textDirection: TextDirection.rtl,
