@@ -133,8 +133,13 @@ class _BootstrapAppState extends State<BootstrapApp> {
           defaultValue: true)) {
         final days =
             SettingsService.getInt('retention_days', defaultValue: 30);
-        final cleaned =
-            await DatabaseHelper.instance.cleanupDeleted(days: days);
+        final cleaned = await DatabaseHelper.instance.cleanupDeleted(
+          days: days,
+          deleteCustomers: !SettingsService.getBool(
+            AppSettings.blockCustomerDeletion,
+            defaultValue: false,
+          ),
+        );
         if (cleaned['customers']! > 0 || cleaned['transactions']! > 0) {
           debugPrint(
               '🧹 Cleaned: ${cleaned['customers']} customers, ${cleaned['transactions']} transactions');
