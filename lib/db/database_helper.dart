@@ -2062,7 +2062,11 @@ class DatabaseHelper {
     return (r.first['c'] as int?) ?? 0;
   }
 
-  Future<Map<String, int>> cleanupDeleted({int days = 30, bool deleteCustomers = true, bool deleteTransactions = true}) async {
+  Future<Map<String, int>> cleanupDeleted({
+    int days = 30,
+    bool deleteCustomers = true,
+    bool deleteTransactions = true,
+  }) async {
     int customersDeleted = 0;
     int transactionsDeleted = 0;
 
